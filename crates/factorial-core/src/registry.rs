@@ -69,6 +69,12 @@ pub struct RegistryBuilder {
     building_name_to_id: HashMap<String, BuildingTypeId>,
 }
 
+impl Default for RegistryBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RegistryBuilder {
     pub fn new() -> Self {
         Self {
