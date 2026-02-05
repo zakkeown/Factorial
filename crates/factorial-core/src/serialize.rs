@@ -44,7 +44,9 @@ pub enum DeserializeError {
     #[error("invalid magic number: expected 0x{:08X}, got 0x{:08X}", SNAPSHOT_MAGIC, .0)]
     InvalidMagic(u32),
     #[error("unsupported format version: expected {}, got {}", FORMAT_VERSION, .0)]
-    VersionMismatch(u32),
+    UnsupportedVersion(u32),
+    #[error("snapshot from future version {0} (this build supports up to {FORMAT_VERSION})")]
+    FutureVersion(u32),
     #[error("bitcode decoding failed: {0}")]
     Decode(String),
 }
@@ -80,8 +82,11 @@ impl SnapshotHeader {
         if self.magic != SNAPSHOT_MAGIC {
             return Err(DeserializeError::InvalidMagic(self.magic));
         }
-        if self.version != FORMAT_VERSION {
-            return Err(DeserializeError::VersionMismatch(self.version));
+        if self.version > FORMAT_VERSION {
+            return Err(DeserializeError::FutureVersion(self.version));
+        }
+        if self.version < FORMAT_VERSION {
+            return Err(DeserializeError::UnsupportedVersion(self.version));
         }
         Ok(())
     }
@@ -897,7 +902,7 @@ mod tests {
         };
         assert!(matches!(
             bad_version.validate(),
-            Err(DeserializeError::VersionMismatch(999))
+            Err(DeserializeError::FutureVersion(999))
         ));
     }
 
@@ -1109,7 +1114,49 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test 20: Transport with different variants all serialize
+    // Test 20: Future version error
+    // -----------------------------------------------------------------------
+    #[test]
+    fn serialize_future_version_error() {
+        let header = SnapshotHeader {
+            magic: SNAPSHOT_MAGIC,
+            version: FORMAT_VERSION + 1,
+            tick: 0,
+        };
+        assert!(matches!(
+            header.validate(),
+            Err(DeserializeError::FutureVersion(_))
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 21: Past version error
+    // -----------------------------------------------------------------------
+    #[test]
+    fn serialize_past_version_error() {
+        let header = SnapshotHeader {
+            magic: SNAPSHOT_MAGIC,
+            version: 0,
+            tick: 0,
+        };
+        assert!(matches!(
+            header.validate(),
+            Err(DeserializeError::UnsupportedVersion(0))
+        ));
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 22: Current version validates
+    // -----------------------------------------------------------------------
+    #[test]
+    fn serialize_current_version_validates() {
+        let header = SnapshotHeader::new(42);
+        assert!(header.validate().is_ok());
+        assert_eq!(header.version, FORMAT_VERSION);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 23: Transport with different variants all serialize
     // -----------------------------------------------------------------------
     #[test]
     fn serialize_all_transport_variants() {
