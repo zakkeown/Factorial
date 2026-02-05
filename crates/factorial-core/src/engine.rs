@@ -2380,4 +2380,109 @@ mod tests {
         let _ = engine_ref.state_hash();
         // If this compiles, the query API is read-only.
     }
+
+    // -----------------------------------------------------------------------
+    // Delta Simulation Strategy Tests
+    // -----------------------------------------------------------------------
+
+    /// Helper: add a node with processor and inventories, returns NodeId.
+    fn add_node_helper(
+        engine: &mut Engine,
+        processor: Processor,
+        input_capacity: u32,
+        output_capacity: u32,
+    ) -> NodeId {
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        let node = result.resolve_node(pending).unwrap();
+        engine.set_processor(node, processor);
+        engine.set_input_inventory(node, simple_inventory(input_capacity));
+        engine.set_output_inventory(node, simple_inventory(output_capacity));
+        node
+    }
+
+    /// Helper: connect two nodes with a transport, returns EdgeId.
+    fn connect_helper(
+        engine: &mut Engine,
+        from: NodeId,
+        to: NodeId,
+        transport: Transport,
+    ) -> EdgeId {
+        let pending = engine.graph.queue_connect(from, to);
+        let result = engine.graph.apply_mutations();
+        let edge = result.resolve_edge(pending).unwrap();
+        engine.set_transport(edge, transport);
+        edge
+    }
+
+    #[test]
+    fn delta_sub_step_no_op() {
+        let mut engine = Engine::new(SimulationStrategy::Delta { fixed_timestep: 2 });
+        let _source = add_node_helper(&mut engine, make_source(iron(), 5.0), 100, 100);
+
+        let result = engine.advance(1);
+        assert_eq!(result.steps_run, 0);
+        assert_eq!(engine.sim_state.tick, 0);
+        assert_eq!(engine.sim_state.accumulator, 1);
+    }
+
+    #[test]
+    fn delta_accumulates_then_steps() {
+        let mut engine = Engine::new(SimulationStrategy::Delta { fixed_timestep: 2 });
+        let source = add_node_helper(&mut engine, make_source(iron(), 5.0), 100, 100);
+
+        engine.advance(1);
+        let result = engine.advance(1);
+        assert_eq!(result.steps_run, 1);
+        assert_eq!(engine.sim_state.tick, 1);
+        assert_eq!(engine.sim_state.accumulator, 0);
+        assert!(engine.output_total(source) > 0);
+    }
+
+    #[test]
+    fn delta_multi_step_catchup() {
+        let mut engine = Engine::new(SimulationStrategy::Delta { fixed_timestep: 2 });
+        let _source = add_node_helper(&mut engine, make_source(iron(), 5.0), 100, 100);
+
+        let result = engine.advance(7);
+        assert_eq!(result.steps_run, 3);
+        assert_eq!(engine.sim_state.tick, 3);
+        assert_eq!(engine.sim_state.accumulator, 1);
+    }
+
+    #[test]
+    fn delta_zero_dt_no_change() {
+        let mut engine = Engine::new(SimulationStrategy::Delta { fixed_timestep: 2 });
+        let _source = add_node_helper(&mut engine, make_source(iron(), 5.0), 100, 100);
+
+        let hash_before = engine.state_hash();
+        let result = engine.advance(0);
+        assert_eq!(result.steps_run, 0);
+        assert_eq!(engine.sim_state.tick, 0);
+        assert_eq!(engine.state_hash(), hash_before);
+    }
+
+    #[test]
+    fn delta_determinism() {
+        fn run_delta() -> Vec<u64> {
+            let mut engine = Engine::new(SimulationStrategy::Delta { fixed_timestep: 2 });
+            let source = add_node_helper(&mut engine, make_source(iron(), 3.0), 100, 100);
+            let assembler = add_node_helper(
+                &mut engine,
+                make_recipe(vec![(iron(), 2)], vec![(gear(), 1)], 5),
+                100,
+                100,
+            );
+            connect_helper(&mut engine, source, assembler, make_flow_transport(10.0));
+
+            let mut hashes = Vec::new();
+            for dt in [1, 3, 2, 5, 1, 4, 7] {
+                engine.advance(dt);
+                hashes.push(engine.state_hash());
+            }
+            hashes
+        }
+
+        assert_eq!(run_delta(), run_delta());
+    }
 }
