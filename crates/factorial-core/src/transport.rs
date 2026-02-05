@@ -254,17 +254,16 @@ fn advance_flow(
     let items_moved: u32 = accepted.to_num();
 
     // Delivery: only after latency has expired.
-    let items_delivered;
-    if state.latency_remaining > 0 {
+    let items_delivered = if state.latency_remaining > 0 {
         state.latency_remaining -= 1;
-        items_delivered = 0;
+        0
     } else {
         // Deliver up to rate from the buffer.
         let can_deliver = rate.min(state.buffered);
         let delivered = if can_deliver > Fixed64::ZERO { can_deliver } else { Fixed64::ZERO };
         state.buffered -= delivered;
-        items_delivered = delivered.to_num();
-    }
+        delivered.to_num()
+    };
 
     TransportResult {
         items_moved,
