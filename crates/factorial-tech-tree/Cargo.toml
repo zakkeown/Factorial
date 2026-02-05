@@ -1,0 +1,12 @@
+[package]
+name = "factorial-tech-tree"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+factorial-core = { path = "../factorial-core" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = "1"
