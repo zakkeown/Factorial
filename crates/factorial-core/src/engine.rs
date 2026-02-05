@@ -489,6 +489,17 @@ impl Engine {
         // Emit state-change events.
         if processor_result.state_changed {
             let new_state = self.processor_states.get(node_id);
+
+            // BuildingResumed: any transition FROM Stalled to a non-Stalled state.
+            if matches!(prev_state.as_ref(), Some(ProcessorState::Stalled { .. }))
+                && !matches!(new_state, Some(ProcessorState::Stalled { .. }))
+            {
+                self.event_bus.emit(Event::BuildingResumed {
+                    node: node_id,
+                    tick,
+                });
+            }
+
             match (prev_state.as_ref(), new_state) {
                 // Transition to Working from Idle or Stalled => RecipeStarted.
                 (Some(ProcessorState::Idle) | Some(ProcessorState::Stalled { .. }), Some(ProcessorState::Working { .. })) => {
@@ -509,13 +520,6 @@ impl Engine {
                     self.event_bus.emit(Event::BuildingStalled {
                         node: node_id,
                         reason: *reason,
-                        tick,
-                    });
-                }
-                // Transition from Stalled to anything non-stalled => BuildingResumed.
-                (Some(ProcessorState::Stalled { .. }), Some(ProcessorState::Idle)) => {
-                    self.event_bus.emit(Event::BuildingResumed {
-                        node: node_id,
                         tick,
                     });
                 }
