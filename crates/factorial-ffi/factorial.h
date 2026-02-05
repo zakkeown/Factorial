@@ -46,6 +46,10 @@ typedef enum FactorialResult {
    * An internal panic was caught at the FFI boundary.
    */
   INTERNAL_ERROR = 7,
+  /**
+   * The engine is poisoned (a previous panic left it in an inconsistent state).
+   */
+  POISONED = 8,
 } FactorialResult;
 
 /**
@@ -198,6 +202,25 @@ typedef struct FfiByteBuffer {
    */
   uintptr_t len;
 } FfiByteBuffer;
+
+/**
+ * C-compatible item stack (item type + quantity).
+ */
+typedef struct FfiItemStack {
+  uint32_t item_type;
+  uint32_t quantity;
+} FfiItemStack;
+
+/**
+ * C-compatible recipe for FixedRecipe processor.
+ */
+typedef struct FfiRecipe {
+  uint32_t input_count;
+  const struct FfiItemStack *inputs;
+  uint32_t output_count;
+  const struct FfiItemStack *outputs;
+  uint32_t duration;
+} FfiRecipe;
 
 /**
  * Create a new engine with `Tick` simulation strategy.
@@ -378,7 +401,7 @@ enum FactorialResult factorial_get_output_inventory_count(const FactorialEngine 
  *
  * `engine` and `out_buffer` must be valid pointers.
  */
-enum FactorialResult factorial_poll_events(const FactorialEngine *_engine,
+enum FactorialResult factorial_poll_events(const FactorialEngine *engine,
                                            struct FfiEventBuffer *out_buffer);
 
 /**
@@ -414,5 +437,132 @@ enum FactorialResult factorial_deserialize(const uint8_t *data,
  * After this call the buffer's data pointer is invalid.
  */
 enum FactorialResult factorial_free_buffer(struct FfiByteBuffer buffer);
+
+/**
+ * Set a node's processor to Source.
+ *
+ * `rate` is raw Fixed64 bits (Q32.32). Use `Fixed64::to_bits()` on the Rust
+ * side or shift an integer left by 32 on the C side to construct it.
+ *
+ * # Safety
+ *
+ * `engine` must be a valid engine pointer.
+ */
+enum FactorialResult factorial_set_source(FactorialEngine *engine,
+                                          FfiNodeId node_id,
+                                          uint32_t item_type,
+                                          int64_t rate);
+
+/**
+ * Set a node's processor to FixedRecipe.
+ *
+ * The `recipe` pointer must point to a valid `FfiRecipe` whose `inputs` and
+ * `outputs` arrays have the declared counts.
+ *
+ * # Safety
+ *
+ * `engine` and `recipe` must be valid pointers. The arrays referenced by
+ * `recipe.inputs` and `recipe.outputs` must be valid for the declared counts.
+ */
+enum FactorialResult factorial_set_fixed_processor(FactorialEngine *engine,
+                                                   FfiNodeId node_id,
+                                                   const struct FfiRecipe *recipe);
+
+/**
+ * Set an edge's transport to FlowTransport with default buffer/latency.
+ *
+ * `rate` is raw Fixed64 bits (Q32.32).
+ *
+ * # Safety
+ *
+ * `engine` must be a valid engine pointer.
+ */
+enum FactorialResult factorial_set_flow_transport(FactorialEngine *engine,
+                                                  FfiEdgeId edge_id,
+                                                  int64_t rate);
+
+/**
+ * Set an edge's transport to ItemTransport.
+ *
+ * `speed` is raw Fixed64 bits (Q32.32).
+ *
+ * # Safety
+ *
+ * `engine` must be a valid engine pointer.
+ */
+enum FactorialResult factorial_set_item_transport(FactorialEngine *engine,
+                                                  FfiEdgeId edge_id,
+                                                  int64_t speed,
+                                                  uint32_t slot_count,
+                                                  uint8_t lanes);
+
+/**
+ * Set an edge's transport to BatchTransport.
+ *
+ * # Safety
+ *
+ * `engine` must be a valid engine pointer.
+ */
+enum FactorialResult factorial_set_batch_transport(FactorialEngine *engine,
+                                                   FfiEdgeId edge_id,
+                                                   uint32_t batch_size,
+                                                   uint32_t cycle_time);
+
+/**
+ * Set an edge's transport to VehicleTransport.
+ *
+ * # Safety
+ *
+ * `engine` must be a valid engine pointer.
+ */
+enum FactorialResult factorial_set_vehicle_transport(FactorialEngine *engine,
+                                                     FfiEdgeId edge_id,
+                                                     uint32_t capacity,
+                                                     uint32_t travel_time);
+
+/**
+ * Set the input inventory for a node with the given capacity.
+ *
+ * Creates an inventory with 1 input slot and 1 output slot.
+ *
+ * # Safety
+ *
+ * `engine` must be a valid engine pointer.
+ */
+enum FactorialResult factorial_set_input_capacity(FactorialEngine *engine,
+                                                  FfiNodeId node_id,
+                                                  uint32_t capacity);
+
+/**
+ * Set the output inventory for a node with the given capacity.
+ *
+ * Creates an inventory with 1 input slot and 1 output slot.
+ *
+ * # Safety
+ *
+ * `engine` must be a valid engine pointer.
+ */
+enum FactorialResult factorial_set_output_capacity(FactorialEngine *engine,
+                                                   FfiNodeId node_id,
+                                                   uint32_t capacity);
+
+/**
+ * Check whether the engine is poisoned (a previous panic left it in an
+ * inconsistent state). Returns `false` if the engine pointer is null.
+ *
+ * # Safety
+ *
+ * `engine` must be a valid engine pointer or null.
+ */
+bool factorial_is_poisoned(const FactorialEngine *engine);
+
+/**
+ * Clear the poisoned flag on an engine, allowing it to be used again.
+ *
+ * # Safety
+ *
+ * `engine` must be a valid engine pointer.
+ */
+enum FactorialResult factorial_clear_poison(FactorialEngine *engine);
 
 #endif  /* FACTORIAL_H */
