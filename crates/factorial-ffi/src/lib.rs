@@ -20,9 +20,16 @@ use std::ptr;
 
 use factorial_core::engine::Engine;
 use factorial_core::event::{Event, EventKind};
-use factorial_core::id::{BuildingTypeId, NodeId, EdgeId};
-use factorial_core::processor::ProcessorState;
+use factorial_core::fixed::Fixed64;
+use factorial_core::id::{BuildingTypeId, ItemTypeId, NodeId, EdgeId};
+use factorial_core::item::Inventory;
+use factorial_core::processor::{
+    Depletion, FixedRecipe, Processor, ProcessorState, RecipeInput, RecipeOutput, SourceProcessor,
+};
 use factorial_core::sim::SimulationStrategy;
+use factorial_core::transport::{
+    BatchTransport, FlowTransport, ItemTransport, Transport, VehicleTransport,
+};
 
 use slotmap::{Key, KeyData};
 
@@ -1157,6 +1164,375 @@ pub unsafe extern "C" fn factorial_free_buffer(buffer: FfiByteBuffer) -> Factori
 }
 
 // ---------------------------------------------------------------------------
+// FFI-safe configuration structs
+// ---------------------------------------------------------------------------
+
+/// C-compatible item stack (item type + quantity).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct FfiItemStack {
+    pub item_type: u32,
+    pub quantity: u32,
+}
+
+/// C-compatible recipe for FixedRecipe processor.
+#[repr(C)]
+#[derive(Debug)]
+pub struct FfiRecipe {
+    pub input_count: u32,
+    pub inputs: *const FfiItemStack,
+    pub output_count: u32,
+    pub outputs: *const FfiItemStack,
+    pub duration: u32,
+}
+
+// ---------------------------------------------------------------------------
+// Configuration: Processors
+// ---------------------------------------------------------------------------
+
+/// Set a node's processor to Source.
+///
+/// `rate` is raw Fixed64 bits (Q32.32). Use `Fixed64::to_bits()` on the Rust
+/// side or shift an integer left by 32 on the C side to construct it.
+///
+/// # Safety
+///
+/// `engine` must be a valid engine pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_set_source(
+    engine: *mut FactorialEngine,
+    node_id: FfiNodeId,
+    item_type: u32,
+    rate: i64,
+) -> FactorialResult {
+    if engine.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let nid = ffi_to_node_id(node_id);
+        let processor = Processor::Source(SourceProcessor {
+            output_type: ItemTypeId(item_type),
+            base_rate: Fixed64::from_bits(rate),
+            depletion: Depletion::Infinite,
+            accumulated: Fixed64::from_num(0),
+        });
+        engine.inner.set_processor(nid, processor);
+        FactorialResult::Ok
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
+    }
+}
+
+/// Set a node's processor to FixedRecipe.
+///
+/// The `recipe` pointer must point to a valid `FfiRecipe` whose `inputs` and
+/// `outputs` arrays have the declared counts.
+///
+/// # Safety
+///
+/// `engine` and `recipe` must be valid pointers. The arrays referenced by
+/// `recipe.inputs` and `recipe.outputs` must be valid for the declared counts.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_set_fixed_processor(
+    engine: *mut FactorialEngine,
+    node_id: FfiNodeId,
+    recipe: *const FfiRecipe,
+) -> FactorialResult {
+    if engine.is_null() || recipe.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let recipe = unsafe { &*recipe };
+        let inputs = if recipe.input_count > 0 && !recipe.inputs.is_null() {
+            let ffi_inputs =
+                unsafe { std::slice::from_raw_parts(recipe.inputs, recipe.input_count as usize) };
+            ffi_inputs
+                .iter()
+                .map(|fi| RecipeInput {
+                    item_type: ItemTypeId(fi.item_type),
+                    quantity: fi.quantity,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let outputs = if recipe.output_count > 0 && !recipe.outputs.is_null() {
+            let ffi_outputs =
+                unsafe { std::slice::from_raw_parts(recipe.outputs, recipe.output_count as usize) };
+            ffi_outputs
+                .iter()
+                .map(|fo| RecipeOutput {
+                    item_type: ItemTypeId(fo.item_type),
+                    quantity: fo.quantity,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let nid = ffi_to_node_id(node_id);
+        let processor = Processor::Fixed(FixedRecipe {
+            inputs,
+            outputs,
+            duration: recipe.duration,
+        });
+        engine.inner.set_processor(nid, processor);
+        FactorialResult::Ok
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Configuration: Transports
+// ---------------------------------------------------------------------------
+
+/// Set an edge's transport to FlowTransport with default buffer/latency.
+///
+/// `rate` is raw Fixed64 bits (Q32.32).
+///
+/// # Safety
+///
+/// `engine` must be a valid engine pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_set_flow_transport(
+    engine: *mut FactorialEngine,
+    edge_id: FfiEdgeId,
+    rate: i64,
+) -> FactorialResult {
+    if engine.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let eid = ffi_to_edge_id(edge_id);
+        let transport = Transport::Flow(FlowTransport {
+            rate: Fixed64::from_bits(rate),
+            buffer_capacity: Fixed64::from_num(1000),
+            latency: 0,
+        });
+        engine.inner.set_transport(eid, transport);
+        FactorialResult::Ok
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
+    }
+}
+
+/// Set an edge's transport to ItemTransport.
+///
+/// `speed` is raw Fixed64 bits (Q32.32).
+///
+/// # Safety
+///
+/// `engine` must be a valid engine pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_set_item_transport(
+    engine: *mut FactorialEngine,
+    edge_id: FfiEdgeId,
+    speed: i64,
+    slot_count: u32,
+    lanes: u8,
+) -> FactorialResult {
+    if engine.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let eid = ffi_to_edge_id(edge_id);
+        let transport = Transport::Item(ItemTransport {
+            speed: Fixed64::from_bits(speed),
+            slot_count,
+            lanes,
+        });
+        engine.inner.set_transport(eid, transport);
+        FactorialResult::Ok
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
+    }
+}
+
+/// Set an edge's transport to BatchTransport.
+///
+/// # Safety
+///
+/// `engine` must be a valid engine pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_set_batch_transport(
+    engine: *mut FactorialEngine,
+    edge_id: FfiEdgeId,
+    batch_size: u32,
+    cycle_time: u32,
+) -> FactorialResult {
+    if engine.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let eid = ffi_to_edge_id(edge_id);
+        let transport = Transport::Batch(BatchTransport {
+            batch_size,
+            cycle_time,
+        });
+        engine.inner.set_transport(eid, transport);
+        FactorialResult::Ok
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
+    }
+}
+
+/// Set an edge's transport to VehicleTransport.
+///
+/// # Safety
+///
+/// `engine` must be a valid engine pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_set_vehicle_transport(
+    engine: *mut FactorialEngine,
+    edge_id: FfiEdgeId,
+    capacity: u32,
+    travel_time: u32,
+) -> FactorialResult {
+    if engine.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let eid = ffi_to_edge_id(edge_id);
+        let transport = Transport::Vehicle(VehicleTransport {
+            capacity,
+            travel_time,
+        });
+        engine.inner.set_transport(eid, transport);
+        FactorialResult::Ok
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Configuration: Inventories
+// ---------------------------------------------------------------------------
+
+/// Set the input inventory for a node with the given capacity.
+///
+/// Creates an inventory with 1 input slot and 1 output slot.
+///
+/// # Safety
+///
+/// `engine` must be a valid engine pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_set_input_capacity(
+    engine: *mut FactorialEngine,
+    node_id: FfiNodeId,
+    capacity: u32,
+) -> FactorialResult {
+    if engine.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let nid = ffi_to_node_id(node_id);
+        let inventory = Inventory::new(1, 1, capacity);
+        engine.inner.set_input_inventory(nid, inventory);
+        FactorialResult::Ok
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
+    }
+}
+
+/// Set the output inventory for a node with the given capacity.
+///
+/// Creates an inventory with 1 input slot and 1 output slot.
+///
+/// # Safety
+///
+/// `engine` must be a valid engine pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_set_output_capacity(
+    engine: *mut FactorialEngine,
+    node_id: FfiNodeId,
+    capacity: u32,
+) -> FactorialResult {
+    if engine.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let nid = ffi_to_node_id(node_id);
+        let inventory = Inventory::new(1, 1, capacity);
+        engine.inner.set_output_inventory(nid, inventory);
+        FactorialResult::Ok
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Poison checking
 // ---------------------------------------------------------------------------
 
@@ -1197,10 +1573,6 @@ pub unsafe extern "C" fn factorial_clear_poison(engine: *mut FactorialEngine) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use factorial_core::fixed::Fixed64;
-    use factorial_core::id::*;
-    use factorial_core::item::Inventory;
-    use factorial_core::processor::*;
 
     // -----------------------------------------------------------------------
     // Helpers
@@ -2103,6 +2475,335 @@ mod tests {
     fn new_engine_not_poisoned() {
         let engine = factorial_create();
         assert!(!unsafe { factorial_is_poisoned(engine) });
+        unsafe { factorial_destroy(engine) };
+    }
+
+    // -----------------------------------------------------------------------
+    // Helper: add a node via FFI, apply mutations, return real FfiNodeId
+    // -----------------------------------------------------------------------
+    fn ffi_add_node_and_apply(engine: *mut FactorialEngine, building_type: u32) -> FfiNodeId {
+        let mut pending: FfiPendingNodeId = 0;
+        unsafe { factorial_add_node(engine, building_type, &mut pending) };
+        let mut mr = FfiMutationResult {
+            added_nodes: ptr::null(),
+            added_node_count: 0,
+            added_edges: ptr::null(),
+            added_edge_count: 0,
+        };
+        unsafe { factorial_apply_mutations(engine, &mut mr) };
+        assert_eq!(mr.added_node_count, 1);
+        let pairs = unsafe { std::slice::from_raw_parts(mr.added_nodes, 1) };
+        pairs[0].real_id
+    }
+
+    // -----------------------------------------------------------------------
+    // Helper: add two nodes via FFI, connect them, apply, return (node_a, node_b, edge)
+    // -----------------------------------------------------------------------
+    fn ffi_add_two_nodes_and_connect(
+        engine: *mut FactorialEngine,
+    ) -> (FfiNodeId, FfiNodeId, FfiEdgeId) {
+        // Add two nodes.
+        let mut pending_a: FfiPendingNodeId = 0;
+        let mut pending_b: FfiPendingNodeId = 0;
+        unsafe { factorial_add_node(engine, 0, &mut pending_a) };
+        unsafe { factorial_add_node(engine, 1, &mut pending_b) };
+        let mut mr = FfiMutationResult {
+            added_nodes: ptr::null(),
+            added_node_count: 0,
+            added_edges: ptr::null(),
+            added_edge_count: 0,
+        };
+        unsafe { factorial_apply_mutations(engine, &mut mr) };
+        assert_eq!(mr.added_node_count, 2);
+        let node_pairs = unsafe { std::slice::from_raw_parts(mr.added_nodes, 2) };
+        let node_a = node_pairs[0].real_id;
+        let node_b = node_pairs[1].real_id;
+
+        // Connect A -> B.
+        let mut pending_edge: FfiPendingEdgeId = 0;
+        unsafe { factorial_connect(engine, node_a, node_b, &mut pending_edge) };
+        let mut mr2 = FfiMutationResult {
+            added_nodes: ptr::null(),
+            added_node_count: 0,
+            added_edges: ptr::null(),
+            added_edge_count: 0,
+        };
+        unsafe { factorial_apply_mutations(engine, &mut mr2) };
+        assert_eq!(mr2.added_edge_count, 1);
+        let edge_pairs = unsafe { std::slice::from_raw_parts(mr2.added_edges, 1) };
+        let edge_id = edge_pairs[0].real_id;
+
+        (node_a, node_b, edge_id)
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 24: Set source via FFI
+    // -----------------------------------------------------------------------
+    #[test]
+    fn set_source_via_ffi() {
+        let engine = factorial_create();
+        let node_id = ffi_add_node_and_apply(engine, 0);
+
+        // Set source: item_type=0 (iron), rate=3.0 as Fixed64 bits.
+        let rate_bits = Fixed64::from_num(3).to_bits();
+        let result = unsafe { factorial_set_source(engine, node_id, 0, rate_bits) };
+        assert_eq!(result, FactorialResult::Ok);
+
+        // Set inventories.
+        let result = unsafe { factorial_set_input_capacity(engine, node_id, 100) };
+        assert_eq!(result, FactorialResult::Ok);
+        let result = unsafe { factorial_set_output_capacity(engine, node_id, 100) };
+        assert_eq!(result, FactorialResult::Ok);
+
+        // Step once.
+        let result = unsafe { factorial_step(engine) };
+        assert_eq!(result, FactorialResult::Ok);
+
+        // Check output: source at rate 3 should produce 3 items.
+        let mut count: u32 = 0;
+        let result =
+            unsafe { factorial_get_output_inventory_count(engine, node_id, &mut count) };
+        assert_eq!(result, FactorialResult::Ok);
+        assert_eq!(count, 3, "source should produce 3 items per tick");
+
+        // Verify processor state is Working.
+        let mut info = FfiProcessorInfo {
+            state: FfiProcessorState::Idle,
+            progress: 0,
+        };
+        let result =
+            unsafe { factorial_get_processor_state(engine, node_id, &mut info) };
+        assert_eq!(result, FactorialResult::Ok);
+        assert_eq!(info.state, FfiProcessorState::Working);
+
+        unsafe { factorial_destroy(engine) };
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 25: Set fixed processor via FFI
+    // -----------------------------------------------------------------------
+    #[test]
+    fn set_fixed_processor_via_ffi() {
+        let engine = factorial_create();
+        let node_id = ffi_add_node_and_apply(engine, 0);
+
+        // Build a recipe: 2 iron(0) -> 1 gear(2), duration 5.
+        let inputs = [
+            FfiItemStack { item_type: 0, quantity: 2 },
+        ];
+        let outputs = [
+            FfiItemStack { item_type: 2, quantity: 1 },
+        ];
+        let recipe = FfiRecipe {
+            input_count: 1,
+            inputs: inputs.as_ptr(),
+            output_count: 1,
+            outputs: outputs.as_ptr(),
+            duration: 5,
+        };
+
+        let result = unsafe { factorial_set_fixed_processor(engine, node_id, &recipe) };
+        assert_eq!(result, FactorialResult::Ok);
+
+        // Set inventories.
+        unsafe { factorial_set_input_capacity(engine, node_id, 100) };
+        unsafe { factorial_set_output_capacity(engine, node_id, 100) };
+
+        // Verify processor was set by checking state (should be Idle initially).
+        let mut info = FfiProcessorInfo {
+            state: FfiProcessorState::Working,
+            progress: 99,
+        };
+        let result =
+            unsafe { factorial_get_processor_state(engine, node_id, &mut info) };
+        assert_eq!(result, FactorialResult::Ok);
+        assert_eq!(info.state, FfiProcessorState::Idle);
+
+        // Step once -- should stall on missing inputs since input inventory is empty.
+        unsafe { factorial_step(engine) };
+
+        let result =
+            unsafe { factorial_get_processor_state(engine, node_id, &mut info) };
+        assert_eq!(result, FactorialResult::Ok);
+        assert_eq!(info.state, FfiProcessorState::StalledMissingInputs);
+
+        // Null checks.
+        let result = unsafe { factorial_set_fixed_processor(ptr::null_mut(), node_id, &recipe) };
+        assert_eq!(result, FactorialResult::NullPointer);
+        let result = unsafe { factorial_set_fixed_processor(engine, node_id, ptr::null()) };
+        assert_eq!(result, FactorialResult::NullPointer);
+
+        unsafe { factorial_destroy(engine) };
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 26: Set transport types via FFI
+    // -----------------------------------------------------------------------
+    #[test]
+    fn set_transport_types_via_ffi() {
+        let engine = factorial_create();
+
+        // We need 4 separate edges for 4 transport types.
+        // Add 5 nodes and 4 edges: A->B, B->C, C->D, D->E.
+        let mut pending_ids: [FfiPendingNodeId; 5] = [0; 5];
+        for pid in &mut pending_ids {
+            unsafe { factorial_add_node(engine, 0, pid) };
+        }
+        let mut mr = FfiMutationResult {
+            added_nodes: ptr::null(),
+            added_node_count: 0,
+            added_edges: ptr::null(),
+            added_edge_count: 0,
+        };
+        unsafe { factorial_apply_mutations(engine, &mut mr) };
+        assert_eq!(mr.added_node_count, 5);
+        let nodes = unsafe { std::slice::from_raw_parts(mr.added_nodes, 5) };
+        let node_ids: Vec<FfiNodeId> = nodes.iter().map(|p| p.real_id).collect();
+
+        // Connect 4 edges.
+        let mut pending_edges: [FfiPendingEdgeId; 4] = [0; 4];
+        for i in 0..4 {
+            unsafe { factorial_connect(engine, node_ids[i], node_ids[i + 1], &mut pending_edges[i]) };
+        }
+        let mut mr2 = FfiMutationResult {
+            added_nodes: ptr::null(),
+            added_node_count: 0,
+            added_edges: ptr::null(),
+            added_edge_count: 0,
+        };
+        unsafe { factorial_apply_mutations(engine, &mut mr2) };
+        assert_eq!(mr2.added_edge_count, 4);
+        let edges = unsafe { std::slice::from_raw_parts(mr2.added_edges, 4) };
+        let edge_ids: Vec<FfiEdgeId> = edges.iter().map(|p| p.real_id).collect();
+
+        // Set FlowTransport on edge 0.
+        let flow_rate_bits = Fixed64::from_num(5).to_bits();
+        let result = unsafe { factorial_set_flow_transport(engine, edge_ids[0], flow_rate_bits) };
+        assert_eq!(result, FactorialResult::Ok);
+
+        // Set ItemTransport on edge 1.
+        let speed_bits = Fixed64::from_num(1).to_bits();
+        let result = unsafe { factorial_set_item_transport(engine, edge_ids[1], speed_bits, 10, 1) };
+        assert_eq!(result, FactorialResult::Ok);
+
+        // Set BatchTransport on edge 2.
+        let result = unsafe { factorial_set_batch_transport(engine, edge_ids[2], 20, 5) };
+        assert_eq!(result, FactorialResult::Ok);
+
+        // Set VehicleTransport on edge 3.
+        let result = unsafe { factorial_set_vehicle_transport(engine, edge_ids[3], 50, 10) };
+        assert_eq!(result, FactorialResult::Ok);
+
+        // Verify edge count is still 4.
+        let mut edge_count: u32 = 0;
+        unsafe { factorial_edge_count(engine, &mut edge_count) };
+        assert_eq!(edge_count, 4);
+
+        // Step should not panic with the configured transports.
+        let result = unsafe { factorial_step(engine) };
+        assert_eq!(result, FactorialResult::Ok);
+
+        unsafe { factorial_destroy(engine) };
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 27: Full FFI lifecycle -- no direct access
+    // -----------------------------------------------------------------------
+    #[test]
+    fn full_ffi_lifecycle_no_direct_access() {
+        let engine = factorial_create();
+
+        // Add source node and consumer node.
+        let (src_id, consumer_id, edge_id) = ffi_add_two_nodes_and_connect(engine);
+
+        // Configure source: item_type=0 (iron), rate=5.0.
+        let rate_bits = Fixed64::from_num(5).to_bits();
+        assert_eq!(
+            unsafe { factorial_set_source(engine, src_id, 0, rate_bits) },
+            FactorialResult::Ok
+        );
+
+        // Configure consumer: 2 iron -> 1 gear, 3 ticks.
+        let inputs = [FfiItemStack { item_type: 0, quantity: 2 }];
+        let outputs = [FfiItemStack { item_type: 2, quantity: 1 }];
+        let recipe = FfiRecipe {
+            input_count: 1,
+            inputs: inputs.as_ptr(),
+            output_count: 1,
+            outputs: outputs.as_ptr(),
+            duration: 3,
+        };
+        assert_eq!(
+            unsafe { factorial_set_fixed_processor(engine, consumer_id, &recipe) },
+            FactorialResult::Ok
+        );
+
+        // Set inventories for both nodes.
+        assert_eq!(
+            unsafe { factorial_set_input_capacity(engine, src_id, 100) },
+            FactorialResult::Ok
+        );
+        assert_eq!(
+            unsafe { factorial_set_output_capacity(engine, src_id, 100) },
+            FactorialResult::Ok
+        );
+        assert_eq!(
+            unsafe { factorial_set_input_capacity(engine, consumer_id, 100) },
+            FactorialResult::Ok
+        );
+        assert_eq!(
+            unsafe { factorial_set_output_capacity(engine, consumer_id, 100) },
+            FactorialResult::Ok
+        );
+
+        // Set transport: flow at rate 10.
+        let transport_rate_bits = Fixed64::from_num(10).to_bits();
+        assert_eq!(
+            unsafe { factorial_set_flow_transport(engine, edge_id, transport_rate_bits) },
+            FactorialResult::Ok
+        );
+
+        // Step 20 times.
+        for _ in 0..20 {
+            let result = unsafe { factorial_step(engine) };
+            assert_eq!(result, FactorialResult::Ok);
+        }
+
+        // Verify tick is 20.
+        let mut tick: u64 = 0;
+        unsafe { factorial_get_tick(engine, &mut tick) };
+        assert_eq!(tick, 20);
+
+        // The source produces 5 iron/tick. Over 20 ticks that's 100 iron produced.
+        // Some will be in the source output, some transported, some consumed.
+        // We just verify the system ran without errors and something happened.
+
+        // Check source output: it should have items (source produces 5/tick, transport
+        // moves up to 10/tick, so source output shouldn't be full).
+        let mut src_output: u32 = 0;
+        unsafe { factorial_get_output_inventory_count(engine, src_id, &mut src_output) };
+
+        // Check consumer output: after ~20 ticks with a 3-tick recipe consuming 2 iron
+        // and receiving a flow of iron, the consumer should have produced some gears.
+        let mut consumer_output: u32 = 0;
+        unsafe { factorial_get_output_inventory_count(engine, consumer_id, &mut consumer_output) };
+
+        // The consumer should have produced at least some gears by now.
+        // With 5 iron/tick flowing in and the recipe consuming 2 iron every 3 ticks,
+        // there should be meaningful output.
+        assert!(
+            consumer_output > 0,
+            "consumer should have produced gears after 20 ticks, got {consumer_output}"
+        );
+
+        // Verify processor states are not stalled.
+        let mut src_info = FfiProcessorInfo {
+            state: FfiProcessorState::Idle,
+            progress: 0,
+        };
+        unsafe { factorial_get_processor_state(engine, src_id, &mut src_info) };
+        assert_eq!(src_info.state, FfiProcessorState::Working);
+
         unsafe { factorial_destroy(engine) };
     }
 }
