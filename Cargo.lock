@@ -329,6 +329,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "factorial-stats"
+version = "0.1.0"
+dependencies = [
+ "factorial-core",
+ "fixed",
+ "slotmap",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

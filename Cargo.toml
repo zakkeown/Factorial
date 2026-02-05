@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/factorial-core",
     "crates/factorial-ffi",
+    "crates/factorial-stats",
 ]
 
 [workspace.dependencies]
