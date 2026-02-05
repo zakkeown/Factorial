@@ -526,3 +526,99 @@ fn determinism_identical_runs() {
         run1.len()
     );
 }
+
+// ===========================================================================
+// Batch transport chain
+// ===========================================================================
+#[test]
+fn batch_transport_chain() {
+    let mut engine = Engine::new(SimulationStrategy::Tick);
+    let source = add_node(&mut engine, make_source(iron(), 5.0), 100, 100);
+    let consumer = add_node(
+        &mut engine,
+        make_recipe(vec![(iron(), 999)], vec![(gear(), 1)], 9999),
+        100,
+        100,
+    );
+    connect(&mut engine, source, consumer, make_batch_transport(10, 5));
+    for _ in 0..20 {
+        engine.step();
+    }
+    let consumer_input = input_quantity(&engine, consumer, iron());
+    assert!(
+        consumer_input > 0,
+        "consumer should have received iron via batch transport, got {consumer_input}"
+    );
+}
+
+// ===========================================================================
+// Vehicle transport round-trip
+// ===========================================================================
+#[test]
+fn vehicle_transport_round_trip() {
+    let mut engine = Engine::new(SimulationStrategy::Tick);
+    let source = add_node(&mut engine, make_source(iron(), 10.0), 100, 100);
+    let consumer = add_node(
+        &mut engine,
+        make_recipe(vec![(iron(), 999)], vec![(gear(), 1)], 9999),
+        200,
+        100,
+    );
+    connect(&mut engine, source, consumer, make_vehicle_transport(20, 3));
+    for _ in 0..20 {
+        engine.step();
+    }
+    let consumer_input = input_quantity(&engine, consumer, iron());
+    assert!(
+        consumer_input > 0,
+        "consumer should have received iron via vehicle transport, got {consumer_input}"
+    );
+    assert!(
+        consumer_input <= 80,
+        "vehicle shouldn't exceed capacity * trips; got {consumer_input}"
+    );
+}
+
+// ===========================================================================
+// Mixed transport factory
+// ===========================================================================
+#[test]
+fn mixed_transport_factory() {
+    let mut engine = Engine::new(SimulationStrategy::Tick);
+    let iron_source = add_node(&mut engine, make_source(iron(), 5.0), 100, 100);
+    let copper_source = add_node(&mut engine, make_source(copper(), 5.0), 100, 100);
+    let assembler = add_node(
+        &mut engine,
+        make_recipe(vec![(iron(), 1), (copper(), 1)], vec![(gear(), 1)], 3),
+        100,
+        100,
+    );
+    let buffer = add_node(
+        &mut engine,
+        make_recipe(vec![(gear(), 999)], vec![(iron(), 1)], 9999),
+        100,
+        100,
+    );
+    let sink = add_node(
+        &mut engine,
+        make_recipe(vec![(gear(), 999)], vec![(iron(), 1)], 9999),
+        100,
+        100,
+    );
+    connect(&mut engine, iron_source, assembler, make_flow_transport(10.0));
+    connect(&mut engine, copper_source, assembler, make_item_transport(5));
+    connect(&mut engine, assembler, buffer, make_batch_transport(5, 3));
+    connect(&mut engine, buffer, sink, make_vehicle_transport(10, 2));
+    for _ in 0..50 {
+        engine.step();
+    }
+    let total_items = input_total(&engine, assembler)
+        + output_total(&engine, assembler)
+        + input_total(&engine, buffer)
+        + output_total(&engine, buffer)
+        + input_total(&engine, sink);
+    assert!(
+        total_items > 0,
+        "items should flow through mixed transport factory; total items in system: {total_items}"
+    );
+}
