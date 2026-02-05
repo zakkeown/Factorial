@@ -1,0 +1,703 @@
+use crate::id::*;
+use slotmap::{SecondaryMap, SlotMap};
+use std::collections::VecDeque;
+
+// ---------------------------------------------------------------------------
+// Error types
+// ---------------------------------------------------------------------------
+
+/// Errors that can occur during graph operations.
+#[derive(Debug, thiserror::Error)]
+pub enum GraphError {
+    #[error("cycle detected in production graph")]
+    CycleDetected,
+    #[error("node not found: {0:?}")]
+    NodeNotFound(NodeId),
+    #[error("edge not found: {0:?}")]
+    EdgeNotFound(EdgeId),
+}
+
+// ---------------------------------------------------------------------------
+// Core data structures
+// ---------------------------------------------------------------------------
+
+/// Adjacency lists for a single node, tracking incoming and outgoing edges.
+#[derive(Debug, Clone, Default)]
+struct NodeAdjacency {
+    /// Edges whose destination is this node.
+    inputs: Vec<EdgeId>,
+    /// Edges whose source is this node.
+    outputs: Vec<EdgeId>,
+}
+
+/// Per-node data stored in the production graph.
+#[derive(Debug, Clone)]
+pub struct NodeData {
+    /// The building template this node was created from.
+    pub building_type: BuildingTypeId,
+}
+
+/// Per-edge data stored in the production graph.
+#[derive(Debug, Clone)]
+pub struct EdgeData {
+    /// Source node.
+    pub from: NodeId,
+    /// Destination node.
+    pub to: NodeId,
+}
+
+// ---------------------------------------------------------------------------
+// Queued mutations
+// ---------------------------------------------------------------------------
+
+/// A mutation to be applied during the next `apply_mutations` call.
+#[derive(Debug)]
+enum Mutation {
+    AddNode {
+        building_type: BuildingTypeId,
+        pending_id: PendingNodeId,
+    },
+    RemoveNode {
+        node: NodeId,
+    },
+    Connect {
+        from: NodeId,
+        to: NodeId,
+        pending_id: PendingEdgeId,
+    },
+    Disconnect {
+        edge: EdgeId,
+    },
+}
+
+/// Result of applying queued mutations. Maps pending IDs to real IDs.
+#[derive(Debug, Default)]
+pub struct MutationResult {
+    /// Maps each `PendingNodeId` counter to the real `NodeId` it was assigned.
+    pub added_nodes: Vec<(PendingNodeId, NodeId)>,
+    /// Maps each `PendingEdgeId` counter to the real `EdgeId` it was assigned.
+    pub added_edges: Vec<(PendingEdgeId, EdgeId)>,
+}
+
+impl MutationResult {
+    /// Look up the real `NodeId` for a pending node.
+    pub fn resolve_node(&self, pending: PendingNodeId) -> Option<NodeId> {
+        self.added_nodes
+            .iter()
+            .find(|(p, _)| *p == pending)
+            .map(|(_, id)| *id)
+    }
+
+    /// Look up the real `EdgeId` for a pending edge.
+    pub fn resolve_edge(&self, pending: PendingEdgeId) -> Option<EdgeId> {
+        self.added_edges
+            .iter()
+            .find(|(p, _)| *p == pending)
+            .map(|(_, id)| *id)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ProductionGraph
+// ---------------------------------------------------------------------------
+
+/// The production graph: nodes (buildings), edges (transport links), with
+/// cached topological ordering and a queued mutation system.
+///
+/// Adjacency is stored in a `SecondaryMap` keyed by `NodeId`, following the
+/// same SoA pattern used by `ComponentStorage`. This guarantees key
+/// synchronization with the primary `nodes` SlotMap.
+#[derive(Debug)]
+pub struct ProductionGraph {
+    nodes: SlotMap<NodeId, NodeData>,
+    edges: SlotMap<EdgeId, EdgeData>,
+    adjacency: SecondaryMap<NodeId, NodeAdjacency>,
+
+    /// Cached topological order. Recomputed lazily when `dirty` is true.
+    topo_cache: Vec<NodeId>,
+    /// Whether the cached topological order needs recomputation.
+    dirty: bool,
+
+    /// Queued mutations to be applied atomically.
+    mutations: Vec<Mutation>,
+    /// Counter for generating unique `PendingNodeId` values.
+    next_pending_node: u64,
+    /// Counter for generating unique `PendingEdgeId` values.
+    next_pending_edge: u64,
+}
+
+impl Default for ProductionGraph {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProductionGraph {
+    /// Create a new, empty production graph.
+    pub fn new() -> Self {
+        Self {
+            nodes: SlotMap::with_key(),
+            edges: SlotMap::with_key(),
+            adjacency: SecondaryMap::new(),
+            topo_cache: Vec::new(),
+            dirty: true,
+            mutations: Vec::new(),
+            next_pending_node: 0,
+            next_pending_edge: 0,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Immediate (non-queued) mutations — used internally by apply_mutations
+    // -----------------------------------------------------------------------
+
+    /// Add a node immediately. Returns the assigned `NodeId`.
+    fn add_node_immediate(&mut self, building_type: BuildingTypeId) -> NodeId {
+        let node_id = self.nodes.insert(NodeData { building_type });
+        self.adjacency.insert(node_id, NodeAdjacency::default());
+        self.dirty = true;
+        node_id
+    }
+
+    /// Remove a node immediately. Also removes all connected edges.
+    fn remove_node_immediate(&mut self, node: NodeId) {
+        // Collect edges to remove (both inputs and outputs).
+        let edges_to_remove: Vec<EdgeId> = if let Some(adj) = self.adjacency.get(node) {
+            adj.inputs
+                .iter()
+                .chain(adj.outputs.iter())
+                .copied()
+                .collect()
+        } else {
+            return;
+        };
+
+        // Remove each connected edge.
+        for edge_id in edges_to_remove {
+            self.disconnect_immediate(edge_id);
+        }
+
+        self.nodes.remove(node);
+        self.adjacency.remove(node);
+        self.dirty = true;
+    }
+
+    /// Connect two nodes immediately. Returns the assigned `EdgeId`.
+    fn connect_immediate(&mut self, from: NodeId, to: NodeId) -> EdgeId {
+        let edge_id = self.edges.insert(EdgeData { from, to });
+
+        if let Some(adj) = self.adjacency.get_mut(from) {
+            adj.outputs.push(edge_id);
+        }
+        if let Some(adj) = self.adjacency.get_mut(to) {
+            adj.inputs.push(edge_id);
+        }
+
+        self.dirty = true;
+        edge_id
+    }
+
+    /// Disconnect (remove) an edge immediately.
+    fn disconnect_immediate(&mut self, edge: EdgeId) {
+        if let Some(edge_data) = self.edges.remove(edge) {
+            // Remove from source's output list.
+            if let Some(adj) = self.adjacency.get_mut(edge_data.from) {
+                adj.outputs.retain(|&e| e != edge);
+            }
+            // Remove from destination's input list.
+            if let Some(adj) = self.adjacency.get_mut(edge_data.to) {
+                adj.inputs.retain(|&e| e != edge);
+            }
+            self.dirty = true;
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Queued mutations — used by game code during simulation
+    // -----------------------------------------------------------------------
+
+    /// Queue a node to be added. Returns a `PendingNodeId` that can be
+    /// resolved to a real `NodeId` after `apply_mutations`.
+    pub fn queue_add_node(&mut self, building_type: BuildingTypeId) -> PendingNodeId {
+        let pending = PendingNodeId(self.next_pending_node);
+        self.next_pending_node += 1;
+        self.mutations.push(Mutation::AddNode {
+            building_type,
+            pending_id: pending,
+        });
+        pending
+    }
+
+    /// Queue a node for removal.
+    pub fn queue_remove_node(&mut self, node: NodeId) {
+        self.mutations.push(Mutation::RemoveNode { node });
+    }
+
+    /// Queue an edge connecting two existing nodes. Returns a `PendingEdgeId`.
+    pub fn queue_connect(&mut self, from: NodeId, to: NodeId) -> PendingEdgeId {
+        let pending = PendingEdgeId(self.next_pending_edge);
+        self.next_pending_edge += 1;
+        self.mutations.push(Mutation::Connect {
+            from,
+            to,
+            pending_id: pending,
+        });
+        pending
+    }
+
+    /// Queue an edge for removal.
+    pub fn queue_disconnect(&mut self, edge: EdgeId) {
+        self.mutations.push(Mutation::Disconnect { edge });
+    }
+
+    /// Apply all queued mutations atomically. Returns a `MutationResult`
+    /// mapping pending IDs to their real IDs.
+    pub fn apply_mutations(&mut self) -> MutationResult {
+        let mutations = std::mem::take(&mut self.mutations);
+        let mut result = MutationResult::default();
+
+        for mutation in mutations {
+            match mutation {
+                Mutation::AddNode {
+                    building_type,
+                    pending_id,
+                } => {
+                    let node_id = self.add_node_immediate(building_type);
+                    result.added_nodes.push((pending_id, node_id));
+                }
+                Mutation::RemoveNode { node } => {
+                    self.remove_node_immediate(node);
+                }
+                Mutation::Connect {
+                    from,
+                    to,
+                    pending_id,
+                } => {
+                    let edge_id = self.connect_immediate(from, to);
+                    result.added_edges.push((pending_id, edge_id));
+                }
+                Mutation::Disconnect { edge } => {
+                    self.disconnect_immediate(edge);
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Returns true if there are queued mutations waiting to be applied.
+    pub fn has_pending_mutations(&self) -> bool {
+        !self.mutations.is_empty()
+    }
+
+    // -----------------------------------------------------------------------
+    // Queries
+    // -----------------------------------------------------------------------
+
+    /// Get the node data for a given node ID.
+    pub fn get_node(&self, node: NodeId) -> Option<&NodeData> {
+        self.nodes.get(node)
+    }
+
+    /// Get the edge data for a given edge ID.
+    pub fn get_edge(&self, edge: EdgeId) -> Option<&EdgeData> {
+        self.edges.get(edge)
+    }
+
+    /// Get the edges coming into a node (inputs).
+    pub fn get_inputs(&self, node: NodeId) -> &[EdgeId] {
+        self.adjacency
+            .get(node)
+            .map(|adj| adj.inputs.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Get the edges going out of a node (outputs).
+    pub fn get_outputs(&self, node: NodeId) -> &[EdgeId] {
+        self.adjacency
+            .get(node)
+            .map(|adj| adj.outputs.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Total number of nodes in the graph.
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// Total number of edges in the graph.
+    pub fn edge_count(&self) -> usize {
+        self.edges.len()
+    }
+
+    /// Returns true if the node exists in the graph.
+    pub fn contains_node(&self, node: NodeId) -> bool {
+        self.nodes.contains_key(node)
+    }
+
+    /// Returns true if the edge exists in the graph.
+    pub fn contains_edge(&self, edge: EdgeId) -> bool {
+        self.edges.contains_key(edge)
+    }
+
+    /// Iterate over all node IDs and their data.
+    pub fn nodes(&self) -> impl Iterator<Item = (NodeId, &NodeData)> {
+        self.nodes.iter()
+    }
+
+    /// Iterate over all edge IDs and their data.
+    pub fn edges(&self) -> impl Iterator<Item = (EdgeId, &EdgeData)> {
+        self.edges.iter()
+    }
+
+    // -----------------------------------------------------------------------
+    // Topological sort (Kahn's algorithm)
+    // -----------------------------------------------------------------------
+
+    /// Get the cached topological order, recomputing if dirty.
+    /// Returns an error if the graph contains a cycle.
+    pub fn topological_order(&mut self) -> Result<&[NodeId], GraphError> {
+        if self.dirty {
+            self.recompute_topological_order()?;
+            self.dirty = false;
+        }
+        Ok(&self.topo_cache)
+    }
+
+    /// Recompute the topological order using Kahn's algorithm.
+    ///
+    /// Uses a `SecondaryMap<NodeId, usize>` for in-degree tracking, giving
+    /// O(V+E) complexity. No `HashMap` in the simulation hot path.
+    fn recompute_topological_order(&mut self) -> Result<(), GraphError> {
+        let node_count = self.nodes.len();
+
+        // Compute in-degree for each node.
+        let mut in_degree: SecondaryMap<NodeId, usize> = SecondaryMap::new();
+        for (nid, _) in &self.nodes {
+            in_degree.insert(nid, 0);
+        }
+        for (_, edge) in &self.edges {
+            if let Some(deg) = in_degree.get_mut(edge.to) {
+                *deg += 1;
+            }
+        }
+
+        // Seed the queue with all zero-in-degree nodes.
+        let mut queue: VecDeque<NodeId> = VecDeque::new();
+        for (nid, &deg) in &in_degree {
+            if deg == 0 {
+                queue.push_back(nid);
+            }
+        }
+
+        let mut order: Vec<NodeId> = Vec::with_capacity(node_count);
+
+        while let Some(node) = queue.pop_front() {
+            order.push(node);
+
+            // For each outgoing edge, decrement the destination's in-degree.
+            // We collect destinations first to avoid borrowing conflicts.
+            let destinations: Vec<NodeId> = self
+                .adjacency
+                .get(node)
+                .map(|adj| {
+                    adj.outputs
+                        .iter()
+                        .filter_map(|&eid| self.edges.get(eid).map(|e| e.to))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            for dest in destinations {
+                if let Some(deg) = in_degree.get_mut(dest) {
+                    *deg -= 1;
+                    if *deg == 0 {
+                        queue.push_back(dest);
+                    }
+                }
+            }
+        }
+
+        if order.len() != node_count {
+            return Err(GraphError::CycleDetected);
+        }
+
+        self.topo_cache = order;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: create a graph and add nodes via queued mutations, then apply.
+    /// Returns (graph, vec of real NodeIds).
+    fn make_graph_with_nodes(count: usize) -> (ProductionGraph, Vec<NodeId>) {
+        let mut graph = ProductionGraph::new();
+        let building = BuildingTypeId(0);
+
+        let pending: Vec<PendingNodeId> = (0..count)
+            .map(|_| graph.queue_add_node(building))
+            .collect();
+
+        let result = graph.apply_mutations();
+
+        let node_ids: Vec<NodeId> = pending
+            .iter()
+            .map(|p| result.resolve_node(*p).unwrap())
+            .collect();
+
+        (graph, node_ids)
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 1: Add/remove nodes
+    // -----------------------------------------------------------------------
+    #[test]
+    fn add_and_remove_nodes() {
+        let (mut graph, nodes) = make_graph_with_nodes(3);
+        assert_eq!(graph.node_count(), 3);
+
+        // Verify nodes exist.
+        for &n in &nodes {
+            assert!(graph.contains_node(n));
+        }
+
+        // Remove the middle node via queued mutation.
+        graph.queue_remove_node(nodes[1]);
+        graph.apply_mutations();
+
+        assert_eq!(graph.node_count(), 2);
+        assert!(graph.contains_node(nodes[0]));
+        assert!(!graph.contains_node(nodes[1]));
+        assert!(graph.contains_node(nodes[2]));
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 2: Connect edges
+    // -----------------------------------------------------------------------
+    #[test]
+    fn connect_edges() {
+        let (mut graph, nodes) = make_graph_with_nodes(2);
+
+        let pending_edge = graph.queue_connect(nodes[0], nodes[1]);
+        let result = graph.apply_mutations();
+
+        let edge_id = result.resolve_edge(pending_edge).unwrap();
+        assert_eq!(graph.edge_count(), 1);
+
+        let edge_data = graph.get_edge(edge_id).unwrap();
+        assert_eq!(edge_data.from, nodes[0]);
+        assert_eq!(edge_data.to, nodes[1]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 3: Topological sort correctness — linear chain A->B->C
+    // -----------------------------------------------------------------------
+    #[test]
+    fn topological_sort_linear_chain() {
+        let (mut graph, nodes) = make_graph_with_nodes(3);
+        let [a, b, c] = [nodes[0], nodes[1], nodes[2]];
+
+        // A->B, B->C
+        graph.queue_connect(a, b);
+        graph.queue_connect(b, c);
+        graph.apply_mutations();
+
+        let order = graph.topological_order().unwrap();
+        assert_eq!(order.len(), 3);
+        assert_eq!(order[0], a);
+        assert_eq!(order[1], b);
+        assert_eq!(order[2], c);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 4: Topological sort with diamond — A->B, A->C, B->D, C->D
+    // -----------------------------------------------------------------------
+    #[test]
+    fn topological_sort_diamond() {
+        let (mut graph, nodes) = make_graph_with_nodes(4);
+        let [a, b, c, d] = [nodes[0], nodes[1], nodes[2], nodes[3]];
+
+        graph.queue_connect(a, b);
+        graph.queue_connect(a, c);
+        graph.queue_connect(b, d);
+        graph.queue_connect(c, d);
+        graph.apply_mutations();
+
+        let order = graph.topological_order().unwrap();
+        assert_eq!(order.len(), 4);
+
+        // A must come first.
+        assert_eq!(order[0], a);
+        // D must come last.
+        assert_eq!(order[3], d);
+
+        // B and C must both come after A and before D (order between them
+        // is not specified by the algorithm, just that both precede D).
+        let b_pos = order.iter().position(|&n| n == b).unwrap();
+        let c_pos = order.iter().position(|&n| n == c).unwrap();
+        assert!(b_pos > 0 && b_pos < 3);
+        assert!(c_pos > 0 && c_pos < 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 5: Queued mutations — verify pending state
+    // -----------------------------------------------------------------------
+    #[test]
+    fn queued_mutations_pending_state() {
+        let mut graph = ProductionGraph::new();
+        let building = BuildingTypeId(0);
+
+        // Queue a node but don't apply yet.
+        let pending = graph.queue_add_node(building);
+        assert!(graph.has_pending_mutations());
+        assert_eq!(graph.node_count(), 0, "node should not exist before apply");
+
+        // Now apply.
+        let result = graph.apply_mutations();
+        assert_eq!(graph.node_count(), 1, "node should exist after apply");
+        assert!(!graph.has_pending_mutations());
+
+        // Verify the pending ID resolves.
+        assert!(result.resolve_node(pending).is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 6: Cycle detection — A->B->C->A
+    // -----------------------------------------------------------------------
+    #[test]
+    fn cycle_detection() {
+        let (mut graph, nodes) = make_graph_with_nodes(3);
+        let [a, b, c] = [nodes[0], nodes[1], nodes[2]];
+
+        graph.queue_connect(a, b);
+        graph.queue_connect(b, c);
+        graph.queue_connect(c, a);
+        graph.apply_mutations();
+
+        let result = graph.topological_order();
+        assert!(result.is_err());
+        assert!(matches!(result, Err(GraphError::CycleDetected)));
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 7: Adjacent node queries — get_inputs / get_outputs
+    // -----------------------------------------------------------------------
+    #[test]
+    fn adjacency_queries() {
+        let (mut graph, nodes) = make_graph_with_nodes(3);
+        let [a, b, c] = [nodes[0], nodes[1], nodes[2]];
+
+        // A->B, C->B (B has two inputs)
+        let pe1 = graph.queue_connect(a, b);
+        let pe2 = graph.queue_connect(c, b);
+        let result = graph.apply_mutations();
+
+        let e1 = result.resolve_edge(pe1).unwrap();
+        let e2 = result.resolve_edge(pe2).unwrap();
+
+        // B should have two inputs.
+        let b_inputs = graph.get_inputs(b);
+        assert_eq!(b_inputs.len(), 2);
+        assert!(b_inputs.contains(&e1));
+        assert!(b_inputs.contains(&e2));
+
+        // B should have no outputs.
+        assert_eq!(graph.get_outputs(b).len(), 0);
+
+        // A should have one output (to B).
+        let a_outputs = graph.get_outputs(a);
+        assert_eq!(a_outputs.len(), 1);
+        assert!(a_outputs.contains(&e1));
+
+        // A should have no inputs.
+        assert_eq!(graph.get_inputs(a).len(), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 8: Dirty flag — topo order recomputed after mutation
+    // -----------------------------------------------------------------------
+    #[test]
+    fn dirty_flag_recomputation() {
+        let (mut graph, nodes) = make_graph_with_nodes(2);
+        let [a, b] = [nodes[0], nodes[1]];
+
+        // A->B
+        graph.queue_connect(a, b);
+        graph.apply_mutations();
+
+        // First call computes topo order.
+        let order = graph.topological_order().unwrap();
+        assert_eq!(order, &[a, b]);
+
+        // Add a new node C and edge B->C.
+        let pending_c = graph.queue_add_node(BuildingTypeId(0));
+        let result = graph.apply_mutations();
+        let c = result.resolve_node(pending_c).unwrap();
+
+        graph.queue_connect(b, c);
+        graph.apply_mutations();
+
+        // Topo order should now include C.
+        let order = graph.topological_order().unwrap();
+        assert_eq!(order.len(), 3);
+        assert_eq!(order[0], a);
+        assert_eq!(order[1], b);
+        assert_eq!(order[2], c);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 9: Remove node cleans up edges
+    // -----------------------------------------------------------------------
+    #[test]
+    fn remove_node_cleans_edges() {
+        let (mut graph, nodes) = make_graph_with_nodes(3);
+        let [a, b, c] = [nodes[0], nodes[1], nodes[2]];
+
+        // A->B->C
+        graph.queue_connect(a, b);
+        graph.queue_connect(b, c);
+        graph.apply_mutations();
+
+        assert_eq!(graph.edge_count(), 2);
+
+        // Remove B — should also remove both edges.
+        graph.queue_remove_node(b);
+        graph.apply_mutations();
+
+        assert_eq!(graph.node_count(), 2);
+        assert_eq!(graph.edge_count(), 0);
+
+        // A and C should have no adjacency.
+        assert_eq!(graph.get_outputs(a).len(), 0);
+        assert_eq!(graph.get_inputs(c).len(), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 10: Disconnect edge
+    // -----------------------------------------------------------------------
+    #[test]
+    fn disconnect_edge() {
+        let (mut graph, nodes) = make_graph_with_nodes(2);
+        let [a, b] = [nodes[0], nodes[1]];
+
+        let pending_edge = graph.queue_connect(a, b);
+        let result = graph.apply_mutations();
+        let edge_id = result.resolve_edge(pending_edge).unwrap();
+
+        assert_eq!(graph.edge_count(), 1);
+        assert_eq!(graph.get_outputs(a).len(), 1);
+        assert_eq!(graph.get_inputs(b).len(), 1);
+
+        // Disconnect the edge.
+        graph.queue_disconnect(edge_id);
+        graph.apply_mutations();
+
+        assert_eq!(graph.edge_count(), 0);
+        assert!(!graph.contains_edge(edge_id));
+        assert_eq!(graph.get_outputs(a).len(), 0);
+        assert_eq!(graph.get_inputs(b).len(), 0);
+    }
+}
