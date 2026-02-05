@@ -29,7 +29,7 @@ pub struct RecipeId(pub u32);
 pub struct PropertyId(pub u16);
 
 /// Identifies a modifier applied to a building.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ModifierId(pub u32);
 
 /// A pending node ID returned from queued mutations. Resolves to NodeId on apply.
