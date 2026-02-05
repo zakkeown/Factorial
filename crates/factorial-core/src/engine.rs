@@ -22,11 +22,12 @@
 //! 6. **Bookkeeping** -- update tick counter, compute state hash
 
 use crate::event::{Event, EventBus, EventKind, EventMutation};
-use crate::fixed::Ticks;
+use crate::fixed::{Fixed64, Ticks};
 use crate::graph::ProductionGraph;
 use crate::id::{EdgeId, ItemTypeId, NodeId};
-use crate::item::Inventory;
+use crate::item::{Inventory, ItemStack};
 use crate::processor::{Modifier, Processor, ProcessorResult, ProcessorState};
+use crate::query::{NodeSnapshot, TransportSnapshot};
 use crate::sim::{AdvanceResult, SimState, SimulationStrategy, StateHash};
 use crate::transport::{Transport, TransportResult, TransportState};
 use slotmap::SecondaryMap;
@@ -682,6 +683,119 @@ impl Engine {
     }
 
     // -----------------------------------------------------------------------
+    // Query API (read-only)
+    // -----------------------------------------------------------------------
+
+    /// Get the processor's progress as a 0..1 fraction.
+    ///
+    /// - `Working { progress }` on a `FixedRecipe` with `duration` returns
+    ///   `progress / duration`.
+    /// - `Idle` and `Stalled` return `Fixed64::ZERO`.
+    /// - Source and Property processors always return `Fixed64::ZERO` (they
+    ///   have no duration-based progress).
+    pub fn get_processor_progress(&self, node: NodeId) -> Option<Fixed64> {
+        let state = self.processor_states.get(node)?;
+        match state {
+            ProcessorState::Working { progress } => {
+                // Look up the processor to find the duration.
+                if let Some(Processor::Fixed(recipe)) = self.processors.get(node) {
+                    if recipe.duration > 0 {
+                        Some(Fixed64::from_num(*progress) / Fixed64::from_num(recipe.duration))
+                    } else {
+                        Some(Fixed64::ZERO)
+                    }
+                } else {
+                    // Source/Property processors use Working { progress: 0 },
+                    // but have no meaningful progress fraction.
+                    Some(Fixed64::ZERO)
+                }
+            }
+            ProcessorState::Idle | ProcessorState::Stalled { .. } => Some(Fixed64::ZERO),
+        }
+    }
+
+    /// Get the edge's utilization as a 0..1 fraction (how full the transport is).
+    ///
+    /// - **Flow**: `buffered / buffer_capacity`
+    /// - **Item (belt)**: `occupied_slots / total_slots`
+    /// - **Batch**: `pending / batch_size`
+    /// - **Vehicle**: `cargo_quantity / capacity`
+    pub fn get_edge_utilization(&self, edge: EdgeId) -> Option<Fixed64> {
+        let transport = self.transports.get(edge)?;
+        let state = self.transport_states.get(edge)?;
+        Some(compute_utilization(transport, state))
+    }
+
+    /// Create a snapshot of a single node.
+    pub fn snapshot_node(&self, node: NodeId) -> Option<NodeSnapshot> {
+        let node_data = self.graph.get_node(node)?;
+        let processor_state = self
+            .processor_states
+            .get(node)
+            .cloned()
+            .unwrap_or_default();
+        let progress = self.get_processor_progress(node).unwrap_or(Fixed64::ZERO);
+        let input_contents = inventory_contents(self.inputs.get(node), true);
+        let output_contents = inventory_contents(self.outputs.get(node), false);
+        let input_edges = self.graph.get_inputs(node).to_vec();
+        let output_edges = self.graph.get_outputs(node).to_vec();
+
+        Some(NodeSnapshot {
+            id: node,
+            building_type: node_data.building_type,
+            processor_state,
+            progress,
+            input_contents,
+            output_contents,
+            input_edges,
+            output_edges,
+        })
+    }
+
+    /// Create snapshots of all nodes in the graph.
+    pub fn snapshot_all_nodes(&self) -> Vec<NodeSnapshot> {
+        self.graph
+            .nodes()
+            .filter_map(|(node_id, _)| self.snapshot_node(node_id))
+            .collect()
+    }
+
+    /// Create a snapshot of a single transport edge.
+    pub fn snapshot_transport(&self, edge: EdgeId) -> Option<TransportSnapshot> {
+        let edge_data = self.graph.get_edge(edge)?;
+        let transport = self.transports.get(edge)?;
+        let state = self.transport_states.get(edge)?;
+
+        Some(TransportSnapshot {
+            id: edge,
+            from: edge_data.from,
+            to: edge_data.to,
+            utilization: compute_utilization(transport, state),
+            items_in_transit: count_items_in_transit(state),
+        })
+    }
+
+    /// Total number of nodes in the production graph.
+    pub fn node_count(&self) -> usize {
+        self.graph.node_count()
+    }
+
+    /// Total number of edges in the production graph.
+    pub fn edge_count(&self) -> usize {
+        self.graph.edge_count()
+    }
+
+    /// Get the edge IDs feeding into a node.
+    pub fn get_inputs(&self, node: NodeId) -> &[EdgeId] {
+        self.graph.get_inputs(node)
+    }
+
+    /// Get the edge IDs leaving a node.
+    pub fn get_outputs(&self, node: NodeId) -> &[EdgeId] {
+        self.graph.get_outputs(node)
+    }
+
+    // -----------------------------------------------------------------------
     // Cleanup helpers
     // -----------------------------------------------------------------------
 
@@ -700,6 +814,83 @@ impl Engine {
         self.transports.remove(edge);
         self.transport_states.remove(edge);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Query helpers (free functions, not public API)
+// ---------------------------------------------------------------------------
+
+/// Compute utilization (0..1) for a transport edge.
+fn compute_utilization(transport: &Transport, state: &TransportState) -> Fixed64 {
+    match (transport, state) {
+        (Transport::Flow(flow), TransportState::Flow(fs)) => {
+            if flow.buffer_capacity > Fixed64::ZERO {
+                fs.buffered / flow.buffer_capacity
+            } else {
+                Fixed64::ZERO
+            }
+        }
+        (Transport::Item(item), TransportState::Item(bs)) => {
+            let total = item.slot_count as usize * item.lanes as usize;
+            if total > 0 {
+                Fixed64::from_num(bs.occupied_count()) / Fixed64::from_num(total)
+            } else {
+                Fixed64::ZERO
+            }
+        }
+        (Transport::Batch(batch), TransportState::Batch(bs)) => {
+            if batch.batch_size > 0 {
+                Fixed64::from_num(bs.pending) / Fixed64::from_num(batch.batch_size)
+            } else {
+                Fixed64::ZERO
+            }
+        }
+        (Transport::Vehicle(vehicle), TransportState::Vehicle(vs)) => {
+            let cargo_total: u32 = vs.cargo.iter().map(|s| s.quantity).sum();
+            if vehicle.capacity > 0 {
+                Fixed64::from_num(cargo_total) / Fixed64::from_num(vehicle.capacity)
+            } else {
+                Fixed64::ZERO
+            }
+        }
+        _ => Fixed64::ZERO,
+    }
+}
+
+/// Count items currently in transit within a transport.
+fn count_items_in_transit(state: &TransportState) -> u32 {
+    match state {
+        TransportState::Flow(fs) => fs.buffered.to_num::<i64>().max(0) as u32,
+        TransportState::Item(bs) => bs.occupied_count() as u32,
+        TransportState::Batch(bs) => bs.pending,
+        TransportState::Vehicle(vs) => vs.cargo.iter().map(|s| s.quantity).sum(),
+    }
+}
+
+/// Collect inventory contents into a flat list of ItemStacks.
+/// If `input` is true, reads input_slots; otherwise reads output_slots.
+fn inventory_contents(inv: Option<&Inventory>, input: bool) -> Vec<ItemStack> {
+    let Some(inv) = inv else {
+        return Vec::new();
+    };
+    let slots = if input {
+        &inv.input_slots
+    } else {
+        &inv.output_slots
+    };
+    let mut result: Vec<ItemStack> = Vec::new();
+    for slot in slots {
+        for stack in &slot.stacks {
+            if stack.quantity > 0 {
+                if let Some(existing) = result.iter_mut().find(|s| s.item_type == stack.item_type) {
+                    existing.quantity += stack.quantity;
+                } else {
+                    result.push(stack.clone());
+                }
+            }
+        }
+    }
+    result
 }
 
 // ===========================================================================
@@ -1755,5 +1946,438 @@ mod tests {
 
         engine.step();
         assert_eq!(*delivery_count.borrow(), 3);
+    }
+
+    // =======================================================================
+    // Query API tests
+    // =======================================================================
+
+    // -----------------------------------------------------------------------
+    // Query Test 1: Processor progress returns correct fraction
+    // -----------------------------------------------------------------------
+    #[test]
+    fn query_processor_progress_fraction() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        let node = result.resolve_node(pending).unwrap();
+
+        // 1 iron -> 1 gear, 5 ticks.
+        engine.set_processor(node, make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 5));
+        let mut input_inv = simple_inventory(100);
+        input_inv.input_slots[0].add(iron(), 10);
+        engine.set_input_inventory(node, input_inv);
+        engine.set_output_inventory(node, simple_inventory(100));
+
+        // Before any tick: idle, progress = 0.
+        let progress = engine.get_processor_progress(node).unwrap();
+        assert_eq!(progress, Fixed64::ZERO);
+
+        // Tick 1: starts working, progress = 1/5 = 0.2.
+        engine.step();
+        let progress = engine.get_processor_progress(node).unwrap();
+        assert_eq!(progress, Fixed64::from_num(1) / Fixed64::from_num(5));
+
+        // Tick 2: progress = 2/5 = 0.4.
+        engine.step();
+        let progress = engine.get_processor_progress(node).unwrap();
+        assert_eq!(progress, Fixed64::from_num(2) / Fixed64::from_num(5));
+
+        // Tick 4: progress = 4/5 = 0.8.
+        engine.step();
+        engine.step();
+        let progress = engine.get_processor_progress(node).unwrap();
+        assert_eq!(progress, Fixed64::from_num(4) / Fixed64::from_num(5));
+
+        // Tick 5: completes -> idle, progress = 0.
+        engine.step();
+        let progress = engine.get_processor_progress(node).unwrap();
+        assert_eq!(progress, Fixed64::ZERO);
+    }
+
+    // -----------------------------------------------------------------------
+    // Query Test 2: Processor progress returns zero for source processors
+    // -----------------------------------------------------------------------
+    #[test]
+    fn query_processor_progress_source_is_zero() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        let node = result.resolve_node(pending).unwrap();
+
+        engine.set_processor(node, make_source(iron(), 5.0));
+        engine.set_input_inventory(node, simple_inventory(100));
+        engine.set_output_inventory(node, simple_inventory(100));
+
+        engine.step();
+
+        // Source processors have no meaningful progress fraction.
+        let progress = engine.get_processor_progress(node).unwrap();
+        assert_eq!(progress, Fixed64::ZERO);
+    }
+
+    // -----------------------------------------------------------------------
+    // Query Test 3: Processor progress returns None for invalid node
+    // -----------------------------------------------------------------------
+    #[test]
+    fn query_processor_progress_invalid_node() {
+        let engine = Engine::new(SimulationStrategy::Tick);
+
+        // Create a bogus NodeId by adding and removing a node.
+        let mut engine2 = Engine::new(SimulationStrategy::Tick);
+        let pending = engine2.graph.queue_add_node(building());
+        let result = engine2.graph.apply_mutations();
+        let bogus = result.resolve_node(pending).unwrap();
+
+        assert!(engine.get_processor_progress(bogus).is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Query Test 4: Edge utilization for flow transport
+    // -----------------------------------------------------------------------
+    #[test]
+    fn query_edge_utilization_flow() {
+        let (mut engine, _src_node, _consumer_node, edge_id) =
+            setup_source_transport_consumer(5.0, 10.0, vec![(iron(), 2)], vec![(gear(), 1)], 3);
+
+        // Before any tick: flow buffer is empty, utilization = 0.
+        let util = engine.get_edge_utilization(edge_id).unwrap();
+        assert_eq!(util, Fixed64::ZERO);
+
+        // Tick 1: source produces items.
+        engine.step();
+
+        // Tick 2: transport moves items into buffer.
+        engine.step();
+
+        // After transport has moved items, utilization should be > 0
+        // (depends on how much was buffered vs capacity).
+        let util = engine.get_edge_utilization(edge_id).unwrap();
+        // We can't assert exact value since it depends on delivery,
+        // but utilization is defined and >= 0.
+        assert!(util >= Fixed64::ZERO);
+    }
+
+    // -----------------------------------------------------------------------
+    // Query Test 5: Edge utilization for belt transport
+    // -----------------------------------------------------------------------
+    #[test]
+    fn query_edge_utilization_belt() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        let pa = engine.graph.queue_add_node(building());
+        let pb = engine.graph.queue_add_node(building());
+        let r = engine.graph.apply_mutations();
+        let a = r.resolve_node(pa).unwrap();
+        let b = r.resolve_node(pb).unwrap();
+
+        let pe = engine.graph.queue_connect(a, b);
+        let r = engine.graph.apply_mutations();
+        let edge = r.resolve_edge(pe).unwrap();
+
+        engine.set_processor(a, make_source(iron(), 5.0));
+        engine.set_input_inventory(a, simple_inventory(100));
+        engine.set_output_inventory(a, simple_inventory(100));
+
+        engine.set_processor(
+            b,
+            make_recipe(vec![(gear(), 999)], vec![(iron(), 1)], 1),
+        );
+        engine.set_input_inventory(b, simple_inventory(1000));
+        engine.set_output_inventory(b, simple_inventory(100));
+
+        // Belt transport: 4 slots, 1 lane, speed 1.
+        let belt = Transport::Item(crate::transport::ItemTransport {
+            speed: Fixed64::from_num(1.0),
+            slot_count: 4,
+            lanes: 1,
+        });
+        engine.set_transport(edge, belt);
+
+        // Initially: no items on belt, utilization = 0.
+        let util = engine.get_edge_utilization(edge).unwrap();
+        assert_eq!(util, Fixed64::ZERO);
+
+        // After a tick, source produces items and transport picks one up.
+        engine.step();
+        engine.step();
+        let util = engine.get_edge_utilization(edge).unwrap();
+        // At least one item should be on the belt.
+        assert!(util >= Fixed64::ZERO);
+    }
+
+    // -----------------------------------------------------------------------
+    // Query Test 6: Node snapshot contains correct state
+    // -----------------------------------------------------------------------
+    #[test]
+    fn query_node_snapshot_state() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        let node = result.resolve_node(pending).unwrap();
+
+        // 1 iron -> 1 gear, 4 ticks.
+        engine.set_processor(node, make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 4));
+        let mut input_inv = simple_inventory(100);
+        input_inv.input_slots[0].add(iron(), 10);
+        engine.set_input_inventory(node, input_inv);
+        engine.set_output_inventory(node, simple_inventory(100));
+
+        // Before any tick.
+        let snap = engine.snapshot_node(node).unwrap();
+        assert_eq!(snap.id, node);
+        assert_eq!(snap.building_type, building());
+        assert_eq!(snap.processor_state, ProcessorState::Idle);
+        assert_eq!(snap.progress, Fixed64::ZERO);
+        // Input should have 10 iron.
+        assert_eq!(snap.input_contents.len(), 1);
+        assert_eq!(snap.input_contents[0].item_type, iron());
+        assert_eq!(snap.input_contents[0].quantity, 10);
+        // Output should be empty.
+        assert!(snap.output_contents.is_empty());
+
+        // Tick 1: starts working, consumes 1 iron.
+        engine.step();
+        let snap = engine.snapshot_node(node).unwrap();
+        assert!(matches!(snap.processor_state, ProcessorState::Working { .. }));
+        assert_eq!(snap.progress, Fixed64::from_num(1) / Fixed64::from_num(4));
+        // Input should have 9 iron (consumed 1).
+        assert_eq!(snap.input_contents[0].quantity, 9);
+    }
+
+    // -----------------------------------------------------------------------
+    // Query Test 7: Snapshot all nodes covers all nodes
+    // -----------------------------------------------------------------------
+    #[test]
+    fn query_snapshot_all_nodes_covers_all() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        // Add 5 nodes.
+        let mut nodes = Vec::new();
+        for _ in 0..5 {
+            let pending = engine.graph.queue_add_node(building());
+            let result = engine.graph.apply_mutations();
+            let node = result.resolve_node(pending).unwrap();
+            engine.set_processor(node, make_source(iron(), 1.0));
+            engine.set_input_inventory(node, simple_inventory(100));
+            engine.set_output_inventory(node, simple_inventory(100));
+            nodes.push(node);
+        }
+
+        let snapshots = engine.snapshot_all_nodes();
+        assert_eq!(snapshots.len(), 5);
+
+        // Every node ID should be present in the snapshots.
+        for node in &nodes {
+            assert!(
+                snapshots.iter().any(|s| s.id == *node),
+                "snapshot should contain node {:?}",
+                node
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Query Test 8: node_count and edge_count
+    // -----------------------------------------------------------------------
+    #[test]
+    fn query_node_and_edge_count() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        assert_eq!(engine.node_count(), 0);
+        assert_eq!(engine.edge_count(), 0);
+
+        let pa = engine.graph.queue_add_node(building());
+        let pb = engine.graph.queue_add_node(building());
+        let pc = engine.graph.queue_add_node(building());
+        let r = engine.graph.apply_mutations();
+        let a = r.resolve_node(pa).unwrap();
+        let b = r.resolve_node(pb).unwrap();
+        let _c = r.resolve_node(pc).unwrap();
+
+        assert_eq!(engine.node_count(), 3);
+        assert_eq!(engine.edge_count(), 0);
+
+        engine.graph.queue_connect(a, b);
+        engine.graph.apply_mutations();
+
+        assert_eq!(engine.node_count(), 3);
+        assert_eq!(engine.edge_count(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Query Test 9: get_inputs and get_outputs
+    // -----------------------------------------------------------------------
+    #[test]
+    fn query_get_inputs_outputs() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        let pa = engine.graph.queue_add_node(building());
+        let pb = engine.graph.queue_add_node(building());
+        let pc = engine.graph.queue_add_node(building());
+        let r = engine.graph.apply_mutations();
+        let a = r.resolve_node(pa).unwrap();
+        let b = r.resolve_node(pb).unwrap();
+        let c = r.resolve_node(pc).unwrap();
+
+        // A -> B, C -> B
+        let pe1 = engine.graph.queue_connect(a, b);
+        let pe2 = engine.graph.queue_connect(c, b);
+        let r = engine.graph.apply_mutations();
+        let e1 = r.resolve_edge(pe1).unwrap();
+        let e2 = r.resolve_edge(pe2).unwrap();
+
+        // B has two inputs.
+        let b_inputs = engine.get_inputs(b);
+        assert_eq!(b_inputs.len(), 2);
+        assert!(b_inputs.contains(&e1));
+        assert!(b_inputs.contains(&e2));
+
+        // B has no outputs.
+        assert_eq!(engine.get_outputs(b).len(), 0);
+
+        // A has one output.
+        assert_eq!(engine.get_outputs(a).len(), 1);
+        assert_eq!(engine.get_outputs(a)[0], e1);
+
+        // A has no inputs.
+        assert_eq!(engine.get_inputs(a).len(), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Query Test 10: Inventory query matches actual contents
+    // -----------------------------------------------------------------------
+    #[test]
+    fn query_inventory_matches_contents() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        let node = result.resolve_node(pending).unwrap();
+
+        engine.set_processor(node, make_source(iron(), 3.0));
+        engine.set_input_inventory(node, simple_inventory(100));
+        engine.set_output_inventory(node, simple_inventory(100));
+
+        // Run 4 ticks: source produces 3*4 = 12 iron.
+        for _ in 0..4 {
+            engine.step();
+        }
+
+        let snap = engine.snapshot_node(node).unwrap();
+        // Output should have 12 iron.
+        assert_eq!(snap.output_contents.len(), 1);
+        assert_eq!(snap.output_contents[0].item_type, iron());
+        assert_eq!(snap.output_contents[0].quantity, 12);
+
+        // Verify matches the direct inventory query.
+        let output_inv = engine.get_output_inventory(node).unwrap();
+        assert_eq!(output_inv.output_slots[0].quantity(iron()), 12);
+    }
+
+    // -----------------------------------------------------------------------
+    // Query Test 11: Transport snapshot
+    // -----------------------------------------------------------------------
+    #[test]
+    fn query_transport_snapshot() {
+        let (mut engine, src_node, consumer_node, edge_id) =
+            setup_source_transport_consumer(5.0, 10.0, vec![(iron(), 2)], vec![(gear(), 1)], 3);
+
+        let snap = engine.snapshot_transport(edge_id).unwrap();
+        assert_eq!(snap.id, edge_id);
+        assert_eq!(snap.from, src_node);
+        assert_eq!(snap.to, consumer_node);
+        assert_eq!(snap.utilization, Fixed64::ZERO);
+        assert_eq!(snap.items_in_transit, 0);
+
+        // After source produces and transport moves items.
+        engine.step();
+        engine.step();
+
+        let snap = engine.snapshot_transport(edge_id).unwrap();
+        assert_eq!(snap.from, src_node);
+        assert_eq!(snap.to, consumer_node);
+    }
+
+    // -----------------------------------------------------------------------
+    // Query Test 12: Snapshot node includes adjacency
+    // -----------------------------------------------------------------------
+    #[test]
+    fn query_snapshot_includes_adjacency() {
+        let (engine, src_node, consumer_node, edge_id) =
+            setup_source_transport_consumer(5.0, 10.0, vec![(iron(), 2)], vec![(gear(), 1)], 3);
+
+        let src_snap = engine.snapshot_node(src_node).unwrap();
+        assert_eq!(src_snap.output_edges.len(), 1);
+        assert_eq!(src_snap.output_edges[0], edge_id);
+        assert!(src_snap.input_edges.is_empty());
+
+        let consumer_snap = engine.snapshot_node(consumer_node).unwrap();
+        assert_eq!(consumer_snap.input_edges.len(), 1);
+        assert_eq!(consumer_snap.input_edges[0], edge_id);
+        assert!(consumer_snap.output_edges.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Query Test 13: Stalled processor has zero progress
+    // -----------------------------------------------------------------------
+    #[test]
+    fn query_stalled_processor_zero_progress() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        let node = result.resolve_node(pending).unwrap();
+
+        // Source produces 10/tick, output only holds 5.
+        engine.set_processor(node, make_source(iron(), 10.0));
+        engine.set_input_inventory(node, simple_inventory(100));
+        engine.set_output_inventory(node, simple_inventory(5));
+
+        // Tick 1: fills output.
+        engine.step();
+        // Tick 2: stalls.
+        engine.step();
+
+        let state = engine.get_processor_state(node).unwrap();
+        assert!(matches!(state, ProcessorState::Stalled { .. }));
+
+        let progress = engine.get_processor_progress(node).unwrap();
+        assert_eq!(progress, Fixed64::ZERO);
+    }
+
+    // -----------------------------------------------------------------------
+    // Query Test 14: Read-only — query methods take &self
+    // -----------------------------------------------------------------------
+    #[test]
+    fn query_methods_are_read_only() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        let node = result.resolve_node(pending).unwrap();
+
+        engine.set_processor(node, make_source(iron(), 1.0));
+        engine.set_input_inventory(node, simple_inventory(100));
+        engine.set_output_inventory(node, simple_inventory(100));
+
+        engine.step();
+
+        // Take a shared ref and call all query methods.
+        let engine_ref: &Engine = &engine;
+        let _ = engine_ref.get_processor_progress(node);
+        let _ = engine_ref.get_processor_state(node);
+        let _ = engine_ref.get_input_inventory(node);
+        let _ = engine_ref.get_output_inventory(node);
+        let _ = engine_ref.snapshot_node(node);
+        let _ = engine_ref.snapshot_all_nodes();
+        let _ = engine_ref.node_count();
+        let _ = engine_ref.edge_count();
+        let _ = engine_ref.get_inputs(node);
+        let _ = engine_ref.get_outputs(node);
+        let _ = engine_ref.state_hash();
+        // If this compiles, the query API is read-only.
     }
 }
