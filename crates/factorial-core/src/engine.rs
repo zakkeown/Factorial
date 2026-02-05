@@ -9,17 +9,19 @@
 //! - Per-edge state: [`Transport`], [`TransportState`]
 //! - A [`SimState`] (tick counter, accumulator)
 //! - A [`SimulationStrategy`] (tick vs. delta)
+//! - An [`EventBus`] for typed simulation events
 //!
 //! # Six-Phase Pipeline
 //!
 //! Each `step()` runs:
-//! 1. **Pre-tick** -- apply queued graph mutations, inject player actions
-//! 2. **Transport** -- move items along edges
-//! 3. **Process** -- buildings consume inputs and produce outputs (topological order)
+//! 1. **Pre-tick** -- apply queued graph mutations (including reactive handler mutations)
+//! 2. **Transport** -- move items along edges; emit transport events
+//! 3. **Process** -- buildings consume inputs and produce outputs; emit production events
 //! 4. **Component** -- module-registered systems run (placeholder)
-//! 5. **Post-tick** -- placeholder for event delivery and reactive handlers
+//! 5. **Post-tick** -- deliver buffered events to subscribers; collect reactive mutations
 //! 6. **Bookkeeping** -- update tick counter, compute state hash
 
+use crate::event::{Event, EventBus, EventKind, EventMutation};
 use crate::fixed::Ticks;
 use crate::graph::ProductionGraph;
 use crate::id::{EdgeId, ItemTypeId, NodeId};
@@ -71,6 +73,9 @@ pub struct Engine {
 
     /// The most recently computed state hash.
     last_state_hash: u64,
+
+    /// Typed event bus for simulation events.
+    pub event_bus: EventBus,
 }
 
 impl Engine {
@@ -88,6 +93,7 @@ impl Engine {
             transports: SecondaryMap::new(),
             transport_states: SecondaryMap::new(),
             last_state_hash: 0,
+            event_bus: EventBus::default(),
         }
     }
 
@@ -170,6 +176,25 @@ impl Engine {
     }
 
     // -----------------------------------------------------------------------
+    // Event system
+    // -----------------------------------------------------------------------
+
+    /// Suppress an event kind. Suppressed events are never allocated or buffered.
+    pub fn suppress_event(&mut self, kind: EventKind) {
+        self.event_bus.suppress(kind);
+    }
+
+    /// Register a passive listener for an event kind.
+    pub fn on_passive(&mut self, kind: EventKind, listener: crate::event::PassiveListener) {
+        self.event_bus.on_passive(kind, listener);
+    }
+
+    /// Register a reactive handler for an event kind.
+    pub fn on_reactive(&mut self, kind: EventKind, handler: crate::event::ReactiveHandler) {
+        self.event_bus.on_reactive(kind, handler);
+    }
+
+    // -----------------------------------------------------------------------
     // Advance
     // -----------------------------------------------------------------------
 
@@ -233,6 +258,25 @@ impl Engine {
     // -----------------------------------------------------------------------
 
     fn phase_pre_tick(&mut self, result: &mut AdvanceResult) {
+        // Apply any reactive handler mutations from the previous tick's post-tick.
+        let reactive_mutations = self.event_bus.drain_mutations();
+        for mutation in reactive_mutations {
+            match mutation {
+                EventMutation::AddNode { building_type } => {
+                    self.graph.queue_add_node(building_type);
+                }
+                EventMutation::RemoveNode { node } => {
+                    self.graph.queue_remove_node(node);
+                }
+                EventMutation::Connect { from, to } => {
+                    self.graph.queue_connect(from, to);
+                }
+                EventMutation::Disconnect { edge } => {
+                    self.graph.queue_disconnect(edge);
+                }
+            }
+        }
+
         if self.graph.has_pending_mutations() {
             let mutation_result = self.graph.apply_mutations();
             result.mutation_results.push(mutation_result);
@@ -244,6 +288,8 @@ impl Engine {
     // -----------------------------------------------------------------------
 
     fn phase_transport(&mut self) {
+        let tick = self.sim_state.tick;
+
         // Collect edge IDs to iterate (avoids borrow conflicts).
         let edge_ids: Vec<EdgeId> = self.transports.keys().collect();
 
@@ -267,6 +313,24 @@ impl Engine {
                 };
                 transport.advance(state, available)
             };
+
+            // Emit transport events.
+            if transport_result.items_delivered > 0 {
+                self.event_bus.emit(Event::ItemDelivered {
+                    edge: edge_id,
+                    quantity: transport_result.items_delivered,
+                    tick,
+                });
+            }
+
+            // Emit TransportFull when items were available but nothing moved
+            // (back-pressure from a full transport buffer).
+            if available > 0 && transport_result.items_moved == 0 {
+                self.event_bus.emit(Event::TransportFull {
+                    edge: edge_id,
+                    tick,
+                });
+            }
 
             // Apply transport results to inventories.
             self.apply_transport_result(source_node, dest_node, &transport_result);
@@ -375,6 +439,8 @@ impl Engine {
     }
 
     fn process_node(&mut self, node_id: NodeId) {
+        let tick = self.sim_state.tick;
+
         // Gather available inputs from the node's input inventory.
         let available_inputs = self.gather_available_inputs(node_id);
 
@@ -388,6 +454,9 @@ impl Engine {
             .cloned()
             .unwrap_or_default();
 
+        // Snapshot previous state for detecting state transitions.
+        let prev_state = self.processor_states.get(node_id).cloned();
+
         // Tick the processor.
         let processor_result = {
             let Some(processor) = self.processors.get_mut(node_id) else {
@@ -398,6 +467,61 @@ impl Engine {
             };
             processor.tick(state, &mods, &available_inputs, output_space)
         };
+
+        // Emit production events.
+        for &(item_type, quantity) in &processor_result.consumed {
+            self.event_bus.emit(Event::ItemConsumed {
+                node: node_id,
+                item_type,
+                quantity,
+                tick,
+            });
+        }
+        for &(item_type, quantity) in &processor_result.produced {
+            self.event_bus.emit(Event::ItemProduced {
+                node: node_id,
+                item_type,
+                quantity,
+                tick,
+            });
+        }
+
+        // Emit state-change events.
+        if processor_result.state_changed {
+            let new_state = self.processor_states.get(node_id);
+            match (prev_state.as_ref(), new_state) {
+                // Transition to Working from Idle or Stalled => RecipeStarted.
+                (Some(ProcessorState::Idle) | Some(ProcessorState::Stalled { .. }), Some(ProcessorState::Working { .. })) => {
+                    self.event_bus.emit(Event::RecipeStarted {
+                        node: node_id,
+                        tick,
+                    });
+                }
+                // Transition to Idle from Working => RecipeCompleted.
+                (Some(ProcessorState::Working { .. }), Some(ProcessorState::Idle)) => {
+                    self.event_bus.emit(Event::RecipeCompleted {
+                        node: node_id,
+                        tick,
+                    });
+                }
+                // Transition to Stalled => BuildingStalled.
+                (_, Some(ProcessorState::Stalled { reason })) => {
+                    self.event_bus.emit(Event::BuildingStalled {
+                        node: node_id,
+                        reason: *reason,
+                        tick,
+                    });
+                }
+                // Transition from Stalled to anything non-stalled => BuildingResumed.
+                (Some(ProcessorState::Stalled { .. }), Some(ProcessorState::Idle)) => {
+                    self.event_bus.emit(Event::BuildingResumed {
+                        node: node_id,
+                        tick,
+                    });
+                }
+                _ => {}
+            }
+        }
 
         // Apply consumed items to input inventory.
         self.apply_consumed(node_id, &processor_result);
@@ -484,12 +608,14 @@ impl Engine {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 5: Post-tick (placeholder)
+    // Phase 5: Post-tick -- event delivery
     // -----------------------------------------------------------------------
 
     fn phase_post_tick(&mut self) {
-        // Event delivery and reactive handlers would run here.
-        // Currently a no-op placeholder.
+        // Deliver all buffered events to subscribers. Reactive handlers
+        // may produce mutations that accumulate in event_bus.pending_mutations.
+        // Those mutations will be applied during the next tick's pre-tick phase.
+        self.event_bus.deliver();
     }
 
     // -----------------------------------------------------------------------
@@ -1184,5 +1310,446 @@ mod tests {
             7,
             "should have consumed 3 iron (started with 10)"
         );
+    }
+
+    // =======================================================================
+    // Event system integration tests
+    // =======================================================================
+
+    use crate::event::{Event, EventKind, EventMutation};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    // -----------------------------------------------------------------------
+    // Event Test 1: Source produces ItemProduced events
+    // -----------------------------------------------------------------------
+    #[test]
+    fn event_source_emits_item_produced() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        let node = result.resolve_node(pending).unwrap();
+
+        engine.set_processor(node, make_source(iron(), 3.0));
+        engine.set_input_inventory(node, simple_inventory(100));
+        engine.set_output_inventory(node, simple_inventory(100));
+
+        let produced = Rc::new(RefCell::new(Vec::new()));
+        let produced_clone = produced.clone();
+        engine.on_passive(
+            EventKind::ItemProduced,
+            Box::new(move |event| {
+                if let Event::ItemProduced {
+                    quantity, tick, ..
+                } = event
+                {
+                    produced_clone.borrow_mut().push((*quantity, *tick));
+                }
+            }),
+        );
+
+        // Step 1: source produces 3 iron, event emitted.
+        engine.step();
+
+        let data = produced.borrow();
+        assert_eq!(data.len(), 1);
+        assert_eq!(data[0], (3, 0)); // tick=0 because events are emitted before bookkeeping increments tick
+    }
+
+    // -----------------------------------------------------------------------
+    // Event Test 2: Recipe emits RecipeStarted and RecipeCompleted
+    // -----------------------------------------------------------------------
+    #[test]
+    fn event_recipe_started_and_completed() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        let node = result.resolve_node(pending).unwrap();
+
+        // 1 iron -> 1 gear, 3 ticks.
+        engine.set_processor(node, make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 3));
+
+        let mut input_inv = simple_inventory(100);
+        input_inv.input_slots[0].add(iron(), 5);
+        engine.set_input_inventory(node, input_inv);
+        engine.set_output_inventory(node, simple_inventory(100));
+
+        let started_ticks = Rc::new(RefCell::new(Vec::new()));
+        let completed_ticks = Rc::new(RefCell::new(Vec::new()));
+
+        let st = started_ticks.clone();
+        engine.on_passive(
+            EventKind::RecipeStarted,
+            Box::new(move |event| {
+                if let Event::RecipeStarted { tick, .. } = event {
+                    st.borrow_mut().push(*tick);
+                }
+            }),
+        );
+
+        let ct = completed_ticks.clone();
+        engine.on_passive(
+            EventKind::RecipeCompleted,
+            Box::new(move |event| {
+                if let Event::RecipeCompleted { tick, .. } = event {
+                    ct.borrow_mut().push(*tick);
+                }
+            }),
+        );
+
+        // Tick 1: consumes 1 iron, starts recipe -> RecipeStarted.
+        engine.step();
+        assert_eq!(*started_ticks.borrow(), vec![0]);
+        assert!(completed_ticks.borrow().is_empty());
+
+        // Tick 2: working...
+        engine.step();
+
+        // Tick 3: completes -> RecipeCompleted.
+        engine.step();
+        assert_eq!(*completed_ticks.borrow(), vec![2]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Event Test 3: BuildingStalled event emitted when output full
+    // -----------------------------------------------------------------------
+    #[test]
+    fn event_building_stalled_output_full() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        let node = result.resolve_node(pending).unwrap();
+
+        // Source produces 10/tick, output only holds 5.
+        engine.set_processor(node, make_source(iron(), 10.0));
+        engine.set_input_inventory(node, simple_inventory(100));
+        engine.set_output_inventory(node, simple_inventory(5));
+
+        let stalled = Rc::new(RefCell::new(Vec::new()));
+        let sc = stalled.clone();
+        engine.on_passive(
+            EventKind::BuildingStalled,
+            Box::new(move |event| {
+                if let Event::BuildingStalled { reason, tick, .. } = event {
+                    sc.borrow_mut().push((*reason, *tick));
+                }
+            }),
+        );
+
+        // Tick 1: produce 5, fills output. Source is now "working" (it was idle).
+        engine.step();
+        // Tick 2: output is full, source should stall.
+        engine.step();
+
+        let data = stalled.borrow();
+        assert!(
+            !data.is_empty(),
+            "should have emitted at least one BuildingStalled event"
+        );
+        assert_eq!(data.last().unwrap().0, StallReason::OutputFull);
+    }
+
+    // -----------------------------------------------------------------------
+    // Event Test 4: Transport emits ItemDelivered events
+    // -----------------------------------------------------------------------
+    #[test]
+    fn event_transport_item_delivered() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        // Two nodes: A (source) -> B (sink).
+        let pa = engine.graph.queue_add_node(building());
+        let pb = engine.graph.queue_add_node(building());
+        let r = engine.graph.apply_mutations();
+        let a = r.resolve_node(pa).unwrap();
+        let b = r.resolve_node(pb).unwrap();
+
+        let pe = engine.graph.queue_connect(a, b);
+        let r = engine.graph.apply_mutations();
+        let edge = r.resolve_edge(pe).unwrap();
+
+        engine.set_processor(a, make_source(iron(), 5.0));
+        engine.set_input_inventory(a, simple_inventory(100));
+        engine.set_output_inventory(a, simple_inventory(100));
+
+        engine.set_processor(
+            b,
+            make_recipe(vec![(gear(), 999)], vec![(iron(), 1)], 1),
+        );
+        engine.set_input_inventory(b, simple_inventory(1000));
+        engine.set_output_inventory(b, simple_inventory(100));
+
+        engine.set_transport(edge, make_flow_transport(3.0));
+
+        let delivered = Rc::new(RefCell::new(Vec::new()));
+        let dc = delivered.clone();
+        engine.on_passive(
+            EventKind::ItemDelivered,
+            Box::new(move |event| {
+                if let Event::ItemDelivered {
+                    edge: e,
+                    quantity,
+                    tick,
+                } = event
+                {
+                    dc.borrow_mut().push((*e, *quantity, *tick));
+                }
+            }),
+        );
+
+        // Tick 1: source produces 5 iron. Transport has nothing to deliver yet.
+        engine.step();
+        assert!(delivered.borrow().is_empty());
+
+        // Tick 2: transport delivers 3 items.
+        engine.step();
+        let data = delivered.borrow();
+        assert!(!data.is_empty(), "should have ItemDelivered events");
+        assert_eq!(data[0].0, edge);
+        assert_eq!(data[0].1, 3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Event Test 5: Suppressed events not emitted
+    // -----------------------------------------------------------------------
+    #[test]
+    fn event_suppressed_events_not_emitted() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        let node = result.resolve_node(pending).unwrap();
+
+        engine.set_processor(node, make_source(iron(), 5.0));
+        engine.set_input_inventory(node, simple_inventory(100));
+        engine.set_output_inventory(node, simple_inventory(100));
+
+        // Suppress ItemProduced.
+        engine.suppress_event(EventKind::ItemProduced);
+
+        let count = Rc::new(RefCell::new(0u32));
+        let cc = count.clone();
+        engine.on_passive(
+            EventKind::ItemProduced,
+            Box::new(move |_| {
+                *cc.borrow_mut() += 1;
+            }),
+        );
+
+        // Run 5 ticks.
+        for _ in 0..5 {
+            engine.step();
+        }
+
+        // Listener should never have been called.
+        assert_eq!(
+            *count.borrow(),
+            0,
+            "suppressed events should not trigger listeners"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Event Test 6: Reactive handler mutations apply next tick (one-tick delay)
+    // -----------------------------------------------------------------------
+    #[test]
+    fn event_reactive_handler_mutations_next_tick() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        let node = result.resolve_node(pending).unwrap();
+
+        // 1 iron -> 1 gear, 2 ticks.
+        engine.set_processor(node, make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 2));
+        let mut input_inv = simple_inventory(100);
+        input_inv.input_slots[0].add(iron(), 1);
+        engine.set_input_inventory(node, input_inv);
+        engine.set_output_inventory(node, simple_inventory(100));
+
+        // When recipe completes, add a new node (via reactive handler).
+        engine.on_reactive(
+            EventKind::RecipeCompleted,
+            Box::new(|_event| {
+                vec![EventMutation::AddNode {
+                    building_type: BuildingTypeId(42),
+                }]
+            }),
+        );
+
+        // Tick 1: starts recipe.
+        engine.step();
+        assert_eq!(engine.graph.node_count(), 1);
+
+        // Tick 2: recipe completes. Post-tick delivers event, reactive handler
+        // enqueues AddNode mutation. But the mutation has NOT been applied yet.
+        engine.step();
+        assert_eq!(
+            engine.graph.node_count(),
+            1,
+            "mutation from reactive handler should NOT be applied in same tick"
+        );
+
+        // Tick 3: pre-tick applies the reactive handler's mutation.
+        engine.step();
+        assert_eq!(
+            engine.graph.node_count(),
+            2,
+            "mutation from reactive handler should be applied on the next tick"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Event Test 7: Event counts match expected production
+    // -----------------------------------------------------------------------
+    #[test]
+    fn event_counts_match_production() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        let node = result.resolve_node(pending).unwrap();
+
+        engine.set_processor(node, make_source(iron(), 2.0));
+        engine.set_input_inventory(node, simple_inventory(100));
+        engine.set_output_inventory(node, simple_inventory(100));
+
+        let total_produced = Rc::new(RefCell::new(0u32));
+        let tp = total_produced.clone();
+        engine.on_passive(
+            EventKind::ItemProduced,
+            Box::new(move |event| {
+                if let Event::ItemProduced { quantity, .. } = event {
+                    *tp.borrow_mut() += quantity;
+                }
+            }),
+        );
+
+        // 10 ticks at 2/tick = 20 items.
+        for _ in 0..10 {
+            engine.step();
+        }
+
+        assert_eq!(
+            *total_produced.borrow(),
+            20,
+            "total items produced via events should match actual production"
+        );
+
+        let output = engine.get_output_inventory(node).unwrap();
+        assert_eq!(output.output_slots[0].quantity(iron()), 20);
+    }
+
+    // -----------------------------------------------------------------------
+    // Event Test 8: Events emitted during correct phase (before bookkeeping)
+    // -----------------------------------------------------------------------
+    #[test]
+    fn event_emitted_before_tick_increment() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        let node = result.resolve_node(pending).unwrap();
+
+        engine.set_processor(node, make_source(iron(), 1.0));
+        engine.set_input_inventory(node, simple_inventory(100));
+        engine.set_output_inventory(node, simple_inventory(100));
+
+        let event_ticks = Rc::new(RefCell::new(Vec::new()));
+        let et = event_ticks.clone();
+        engine.on_passive(
+            EventKind::ItemProduced,
+            Box::new(move |event| {
+                if let Event::ItemProduced { tick, .. } = event {
+                    et.borrow_mut().push(*tick);
+                }
+            }),
+        );
+
+        // Run 3 ticks. Events should have tick=0,1,2 (sim_state.tick before
+        // bookkeeping increments it).
+        for _ in 0..3 {
+            engine.step();
+        }
+
+        assert_eq!(*event_ticks.borrow(), vec![0, 1, 2]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Event Test 9: ItemConsumed events from recipe processing
+    // -----------------------------------------------------------------------
+    #[test]
+    fn event_item_consumed() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        let node = result.resolve_node(pending).unwrap();
+
+        // 2 iron -> 1 gear, 1 tick (instant).
+        engine.set_processor(node, make_recipe(vec![(iron(), 2)], vec![(gear(), 1)], 1));
+        let mut input_inv = simple_inventory(100);
+        input_inv.input_slots[0].add(iron(), 10);
+        engine.set_input_inventory(node, input_inv);
+        engine.set_output_inventory(node, simple_inventory(100));
+
+        let consumed_total = Rc::new(RefCell::new(0u32));
+        let ct = consumed_total.clone();
+        engine.on_passive(
+            EventKind::ItemConsumed,
+            Box::new(move |event| {
+                if let Event::ItemConsumed { quantity, .. } = event {
+                    *ct.borrow_mut() += quantity;
+                }
+            }),
+        );
+
+        // 1-tick recipe: each tick consumes 2 iron and produces 1 gear.
+        for _ in 0..3 {
+            engine.step();
+        }
+
+        assert_eq!(
+            *consumed_total.borrow(),
+            6,
+            "should have consumed 2 iron per tick for 3 ticks"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Event Test 10: Events cleared between ticks (not double-delivered)
+    // -----------------------------------------------------------------------
+    #[test]
+    fn event_not_double_delivered() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        let node = result.resolve_node(pending).unwrap();
+
+        engine.set_processor(node, make_source(iron(), 1.0));
+        engine.set_input_inventory(node, simple_inventory(100));
+        engine.set_output_inventory(node, simple_inventory(100));
+
+        let delivery_count = Rc::new(RefCell::new(0u32));
+        let dc = delivery_count.clone();
+        engine.on_passive(
+            EventKind::ItemProduced,
+            Box::new(move |_| {
+                *dc.borrow_mut() += 1;
+            }),
+        );
+
+        // Each step should deliver exactly 1 event (1 item produced per tick).
+        engine.step();
+        assert_eq!(*delivery_count.borrow(), 1);
+
+        engine.step();
+        assert_eq!(*delivery_count.borrow(), 2);
+
+        engine.step();
+        assert_eq!(*delivery_count.borrow(), 3);
     }
 }

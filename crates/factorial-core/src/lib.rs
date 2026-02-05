@@ -1,5 +1,6 @@
 pub mod component;
 pub mod engine;
+pub mod event;
 pub mod fixed;
 pub mod graph;
 pub mod id;
