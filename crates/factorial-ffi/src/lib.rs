@@ -50,6 +50,8 @@ pub enum FactorialResult {
     EdgeNotFound = 6,
     /// An internal panic was caught at the FFI boundary.
     InternalError = 7,
+    /// The engine is poisoned (a previous panic left it in an inconsistent state).
+    Poisoned = 8,
 }
 
 // ---------------------------------------------------------------------------
@@ -58,7 +60,11 @@ pub enum FactorialResult {
 
 /// Opaque engine handle. Callers receive `*mut FactorialEngine` from
 /// `factorial_create` and pass it to all subsequent calls.
-pub type FactorialEngine = Engine;
+#[repr(C)]
+pub struct FactorialEngine {
+    inner: Engine,
+    poisoned: bool,
+}
 
 // ---------------------------------------------------------------------------
 // FFI-safe ID types
@@ -467,7 +473,7 @@ pub extern "C" fn factorial_create() -> *mut FactorialEngine {
     match catch_unwind(|| {
         let mut engine = Engine::new(SimulationStrategy::Tick);
         register_ffi_event_listeners(&mut engine);
-        Box::into_raw(Box::new(engine))
+        Box::into_raw(Box::new(FactorialEngine { inner: engine, poisoned: false }))
     }) {
         Ok(ptr) => ptr,
         Err(_) => ptr::null_mut(),
@@ -483,7 +489,7 @@ pub extern "C" fn factorial_create_delta(fixed_timestep: u64) -> *mut FactorialE
     match catch_unwind(|| {
         let mut engine = Engine::new(SimulationStrategy::Delta { fixed_timestep });
         register_ffi_event_listeners(&mut engine);
-        Box::into_raw(Box::new(engine))
+        Box::into_raw(Box::new(FactorialEngine { inner: engine, poisoned: false }))
     }) {
         Ok(ptr) => ptr,
         Err(_) => ptr::null_mut(),
@@ -527,14 +533,22 @@ pub unsafe extern "C" fn factorial_step(engine: *mut FactorialEngine) -> Factori
         return FactorialResult::NullPointer;
     }
     match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
         // Clear previous events before stepping so the cache only contains
         // events from this step.
         EVENT_CACHE.with(|c| c.borrow_mut().clear());
-        let engine = unsafe { &mut *engine };
-        engine.step();
+        engine.inner.step();
+        FactorialResult::Ok
     })) {
-        Ok(()) => FactorialResult::Ok,
-        Err(_) => FactorialResult::InternalError,
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
     }
 }
 
@@ -553,13 +567,21 @@ pub unsafe extern "C" fn factorial_advance(
         return FactorialResult::NullPointer;
     }
     match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
         // Clear previous events before advancing.
         EVENT_CACHE.with(|c| c.borrow_mut().clear());
-        let engine = unsafe { &mut *engine };
-        engine.advance(dt);
+        engine.inner.advance(dt);
+        FactorialResult::Ok
     })) {
-        Ok(()) => FactorialResult::Ok,
-        Err(_) => FactorialResult::InternalError,
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
     }
 }
 
@@ -584,11 +606,19 @@ pub unsafe extern "C" fn factorial_add_node(
     }
     match catch_unwind(std::panic::AssertUnwindSafe(|| {
         let engine = unsafe { &mut *engine };
-        let pending = engine.graph.queue_add_node(BuildingTypeId(building_type));
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let pending = engine.inner.graph.queue_add_node(BuildingTypeId(building_type));
         unsafe { *out_pending = pending.0 };
+        FactorialResult::Ok
     })) {
-        Ok(()) => FactorialResult::Ok,
-        Err(_) => FactorialResult::InternalError,
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
     }
 }
 
@@ -607,10 +637,18 @@ pub unsafe extern "C" fn factorial_remove_node(
     }
     match catch_unwind(std::panic::AssertUnwindSafe(|| {
         let engine = unsafe { &mut *engine };
-        engine.graph.queue_remove_node(ffi_to_node_id(node_id));
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        engine.inner.graph.queue_remove_node(ffi_to_node_id(node_id));
+        FactorialResult::Ok
     })) {
-        Ok(()) => FactorialResult::Ok,
-        Err(_) => FactorialResult::InternalError,
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
     }
 }
 
@@ -631,13 +669,22 @@ pub unsafe extern "C" fn factorial_connect(
     }
     match catch_unwind(std::panic::AssertUnwindSafe(|| {
         let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
         let pending = engine
+            .inner
             .graph
             .queue_connect(ffi_to_node_id(from_node), ffi_to_node_id(to_node));
         unsafe { *out_pending = pending.0 };
+        FactorialResult::Ok
     })) {
-        Ok(()) => FactorialResult::Ok,
-        Err(_) => FactorialResult::InternalError,
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
     }
 }
 
@@ -656,10 +703,18 @@ pub unsafe extern "C" fn factorial_disconnect(
     }
     match catch_unwind(std::panic::AssertUnwindSafe(|| {
         let engine = unsafe { &mut *engine };
-        engine.graph.queue_disconnect(ffi_to_edge_id(edge_id));
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        engine.inner.graph.queue_disconnect(ffi_to_edge_id(edge_id));
+        FactorialResult::Ok
     })) {
-        Ok(()) => FactorialResult::Ok,
-        Err(_) => FactorialResult::InternalError,
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
     }
 }
 
@@ -681,7 +736,10 @@ pub unsafe extern "C" fn factorial_apply_mutations(
     }
     match catch_unwind(std::panic::AssertUnwindSafe(|| {
         let engine = unsafe { &mut *engine };
-        let result = engine.graph.apply_mutations();
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let result = engine.inner.graph.apply_mutations();
 
         // Convert to FFI-safe pairs and store in thread-local caches.
         let node_pairs: Vec<FfiIdPair> = result
@@ -727,9 +785,14 @@ pub unsafe extern "C" fn factorial_apply_mutations(
                 }
             });
         });
+        FactorialResult::Ok
     })) {
-        Ok(()) => FactorialResult::Ok,
-        Err(_) => FactorialResult::InternalError,
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
     }
 }
 
@@ -752,9 +815,13 @@ pub unsafe extern "C" fn factorial_node_count(
     }
     match catch_unwind(std::panic::AssertUnwindSafe(|| {
         let engine = unsafe { &*engine };
-        unsafe { *out_count = engine.node_count() as u32 };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        unsafe { *out_count = engine.inner.node_count() as u32 };
+        FactorialResult::Ok
     })) {
-        Ok(()) => FactorialResult::Ok,
+        Ok(result) => result,
         Err(_) => FactorialResult::InternalError,
     }
 }
@@ -774,9 +841,13 @@ pub unsafe extern "C" fn factorial_edge_count(
     }
     match catch_unwind(std::panic::AssertUnwindSafe(|| {
         let engine = unsafe { &*engine };
-        unsafe { *out_count = engine.edge_count() as u32 };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        unsafe { *out_count = engine.inner.edge_count() as u32 };
+        FactorialResult::Ok
     })) {
-        Ok(()) => FactorialResult::Ok,
+        Ok(result) => result,
         Err(_) => FactorialResult::InternalError,
     }
 }
@@ -796,9 +867,13 @@ pub unsafe extern "C" fn factorial_get_tick(
     }
     match catch_unwind(std::panic::AssertUnwindSafe(|| {
         let engine = unsafe { &*engine };
-        unsafe { *out_tick = engine.sim_state.tick };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        unsafe { *out_tick = engine.inner.sim_state.tick };
+        FactorialResult::Ok
     })) {
-        Ok(()) => FactorialResult::Ok,
+        Ok(result) => result,
         Err(_) => FactorialResult::InternalError,
     }
 }
@@ -818,9 +893,13 @@ pub unsafe extern "C" fn factorial_get_state_hash(
     }
     match catch_unwind(std::panic::AssertUnwindSafe(|| {
         let engine = unsafe { &*engine };
-        unsafe { *out_hash = engine.state_hash() };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        unsafe { *out_hash = engine.inner.state_hash() };
+        FactorialResult::Ok
     })) {
-        Ok(()) => FactorialResult::Ok,
+        Ok(result) => result,
         Err(_) => FactorialResult::InternalError,
     }
 }
@@ -841,8 +920,11 @@ pub unsafe extern "C" fn factorial_get_processor_state(
     }
     match catch_unwind(std::panic::AssertUnwindSafe(|| {
         let engine = unsafe { &*engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
         let nid = ffi_to_node_id(node_id);
-        match engine.get_processor_state(nid) {
+        match engine.inner.get_processor_state(nid) {
             Some(state) => {
                 unsafe { *out_info = convert_processor_state(state) };
                 FactorialResult::Ok
@@ -871,8 +953,11 @@ pub unsafe extern "C" fn factorial_get_input_inventory_count(
     }
     match catch_unwind(std::panic::AssertUnwindSafe(|| {
         let engine = unsafe { &*engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
         let nid = ffi_to_node_id(node_id);
-        match engine.get_input_inventory(nid) {
+        match engine.inner.get_input_inventory(nid) {
             Some(inv) => {
                 let total: u32 = inv.input_slots.iter().map(|s| s.total()).sum();
                 unsafe { *out_count = total };
@@ -902,8 +987,11 @@ pub unsafe extern "C" fn factorial_get_output_inventory_count(
     }
     match catch_unwind(std::panic::AssertUnwindSafe(|| {
         let engine = unsafe { &*engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
         let nid = ffi_to_node_id(node_id);
-        match engine.get_output_inventory(nid) {
+        match engine.inner.get_output_inventory(nid) {
             Some(inv) => {
                 let total: u32 = inv.output_slots.iter().map(|s| s.total()).sum();
                 unsafe { *out_count = total };
@@ -930,13 +1018,17 @@ pub unsafe extern "C" fn factorial_get_output_inventory_count(
 /// `engine` and `out_buffer` must be valid pointers.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn factorial_poll_events(
-    _engine: *const FactorialEngine,
+    engine: *const FactorialEngine,
     out_buffer: *mut FfiEventBuffer,
 ) -> FactorialResult {
-    if _engine.is_null() || out_buffer.is_null() {
+    if engine.is_null() || out_buffer.is_null() {
         return FactorialResult::NullPointer;
     }
     match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &*engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
         // Events were captured into EVENT_CACHE by passive listeners during
         // the most recent step/advance call. Return a pointer into the cache.
         EVENT_CACHE.with(|c| {
@@ -952,8 +1044,9 @@ pub unsafe extern "C" fn factorial_poll_events(
                 };
             }
         });
+        FactorialResult::Ok
     })) {
-        Ok(()) => FactorialResult::Ok,
+        Ok(result) => result,
         Err(_) => FactorialResult::InternalError,
     }
 }
@@ -979,7 +1072,10 @@ pub unsafe extern "C" fn factorial_serialize(
     }
     match catch_unwind(std::panic::AssertUnwindSafe(|| {
         let engine = unsafe { &*engine };
-        match engine.serialize() {
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        match engine.inner.serialize() {
             Ok(data) => {
                 let len = data.len();
                 let mut boxed = data.into_boxed_slice();
@@ -1025,7 +1121,7 @@ pub unsafe extern "C" fn factorial_deserialize(
         let slice = unsafe { std::slice::from_raw_parts(data, len) };
         match Engine::deserialize(slice) {
             Ok(engine) => {
-                unsafe { *out_engine = Box::into_raw(Box::new(engine)) };
+                unsafe { *out_engine = Box::into_raw(Box::new(FactorialEngine { inner: engine, poisoned: false })) };
                 FactorialResult::Ok
             }
             Err(_) => {
@@ -1058,6 +1154,40 @@ pub unsafe extern "C" fn factorial_free_buffer(buffer: FfiByteBuffer) -> Factori
         Ok(()) => FactorialResult::Ok,
         Err(_) => FactorialResult::InternalError,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Poison checking
+// ---------------------------------------------------------------------------
+
+/// Check whether the engine is poisoned (a previous panic left it in an
+/// inconsistent state). Returns `false` if the engine pointer is null.
+///
+/// # Safety
+///
+/// `engine` must be a valid engine pointer or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_is_poisoned(engine: *const FactorialEngine) -> bool {
+    if engine.is_null() {
+        return false;
+    }
+    let engine = unsafe { &*engine };
+    engine.poisoned
+}
+
+/// Clear the poisoned flag on an engine, allowing it to be used again.
+///
+/// # Safety
+///
+/// `engine` must be a valid engine pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_clear_poison(engine: *mut FactorialEngine) -> FactorialResult {
+    if engine.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    let engine = unsafe { &mut *engine };
+    engine.poisoned = false;
+    FactorialResult::Ok
 }
 
 // ===========================================================================
@@ -1243,9 +1373,9 @@ mod tests {
         // for test setup -- real users would have dedicated FFI for this).
         let engine = unsafe { &mut *engine_ptr };
         let node_id = ffi_to_node_id(node_ffi_id);
-        engine.set_processor(node_id, make_source(iron(), 3.0));
-        engine.set_input_inventory(node_id, simple_inventory(100));
-        engine.set_output_inventory(node_id, simple_inventory(100));
+        engine.inner.set_processor(node_id, make_source(iron(), 3.0));
+        engine.inner.set_input_inventory(node_id, simple_inventory(100));
+        engine.inner.set_output_inventory(node_id, simple_inventory(100));
 
         // Step once via FFI.
         let result = unsafe { factorial_step(engine_ptr) };
@@ -1295,9 +1425,9 @@ mod tests {
         let node_ffi_id = pairs[0].real_id;
         let engine = unsafe { &mut *engine_ptr };
         let node_id = ffi_to_node_id(node_ffi_id);
-        engine.set_processor(node_id, make_source(iron(), 2.0));
-        engine.set_input_inventory(node_id, simple_inventory(100));
-        engine.set_output_inventory(node_id, simple_inventory(100));
+        engine.inner.set_processor(node_id, make_source(iron(), 2.0));
+        engine.inner.set_input_inventory(node_id, simple_inventory(100));
+        engine.inner.set_output_inventory(node_id, simple_inventory(100));
 
         // Step a few times.
         for _ in 0..5 {
@@ -1369,9 +1499,9 @@ mod tests {
 
         let engine = unsafe { &mut *engine_ptr };
         let node_id = ffi_to_node_id(node_ffi_id);
-        engine.set_processor(node_id, make_source(iron(), 2.0));
-        engine.set_input_inventory(node_id, simple_inventory(100));
-        engine.set_output_inventory(node_id, simple_inventory(100));
+        engine.inner.set_processor(node_id, make_source(iron(), 2.0));
+        engine.inner.set_input_inventory(node_id, simple_inventory(100));
+        engine.inner.set_output_inventory(node_id, simple_inventory(100));
 
         // Step.
         unsafe { factorial_step(engine_ptr) };
@@ -1754,9 +1884,9 @@ mod tests {
 
         let engine = unsafe { &mut *engine_ptr };
         let node_id = ffi_to_node_id(node_ffi_id);
-        engine.set_processor(node_id, make_source(iron(), 1.0));
-        engine.set_input_inventory(node_id, simple_inventory(100));
-        engine.set_output_inventory(node_id, simple_inventory(100));
+        engine.inner.set_processor(node_id, make_source(iron(), 1.0));
+        engine.inner.set_input_inventory(node_id, simple_inventory(100));
+        engine.inner.set_output_inventory(node_id, simple_inventory(100));
 
         // Step 10 times.
         for _ in 0..10 {
@@ -1851,18 +1981,18 @@ mod tests {
         let src_id = ffi_to_node_id(src_ffi);
         let consumer_id = ffi_to_node_id(consumer_ffi);
 
-        engine.set_processor(src_id, make_source(iron(), 5.0));
-        engine.set_input_inventory(src_id, simple_inventory(100));
-        engine.set_output_inventory(src_id, simple_inventory(100));
+        engine.inner.set_processor(src_id, make_source(iron(), 5.0));
+        engine.inner.set_input_inventory(src_id, simple_inventory(100));
+        engine.inner.set_output_inventory(src_id, simple_inventory(100));
 
-        engine.set_processor(
+        engine.inner.set_processor(
             consumer_id,
             make_recipe(vec![(iron(), 2)], vec![(gear(), 1)], 3),
         );
         let mut consumer_input = simple_inventory(100);
         consumer_input.input_slots[0].add(iron(), 10);
-        engine.set_input_inventory(consumer_id, consumer_input);
-        engine.set_output_inventory(consumer_id, simple_inventory(100));
+        engine.inner.set_input_inventory(consumer_id, consumer_input);
+        engine.inner.set_output_inventory(consumer_id, simple_inventory(100));
 
         // Step 10 times.
         for _ in 0..10 {
@@ -1928,6 +2058,51 @@ mod tests {
         assert_eq!(result, FactorialResult::Ok);
         assert_eq!(eb.count, 0);
 
+        unsafe { factorial_destroy(engine) };
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 21: Poisoned engine blocks calls
+    // -----------------------------------------------------------------------
+    #[test]
+    fn poisoned_engine_blocks_calls() {
+        let engine = factorial_create();
+        assert!(!engine.is_null());
+        let engine_ref = unsafe { &mut *engine };
+        engine_ref.poisoned = true;
+        assert!(unsafe { factorial_is_poisoned(engine) });
+        let result = unsafe { factorial_step(engine) };
+        assert_eq!(result, FactorialResult::Poisoned);
+        let mut tick: u64 = 0;
+        let result = unsafe { factorial_get_tick(engine, &mut tick) };
+        assert_eq!(result, FactorialResult::Poisoned);
+        unsafe { factorial_destroy(engine) };
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 22: Clear poison allows resume
+    // -----------------------------------------------------------------------
+    #[test]
+    fn clear_poison_allows_resume() {
+        let engine = factorial_create();
+        let engine_ref = unsafe { &mut *engine };
+        engine_ref.poisoned = true;
+        assert!(unsafe { factorial_is_poisoned(engine) });
+        let result = unsafe { factorial_clear_poison(engine) };
+        assert_eq!(result, FactorialResult::Ok);
+        assert!(!unsafe { factorial_is_poisoned(engine) });
+        let result = unsafe { factorial_step(engine) };
+        assert_eq!(result, FactorialResult::Ok);
+        unsafe { factorial_destroy(engine) };
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 23: New engine not poisoned
+    // -----------------------------------------------------------------------
+    #[test]
+    fn new_engine_not_poisoned() {
+        let engine = factorial_create();
+        assert!(!unsafe { factorial_is_poisoned(engine) });
         unsafe { factorial_destroy(engine) };
     }
 }
