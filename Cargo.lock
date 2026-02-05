@@ -329,6 +329,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "factorial-power"
+version = "0.1.0"
+dependencies = [
+ "factorial-core",
+ "fixed",
+ "serde",
+ "slotmap",
+]
+
+[[package]]
 name = "factorial-stats"
 version = "0.1.0"
 dependencies = [
@@ -345,16 +355,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror",
-]
-
-[[package]]
-name = "factorial-power"
-version = "0.1.0"
-dependencies = [
- "factorial-core",
- "fixed",
- "serde",
- "slotmap",
 ]
 
 [[package]]
