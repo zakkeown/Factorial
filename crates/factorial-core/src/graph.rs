@@ -725,4 +725,112 @@ mod tests {
         assert_eq!(graph.get_outputs(a).len(), 0);
         assert_eq!(graph.get_inputs(b).len(), 0);
     }
+
+    // -----------------------------------------------------------------------
+    // Test 11: Self-loop detected as cycle
+    // -----------------------------------------------------------------------
+    #[test]
+    fn self_loop_detected_as_cycle() {
+        let (mut graph, nodes) = make_graph_with_nodes(1);
+        let a = nodes[0];
+        graph.queue_connect(a, a);
+        graph.apply_mutations();
+        let result = graph.topological_order();
+        assert!(result.is_err());
+        assert!(matches!(result, Err(GraphError::CycleDetected)));
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 12: Duplicate edges allowed
+    // -----------------------------------------------------------------------
+    #[test]
+    fn duplicate_edges_allowed() {
+        let (mut graph, nodes) = make_graph_with_nodes(2);
+        let [a, b] = [nodes[0], nodes[1]];
+        let pe1 = graph.queue_connect(a, b);
+        let pe2 = graph.queue_connect(a, b);
+        let result = graph.apply_mutations();
+        let e1 = result.resolve_edge(pe1).unwrap();
+        let e2 = result.resolve_edge(pe2).unwrap();
+        assert_ne!(e1, e2);
+        assert_eq!(graph.edge_count(), 2);
+        assert_eq!(graph.get_outputs(a).len(), 2);
+        assert_eq!(graph.get_inputs(b).len(), 2);
+        let order = graph.topological_order().unwrap();
+        assert_eq!(order.len(), 2);
+        assert_eq!(order[0], a);
+        assert_eq!(order[1], b);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 13: Remove nonexistent node — no panic
+    // -----------------------------------------------------------------------
+    #[test]
+    fn remove_nonexistent_node_no_panic() {
+        let (mut graph, nodes) = make_graph_with_nodes(1);
+        let real_node = nodes[0];
+        graph.queue_remove_node(real_node);
+        graph.apply_mutations();
+        assert_eq!(graph.node_count(), 0);
+        graph.queue_remove_node(real_node);
+        graph.apply_mutations();
+        assert_eq!(graph.node_count(), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 14: Disconnect nonexistent edge — no panic
+    // -----------------------------------------------------------------------
+    #[test]
+    fn disconnect_nonexistent_edge_no_panic() {
+        let (mut graph, nodes) = make_graph_with_nodes(2);
+        let [a, b] = [nodes[0], nodes[1]];
+        let pe = graph.queue_connect(a, b);
+        let result = graph.apply_mutations();
+        let edge = result.resolve_edge(pe).unwrap();
+        graph.queue_disconnect(edge);
+        graph.apply_mutations();
+        assert_eq!(graph.edge_count(), 0);
+        graph.queue_disconnect(edge);
+        graph.apply_mutations();
+        assert_eq!(graph.edge_count(), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 15: Remove node with inbound and outbound edges
+    // -----------------------------------------------------------------------
+    #[test]
+    fn remove_node_with_inbound_and_outbound_edges() {
+        let (mut graph, nodes) = make_graph_with_nodes(3);
+        let [a, b, c] = [nodes[0], nodes[1], nodes[2]];
+        graph.queue_connect(a, b);
+        graph.queue_connect(b, c);
+        graph.apply_mutations();
+        assert_eq!(graph.edge_count(), 2);
+        graph.queue_remove_node(b);
+        graph.apply_mutations();
+        assert_eq!(graph.node_count(), 2);
+        assert_eq!(graph.edge_count(), 0);
+        assert_eq!(graph.get_outputs(a).len(), 0);
+        assert_eq!(graph.get_inputs(c).len(), 0);
+        let order = graph.topological_order().unwrap();
+        assert_eq!(order.len(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 16: Queued mutations don't affect topo until applied
+    // -----------------------------------------------------------------------
+    #[test]
+    fn queued_mutations_dont_affect_topo_until_applied() {
+        let (mut graph, nodes) = make_graph_with_nodes(2);
+        let [a, b] = [nodes[0], nodes[1]];
+        graph.queue_connect(a, b);
+        graph.apply_mutations();
+        let order = graph.topological_order().unwrap();
+        assert_eq!(order, &[a, b]);
+        let _pending_c = graph.queue_add_node(BuildingTypeId(0));
+        assert!(graph.has_pending_mutations());
+        let order = graph.topological_order().unwrap();
+        assert_eq!(order, &[a, b]);
+        assert_eq!(graph.node_count(), 2);
+    }
 }
