@@ -11,3 +11,6 @@ pub mod registry;
 pub mod serialize;
 pub mod sim;
 pub mod transport;
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;
