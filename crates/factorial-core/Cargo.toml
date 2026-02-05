@@ -8,6 +8,7 @@ fixed = { workspace = true }
 serde = { workspace = true }
 bitcode = { workspace = true }
 slotmap = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 criterion = "0.5"

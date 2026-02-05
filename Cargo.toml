@@ -9,3 +9,4 @@ serde = { version = "1", features = ["derive"] }
 bitcode = { version = "0.6", features = ["serde", "derive"] }
 fixed = "1.28"
 slotmap = "1.0"
+thiserror = "2"
