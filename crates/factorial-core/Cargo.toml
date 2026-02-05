@@ -1,0 +1,17 @@
+[package]
+name = "factorial-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fixed = { workspace = true }
+serde = { workspace = true }
+bitcode = { workspace = true }
+slotmap = { workspace = true }
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "sim_bench"
+harness = false
