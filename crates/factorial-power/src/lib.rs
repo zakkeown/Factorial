@@ -13,7 +13,7 @@
 //! - Satisfaction ratio affects building performance (applied externally).
 //! - Events fire only on *transitions*, not every tick.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use factorial_core::fixed::{Fixed64, Ticks};
 use factorial_core::id::NodeId;
@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 
 /// Identifies a power network. Cheap to copy and compare.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct PowerNetworkId(pub u32);
 
 // ---------------------------------------------------------------------------
@@ -172,13 +172,13 @@ pub enum PowerEvent {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PowerModule {
     /// All power networks, keyed by network ID.
-    pub networks: HashMap<PowerNetworkId, PowerNetwork>,
+    pub networks: BTreeMap<PowerNetworkId, PowerNetwork>,
     /// Per-node producer specs.
-    pub producers: HashMap<NodeId, PowerProducer>,
+    pub producers: BTreeMap<NodeId, PowerProducer>,
     /// Per-node consumer specs.
-    pub consumers: HashMap<NodeId, PowerConsumer>,
+    pub consumers: BTreeMap<NodeId, PowerConsumer>,
     /// Per-node storage specs (mutable charge state).
-    pub storage: HashMap<NodeId, PowerStorage>,
+    pub storage: BTreeMap<NodeId, PowerStorage>,
     /// Next network ID to assign.
     next_network_id: u32,
 }
@@ -193,10 +193,10 @@ impl PowerModule {
     /// Create a new empty power module.
     pub fn new() -> Self {
         Self {
-            networks: HashMap::new(),
-            producers: HashMap::new(),
-            consumers: HashMap::new(),
-            storage: HashMap::new(),
+            networks: BTreeMap::new(),
+            producers: BTreeMap::new(),
+            consumers: BTreeMap::new(),
+            storage: BTreeMap::new(),
             next_network_id: 0,
         }
     }
@@ -1228,5 +1228,29 @@ mod tests {
 
         let storage = module.storage.get(&nodes[1]).unwrap();
         assert_eq!(storage.charge, fixed(450.0));
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 29: Deterministic power distribution (BTreeMap iteration order)
+    // -----------------------------------------------------------------------
+    #[test]
+    fn deterministic_power_distribution() {
+        fn run() -> Fixed64 {
+            let mut module = PowerModule::new();
+            let net = module.create_network();
+            let nodes = make_node_ids(5);
+            module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(50.0) });
+            module.add_consumer(net, nodes[1], PowerConsumer { demand: fixed(25.0) });
+            module.add_consumer(net, nodes[2], PowerConsumer { demand: fixed(25.0) });
+            module.add_consumer(net, nodes[3], PowerConsumer { demand: fixed(25.0) });
+            module.add_consumer(net, nodes[4], PowerConsumer { demand: fixed(25.0) });
+            module.tick(1);
+            module.satisfaction(net).unwrap()
+        }
+
+        let sat1 = run();
+        let sat2 = run();
+        assert_eq!(sat1, sat2, "satisfaction should be deterministic");
+        assert_eq!(sat1, fixed(0.5), "50W / 100W = 0.5");
     }
 }
