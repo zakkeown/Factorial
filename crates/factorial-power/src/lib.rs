@@ -970,19 +970,19 @@ mod tests {
         // Remove consumer.
         module.remove_node(nodes[1]);
 
-        assert!(module.consumers.get(&nodes[1]).is_none());
+        assert!(!module.consumers.contains_key(&nodes[1]));
         let network = module.network(net).unwrap();
         assert!(!network.consumers.contains(&nodes[1]));
 
         // Remove producer.
         module.remove_node(nodes[0]);
-        assert!(module.producers.get(&nodes[0]).is_none());
+        assert!(!module.producers.contains_key(&nodes[0]));
         let network = module.network(net).unwrap();
         assert!(!network.producers.contains(&nodes[0]));
 
         // Remove storage.
         module.remove_node(nodes[2]);
-        assert!(module.storage.get(&nodes[2]).is_none());
+        assert!(!module.storage.contains_key(&nodes[2]));
         let network = module.network(net).unwrap();
         assert!(!network.storage.contains(&nodes[2]));
     }

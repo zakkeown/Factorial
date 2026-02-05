@@ -7,118 +7,9 @@
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use factorial_core::engine::Engine;
-use factorial_core::fixed::Fixed64;
 use factorial_core::id::*;
-use factorial_core::item::Inventory;
-use factorial_core::processor::*;
 use factorial_core::sim::SimulationStrategy;
-use factorial_core::transport::*;
-
-// ===========================================================================
-// Helpers
-// ===========================================================================
-
-fn fixed(v: f64) -> Fixed64 {
-    Fixed64::from_num(v)
-}
-
-fn iron() -> ItemTypeId {
-    ItemTypeId(0)
-}
-fn gear() -> ItemTypeId {
-    ItemTypeId(2)
-}
-
-fn building() -> BuildingTypeId {
-    BuildingTypeId(0)
-}
-
-fn simple_inventory(capacity: u32) -> Inventory {
-    Inventory::new(1, 1, capacity)
-}
-
-fn make_source(item: ItemTypeId, rate: f64) -> Processor {
-    Processor::Source(SourceProcessor {
-        output_type: item,
-        base_rate: fixed(rate),
-        depletion: Depletion::Infinite,
-        accumulated: fixed(0.0),
-    })
-}
-
-fn make_recipe(
-    inputs: Vec<(ItemTypeId, u32)>,
-    outputs: Vec<(ItemTypeId, u32)>,
-    duration: u32,
-) -> Processor {
-    Processor::Fixed(FixedRecipe {
-        inputs: inputs
-            .into_iter()
-            .map(|(item_type, quantity)| RecipeInput {
-                item_type,
-                quantity,
-            })
-            .collect(),
-        outputs: outputs
-            .into_iter()
-            .map(|(item_type, quantity)| RecipeOutput {
-                item_type,
-                quantity,
-            })
-            .collect(),
-        duration,
-    })
-}
-
-fn make_flow_transport(rate: f64) -> Transport {
-    Transport::Flow(FlowTransport {
-        rate: fixed(rate),
-        buffer_capacity: fixed(1000.0),
-        latency: 0,
-    })
-}
-
-fn make_item_transport(slot_count: u32) -> Transport {
-    Transport::Item(ItemTransport {
-        speed: fixed(1.0),
-        slot_count,
-        lanes: 1,
-    })
-}
-
-fn make_batch_transport() -> Transport {
-    Transport::Batch(BatchTransport {
-        batch_size: 10,
-        cycle_time: 5,
-    })
-}
-
-/// Add a node to the engine with the given processor and inventories.
-fn add_node(
-    engine: &mut Engine,
-    processor: Processor,
-    input_capacity: u32,
-    output_capacity: u32,
-) -> NodeId {
-    let pending = engine.graph.queue_add_node(building());
-    let result = engine.graph.apply_mutations();
-    let node = result.resolve_node(pending).unwrap();
-
-    engine.set_processor(node, processor);
-    engine.set_input_inventory(node, simple_inventory(input_capacity));
-    engine.set_output_inventory(node, simple_inventory(output_capacity));
-
-    node
-}
-
-/// Connect two nodes with the given transport.
-fn connect(engine: &mut Engine, from: NodeId, to: NodeId, transport: Transport) -> EdgeId {
-    let pending = engine.graph.queue_connect(from, to);
-    let result = engine.graph.apply_mutations();
-    let edge = result.resolve_edge(pending).unwrap();
-    engine.set_transport(edge, transport);
-    edge
-}
+use factorial_core::test_utils::*;
 
 // ===========================================================================
 // Factory builders
@@ -170,12 +61,12 @@ fn build_small_factory() -> Engine {
 
     // Add cross-links between adjacent chains to reach ~500 edges.
     // Connect each chain's output to the next chain's last assembler.
-    for i in 0..chains.len() - 1 {
-        for depth in 1..chain_length {
+    for pair in chains.windows(2) {
+        for (&src, &dst) in pair[0][1..].iter().zip(pair[1][1..].iter()) {
             connect(
                 &mut engine,
-                chains[i][depth],
-                chains[i + 1][depth],
+                src,
+                dst,
                 make_flow_transport(5.0),
             );
         }
@@ -223,7 +114,7 @@ fn build_medium_factory() -> Engine {
             let transport = match i % 3 {
                 0 => make_flow_transport(10.0),
                 1 => make_item_transport(10),
-                _ => make_batch_transport(),
+                _ => make_batch_transport(10, 5),
             };
             connect(&mut engine, chain[i], chain[i + 1], transport);
         }
