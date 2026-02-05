@@ -27,7 +27,7 @@ use crate::item::ItemStack;
 ///
 /// Uses enum dispatch for sized inline storage and branch-predictor-friendly
 /// processing when edges are grouped by variant.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Transport {
     /// Continuous rate-based flow (pipes in Builderment/Satisfactory).
     Flow(FlowTransport),
@@ -44,7 +44,7 @@ pub enum Transport {
 /// Items flow at a fixed rate per tick, with an optional latency delay
 /// before items appear at the destination. A buffer accumulates fractional
 /// items between ticks.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FlowTransport {
     /// Items per tick (fractional via fixed-point).
     pub rate: Fixed64,
@@ -58,7 +58,7 @@ pub struct FlowTransport {
 ///
 /// Models conveyor belts where each slot can hold one item. Items advance
 /// through slots each tick at the configured speed.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ItemTransport {
     /// Slots advanced per tick (fractional via fixed-point).
     pub speed: Fixed64,
@@ -72,7 +72,7 @@ pub struct ItemTransport {
 ///
 /// Delivers `batch_size` items every `cycle_time` ticks. Simple model for
 /// train loads, courier pallets, etc.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BatchTransport {
     /// Items per batch delivery.
     pub batch_size: u32,
@@ -84,7 +84,7 @@ pub struct BatchTransport {
 ///
 /// A vehicle travels from source to destination, loads up to `capacity` items,
 /// delivers them, then returns. The round trip takes `2 * travel_time` ticks.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VehicleTransport {
     /// Maximum items the vehicle can carry.
     pub capacity: u32,
@@ -98,7 +98,7 @@ pub struct VehicleTransport {
 
 /// Mutable transport state, stored externally in typed arenas for SoA locality.
 /// Variants match the [`Transport`] enum one-to-one.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum TransportState {
     Flow(FlowState),
     Item(BeltState),
@@ -107,7 +107,7 @@ pub enum TransportState {
 }
 
 /// State for [`FlowTransport`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FlowState {
     /// Amount currently buffered (fractional items in transit).
     pub buffered: Fixed64,
@@ -120,7 +120,7 @@ pub struct FlowState {
 /// Slots are stored as a flat array. Each slot is `None` (empty) or
 /// `Some(ItemTypeId)`. The array is pre-allocated at creation to the belt's
 /// declared length times lane count. No runtime reallocation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BeltState {
     /// Flat array of slots: `lanes * slot_count` entries.
     /// Layout: lane 0 slots [0..slot_count), lane 1 slots [slot_count..2*slot_count), etc.
@@ -128,7 +128,7 @@ pub struct BeltState {
 }
 
 /// State for [`BatchTransport`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BatchState {
     /// Current progress through the cycle (0..cycle_time).
     pub progress: u32,
@@ -137,7 +137,7 @@ pub struct BatchState {
 }
 
 /// State for [`VehicleTransport`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct VehicleState {
     /// Position along the route: 0 = at source, travel_time = at destination.
     pub position: u32,

@@ -7,14 +7,14 @@ slotmap::new_key_type! {
 }
 
 /// A stack of fungible items (no properties). Just a counter.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ItemStack {
     pub item_type: ItemTypeId,
     pub quantity: u32,
 }
 
 /// Inventory slot that holds either fungible counts or instance references.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct InventorySlot {
     /// Fungible item stacks keyed by item type.
     pub stacks: Vec<ItemStack>,
@@ -86,7 +86,7 @@ impl InventorySlot {
 }
 
 /// Inventory for a building node. Multiple input/output slots.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Inventory {
     pub input_slots: Vec<InventorySlot>,
     pub output_slots: Vec<InventorySlot>,

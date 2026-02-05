@@ -6,14 +6,14 @@ use crate::id::{ItemTypeId, ModifierId, PropertyId};
 // ---------------------------------------------------------------------------
 
 /// An input requirement for a fixed recipe.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RecipeInput {
     pub item_type: ItemTypeId,
     pub quantity: u32,
 }
 
 /// An output product of a fixed recipe.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RecipeOutput {
     pub item_type: ItemTypeId,
     pub quantity: u32,
@@ -24,7 +24,7 @@ pub struct RecipeOutput {
 // ---------------------------------------------------------------------------
 
 /// How a source processor depletes over time.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Depletion {
     /// Never runs out.
     Infinite,
@@ -39,7 +39,7 @@ pub enum Depletion {
 // ---------------------------------------------------------------------------
 
 /// A transformation applied to an item property.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PropertyTransform {
     /// Set a property to an absolute value.
     Set(PropertyId, Fixed64),
@@ -54,7 +54,7 @@ pub enum PropertyTransform {
 // ---------------------------------------------------------------------------
 
 /// Produces items from nothing (mines, extractors, wells).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SourceProcessor {
     pub output_type: ItemTypeId,
     /// Items produced per tick at base speed (before modifiers).
@@ -67,7 +67,7 @@ pub struct SourceProcessor {
 
 /// Consumes a fixed set of inputs and produces a fixed set of outputs after a
 /// fixed number of ticks (assemblers, smelters, chemical plants).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FixedRecipe {
     pub inputs: Vec<RecipeInput>,
     pub outputs: Vec<RecipeOutput>,
@@ -76,7 +76,7 @@ pub struct FixedRecipe {
 }
 
 /// Transforms a property on items passing through (heating, cooling, refining).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PropertyProcessor {
     pub input_type: ItemTypeId,
     pub output_type: ItemTypeId,
@@ -84,7 +84,7 @@ pub struct PropertyProcessor {
 }
 
 /// Top-level processor enum. Dispatches via enum match (no trait objects).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Processor {
     Source(SourceProcessor),
     Fixed(FixedRecipe),
@@ -96,7 +96,7 @@ pub enum Processor {
 // ---------------------------------------------------------------------------
 
 /// Why the processor cannot make progress.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum StallReason {
     MissingInputs,
     OutputFull,
@@ -106,7 +106,7 @@ pub enum StallReason {
 
 /// Runtime state of a processor -- tracked externally in SoA storage but
 /// logically belongs with the processor.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ProcessorState {
     #[default]
     Idle,
@@ -119,7 +119,7 @@ pub enum ProcessorState {
 // ---------------------------------------------------------------------------
 
 /// What a modifier does to a processor's behaviour.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ModifierKind {
     /// Multiplies effective speed (reduces duration). 2.0 = twice as fast.
     Speed(Fixed64),
@@ -130,7 +130,7 @@ pub enum ModifierKind {
 }
 
 /// A modifier instance applied to a processor.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Modifier {
     pub id: ModifierId,
     pub kind: ModifierKind,

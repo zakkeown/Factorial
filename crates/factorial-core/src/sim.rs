@@ -15,7 +15,7 @@ use crate::graph::MutationResult;
 ///
 /// All strategies execute the same six-phase step internally. The strategy
 /// only controls how many steps are run when `Engine::advance()` is called.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum SimulationStrategy {
     /// Single step per call. The game calls `engine.step()` at a fixed rate.
     /// Deterministic by construction.
@@ -37,7 +37,7 @@ pub enum SimulationStrategy {
 // ---------------------------------------------------------------------------
 
 /// Mutable simulation state tracked by the engine.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SimState {
     /// Current tick counter. Incremented by 1 for each simulation step.
     pub tick: Ticks,

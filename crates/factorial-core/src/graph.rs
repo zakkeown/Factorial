@@ -1,4 +1,5 @@
 use crate::id::*;
+use serde::{Serialize, Deserialize};
 use slotmap::{SecondaryMap, SlotMap};
 use std::collections::VecDeque;
 
@@ -22,7 +23,7 @@ pub enum GraphError {
 // ---------------------------------------------------------------------------
 
 /// Adjacency lists for a single node, tracking incoming and outgoing edges.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 struct NodeAdjacency {
     /// Edges whose destination is this node.
     inputs: Vec<EdgeId>,
@@ -31,14 +32,14 @@ struct NodeAdjacency {
 }
 
 /// Per-node data stored in the production graph.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NodeData {
     /// The building template this node was created from.
     pub building_type: BuildingTypeId,
 }
 
 /// Per-edge data stored in the production graph.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EdgeData {
     /// Source node.
     pub from: NodeId,
@@ -107,23 +108,47 @@ impl MutationResult {
 /// Adjacency is stored in a `SecondaryMap` keyed by `NodeId`, following the
 /// same SoA pattern used by `ComponentStorage`. This guarantees key
 /// synchronization with the primary `nodes` SlotMap.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ProductionGraph {
     nodes: SlotMap<NodeId, NodeData>,
     edges: SlotMap<EdgeId, EdgeData>,
     adjacency: SecondaryMap<NodeId, NodeAdjacency>,
 
     /// Cached topological order. Recomputed lazily when `dirty` is true.
+    #[serde(skip)]
     topo_cache: Vec<NodeId>,
     /// Whether the cached topological order needs recomputation.
+    /// Defaults to `true` on deserialize so the cache is recomputed.
+    #[serde(skip, default = "default_dirty")]
     dirty: bool,
 
     /// Queued mutations to be applied atomically.
+    #[serde(skip)]
     mutations: Vec<Mutation>,
     /// Counter for generating unique `PendingNodeId` values.
     next_pending_node: u64,
     /// Counter for generating unique `PendingEdgeId` values.
     next_pending_edge: u64,
+}
+
+/// Default for dirty flag on deserialize -- always `true` so topo cache is recomputed.
+fn default_dirty() -> bool {
+    true
+}
+
+impl Clone for ProductionGraph {
+    fn clone(&self) -> Self {
+        Self {
+            nodes: self.nodes.clone(),
+            edges: self.edges.clone(),
+            adjacency: self.adjacency.clone(),
+            topo_cache: Vec::new(), // Cache will be recomputed.
+            dirty: true,            // Force recomputation.
+            mutations: Vec::new(),  // Don't clone queued mutations.
+            next_pending_node: self.next_pending_node,
+            next_pending_edge: self.next_pending_edge,
+        }
+    }
 }
 
 impl Default for ProductionGraph {

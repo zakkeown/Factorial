@@ -44,36 +44,36 @@ pub struct Engine {
     pub graph: ProductionGraph,
 
     /// Simulation strategy (tick or delta).
-    strategy: SimulationStrategy,
+    pub(crate) strategy: SimulationStrategy,
 
     /// Simulation state (tick counter, accumulator).
     pub sim_state: SimState,
 
     // -- Per-node state (SoA, keyed by NodeId) --
     /// Processor configuration for each node.
-    processors: SecondaryMap<NodeId, Processor>,
+    pub(crate) processors: SecondaryMap<NodeId, Processor>,
 
     /// Processor runtime state for each node.
-    processor_states: SecondaryMap<NodeId, ProcessorState>,
+    pub(crate) processor_states: SecondaryMap<NodeId, ProcessorState>,
 
     /// Input inventory for each node.
-    inputs: SecondaryMap<NodeId, Inventory>,
+    pub(crate) inputs: SecondaryMap<NodeId, Inventory>,
 
     /// Output inventory for each node.
-    outputs: SecondaryMap<NodeId, Inventory>,
+    pub(crate) outputs: SecondaryMap<NodeId, Inventory>,
 
     /// Modifiers applied to each node's processor.
-    modifiers: SecondaryMap<NodeId, Vec<Modifier>>,
+    pub(crate) modifiers: SecondaryMap<NodeId, Vec<Modifier>>,
 
     // -- Per-edge state (SoA, keyed by EdgeId) --
     /// Transport configuration for each edge.
-    transports: SecondaryMap<EdgeId, Transport>,
+    pub(crate) transports: SecondaryMap<EdgeId, Transport>,
 
     /// Transport runtime state for each edge.
-    transport_states: SecondaryMap<EdgeId, TransportState>,
+    pub(crate) transport_states: SecondaryMap<EdgeId, TransportState>,
 
     /// The most recently computed state hash.
-    last_state_hash: u64,
+    pub(crate) last_state_hash: u64,
 
     /// Typed event bus for simulation events.
     pub event_bus: EventBus,
