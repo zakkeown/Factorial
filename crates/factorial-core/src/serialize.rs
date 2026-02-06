@@ -326,6 +326,7 @@ impl Engine {
             dirty: crate::dirty::DirtyTracker::new(),
             junctions: snapshot.junctions,
             junction_states: snapshot.junction_states,
+            edge_budgets: SecondaryMap::new(),
             #[cfg(feature = "profiling")]
             last_profile: None,
         })

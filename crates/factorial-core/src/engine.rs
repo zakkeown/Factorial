@@ -94,6 +94,10 @@ pub struct Engine {
     /// Junction runtime state per node.
     pub(crate) junction_states: SecondaryMap<NodeId, JunctionState>,
 
+    /// Per-edge item budgets for the current tick. Populated by junction
+    /// processing (splitter budget computation) and consumed by transport.
+    pub(crate) edge_budgets: SecondaryMap<EdgeId, u32>,
+
     /// Timing profile for the most recent tick (profiling feature only).
     #[cfg(feature = "profiling")]
     pub(crate) last_profile: Option<crate::profiling::TickProfile>,
@@ -120,6 +124,7 @@ impl Engine {
             dirty: crate::dirty::DirtyTracker::new(),
             junctions: SecondaryMap::new(),
             junction_states: SecondaryMap::new(),
+            edge_budgets: SecondaryMap::new(),
             #[cfg(feature = "profiling")]
             last_profile: None,
         }
@@ -489,7 +494,92 @@ impl Engine {
     // Phase 2: Transport
     // -----------------------------------------------------------------------
 
+    /// Compute per-edge item budgets from junction (splitter) configurations.
+    ///
+    /// Called at the start of `phase_transport` so budgets take effect
+    /// immediately in the same tick.
+    fn compute_junction_budgets(&mut self) {
+        // Clear previous budgets.
+        self.edge_budgets.clear();
+
+        // For each node with a splitter junction, compute output distribution.
+        let junction_nodes: Vec<(NodeId, Junction)> = self
+            .junctions
+            .iter()
+            .map(|(id, j)| (id, j.clone()))
+            .collect();
+
+        for (node_id, junction) in junction_nodes {
+            match &junction {
+                Junction::Splitter(config) => {
+                    let outputs = self.graph.get_outputs(node_id);
+                    if outputs.is_empty() {
+                        continue;
+                    }
+
+                    let total = match config.filter {
+                        Some(item_type) => self.output_quantity_of(node_id, item_type),
+                        None => self.output_total(node_id),
+                    };
+
+                    if total == 0 {
+                        continue;
+                    }
+
+                    let state = self
+                        .junction_states
+                        .get(node_id)
+                        .cloned()
+                        .unwrap_or_default();
+
+                    let num_outputs = outputs.len();
+                    // Clone outputs to avoid borrow conflicts.
+                    let outputs_vec: Vec<EdgeId> = outputs.to_vec();
+
+                    match config.policy {
+                        crate::junction::SplitPolicy::RoundRobin => {
+                            // Give each output an equal share, with the
+                            // current round-robin target getting the remainder.
+                            let share = total / num_outputs as u32;
+                            let remainder = total % num_outputs as u32;
+                            for (i, &edge_id) in outputs_vec.iter().enumerate() {
+                                let budget = share
+                                    + if i == state.round_robin_index % num_outputs {
+                                        remainder
+                                    } else {
+                                        0
+                                    };
+                                self.edge_budgets.insert(edge_id, budget);
+                            }
+                        }
+                        crate::junction::SplitPolicy::Priority => {
+                            // All items to the first edge.
+                            for (i, &edge_id) in outputs_vec.iter().enumerate() {
+                                if i == 0 {
+                                    self.edge_budgets.insert(edge_id, total);
+                                } else {
+                                    self.edge_budgets.insert(edge_id, 0);
+                                }
+                            }
+                        }
+                        crate::junction::SplitPolicy::EvenSplit => {
+                            let share = total / num_outputs as u32;
+                            for &edge_id in &outputs_vec {
+                                self.edge_budgets.insert(edge_id, share);
+                            }
+                        }
+                    }
+                }
+                _ => {} // Inserter and Merger don't need budgets.
+            }
+        }
+    }
+
     fn phase_transport(&mut self) {
+        // Compute junction budgets at the start of transport so they
+        // take effect within this same tick.
+        self.compute_junction_budgets();
+
         let tick = self.sim_state.tick;
 
         // Collect edge IDs to iterate (avoids borrow conflicts).
@@ -504,10 +594,15 @@ impl Engine {
             let item_filter = edge_data.item_filter;
 
             // Determine available items at the source's output inventory.
-            // If the edge has a filter, only count the filtered item type.
-            let available = match item_filter {
-                Some(item_type) => self.output_quantity_of(source_node, item_type),
-                None => self.output_total(source_node),
+            // If a junction budget exists for this edge, use it instead of
+            // the node's total output (splitter distribution).
+            let available = if let Some(&budget) = self.edge_budgets.get(edge_id) {
+                budget
+            } else {
+                match item_filter {
+                    Some(item_type) => self.output_quantity_of(source_node, item_type),
+                    None => self.output_total(source_node),
+                }
             };
 
             // Advance the transport.
@@ -3284,5 +3379,60 @@ mod tests {
             total_a_output + total_b_input + total_b_output > 0,
             "Cycle should not prevent processing. a_out={total_a_output}, b_in={total_b_input}, b_out={total_b_output}"
         );
+    }
+
+    // =======================================================================
+    // Junction runtime behavior tests
+    // =======================================================================
+
+    // -----------------------------------------------------------------------
+    // Junction Runtime Test: Splitter distributes items across outputs
+    // -----------------------------------------------------------------------
+    #[test]
+    fn splitter_distributes_items_across_outputs() {
+        use crate::junction::*;
+        use crate::test_utils;
+
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        let iron = test_utils::iron();
+
+        let source = test_utils::add_node(
+            &mut engine,
+            test_utils::make_source(iron, 10.0),
+            100,
+            100,
+        );
+
+        // Splitter node with RoundRobin policy and Passthrough processor.
+        let splitter = test_utils::add_node(
+            &mut engine,
+            Processor::Passthrough,
+            100,
+            100,
+        );
+        engine.set_junction(splitter, Junction::Splitter(SplitterConfig {
+            policy: SplitPolicy::RoundRobin,
+            filter: None,
+        }));
+
+        let sink_a = test_utils::add_node(&mut engine, test_utils::make_source(iron, 0.0), 100, 100);
+        let sink_b = test_utils::add_node(&mut engine, test_utils::make_source(iron, 0.0), 100, 100);
+
+        test_utils::connect(&mut engine, source, splitter, test_utils::make_flow_transport(20.0));
+        test_utils::connect(&mut engine, splitter, sink_a, test_utils::make_flow_transport(20.0));
+        test_utils::connect(&mut engine, splitter, sink_b, test_utils::make_flow_transport(20.0));
+
+        for _ in 0..20 {
+            engine.step();
+        }
+
+        let at_a = test_utils::input_quantity(&engine, sink_a, iron);
+        let at_b = test_utils::input_quantity(&engine, sink_b, iron);
+
+        assert!(at_a > 0, "Sink A should receive items, got {at_a}");
+        assert!(at_b > 0, "Sink B should receive items, got {at_b}");
+        // Round-robin should give roughly equal distribution.
+        let diff = (at_a as i64 - at_b as i64).unsigned_abs();
+        assert!(diff <= at_a.max(at_b) as u64 / 2, "Distribution should be roughly even: A={at_a}, B={at_b}");
     }
 }
