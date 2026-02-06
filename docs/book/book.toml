@@ -1,0 +1,17 @@
+[book]
+authors = ["Factorial Contributors"]
+language = "en"
+src = "src"
+title = "Factorial Documentation"
+
+[build]
+build-dir = "../../target/book"
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/user/factorial"
+edit-url-template = "https://github.com/user/factorial/edit/main/docs/book/src/{path}"
+
+[output.html.search]
+enable = true
