@@ -49,6 +49,9 @@ pub struct Engine {
     /// Simulation state (tick counter, accumulator).
     pub sim_state: SimState,
 
+    /// Whether the simulation is paused.
+    pub(crate) paused: bool,
+
     // -- Per-node state (SoA, keyed by NodeId) --
     /// Processor configuration for each node.
     pub(crate) processors: SecondaryMap<NodeId, Processor>,
@@ -90,6 +93,7 @@ impl Engine {
             graph: ProductionGraph::new(),
             strategy,
             sim_state: SimState::new(),
+            paused: false,
             processors: SecondaryMap::new(),
             processor_states: SecondaryMap::new(),
             inputs: SecondaryMap::new(),
@@ -183,6 +187,61 @@ impl Engine {
     }
 
     // -----------------------------------------------------------------------
+    // Pause / Resume
+    // -----------------------------------------------------------------------
+
+    /// Pause the simulation. While paused, `advance()` and `step()` are no-ops.
+    /// Node/edge configuration (set_processor, set_transport, etc.) still works.
+    pub fn pause(&mut self) {
+        self.paused = true;
+    }
+
+    /// Resume the simulation.
+    pub fn resume(&mut self) {
+        self.paused = false;
+    }
+
+    /// Returns true if the simulation is currently paused.
+    pub fn is_paused(&self) -> bool {
+        self.paused
+    }
+
+    /// Compact internal storage to reduce memory usage.
+    /// Returns an approximate count of bytes freed.
+    /// Useful on mobile platforms during background/pause.
+    pub fn compact(&mut self) -> usize {
+        let mut freed = 0usize;
+
+        // Shrink modifier vecs.
+        for (_, mods) in &mut self.modifiers {
+            let before = mods.capacity();
+            mods.shrink_to_fit();
+            let after = mods.capacity();
+            freed += (before.saturating_sub(after)) * std::mem::size_of::<Modifier>();
+        }
+
+        // Shrink inventory slot stacks.
+        for (_, inv) in &mut self.inputs {
+            for slot in &mut inv.input_slots {
+                let before = slot.stacks.capacity();
+                slot.stacks.shrink_to_fit();
+                let after = slot.stacks.capacity();
+                freed += (before.saturating_sub(after)) * std::mem::size_of::<ItemStack>();
+            }
+        }
+        for (_, inv) in &mut self.outputs {
+            for slot in &mut inv.output_slots {
+                let before = slot.stacks.capacity();
+                slot.stacks.shrink_to_fit();
+                let after = slot.stacks.capacity();
+                freed += (before.saturating_sub(after)) * std::mem::size_of::<ItemStack>();
+            }
+        }
+
+        freed
+    }
+
+    // -----------------------------------------------------------------------
     // Event system
     // -----------------------------------------------------------------------
 
@@ -210,6 +269,9 @@ impl Engine {
     /// - **Tick mode**: `dt` is ignored; exactly one step runs.
     /// - **Delta mode**: `dt` is accumulated; as many fixed steps run as fit.
     pub fn advance(&mut self, dt: Ticks) -> AdvanceResult {
+        if self.paused {
+            return AdvanceResult::default();
+        }
         let mut result = AdvanceResult::default();
 
         match self.strategy.clone() {
@@ -2615,5 +2677,110 @@ mod tests {
         }
 
         assert_eq!(run_delta(), run_delta());
+    }
+
+    // -----------------------------------------------------------------------
+    // Pause / Resume helpers
+    // -----------------------------------------------------------------------
+
+    /// Add a minimal node to the engine (no processor or inventory).
+    /// Useful for pause/resume tests that don't need full node setup.
+    fn add_node(engine: &mut Engine) -> NodeId {
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        result.resolve_node(pending).unwrap()
+    }
+
+    // -----------------------------------------------------------------------
+    // Pause / Resume tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pause_advance_is_no_op() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        add_node(&mut engine); // from test_utils
+        engine.pause();
+        let result = engine.advance(0);
+        assert_eq!(result.steps_run, 0);
+        assert_eq!(engine.sim_state.tick, 0);
+    }
+
+    #[test]
+    fn pause_step_is_no_op() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        engine.pause();
+        let result = engine.step();
+        assert_eq!(result.steps_run, 0);
+    }
+
+    #[test]
+    fn resume_allows_stepping() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        engine.pause();
+        engine.resume();
+        let result = engine.step();
+        assert_eq!(result.steps_run, 1);
+    }
+
+    #[test]
+    fn pause_resume_toggle() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        assert!(!engine.is_paused());
+        engine.pause();
+        assert!(engine.is_paused());
+        engine.resume();
+        assert!(!engine.is_paused());
+    }
+
+    #[test]
+    fn is_paused_default_false() {
+        let engine = Engine::new(SimulationStrategy::Tick);
+        assert!(!engine.is_paused());
+    }
+
+    #[test]
+    fn mutations_work_while_paused() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        engine.pause();
+        engine.graph.queue_add_node(crate::id::BuildingTypeId(1));
+        let mutation_result = engine.graph.apply_mutations();
+        assert_eq!(mutation_result.added_nodes.len(), 1);
+    }
+
+    #[test]
+    fn set_processor_works_while_paused() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        let node = add_node(&mut engine);
+        engine.pause();
+        engine.set_processor(node, make_source(crate::id::ItemTypeId(1), 10.0));
+        assert!(engine.processors.get(node).is_some());
+    }
+
+    #[test]
+    fn compact_does_not_panic() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        let node = add_node(&mut engine);
+        engine.set_processor(node, make_source(crate::id::ItemTypeId(1), 10.0));
+        engine.set_input_inventory(node, crate::item::Inventory::new(1, 1, 10));
+        engine.step();
+        let freed = engine.compact();
+        // Just verify it doesn't panic; freed may be 0
+        let _ = freed;
+    }
+
+    #[test]
+    fn compact_on_empty_engine() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        let freed = engine.compact();
+        assert_eq!(freed, 0);
+    }
+
+    #[test]
+    fn paused_state_serializes() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        engine.pause();
+        let data = engine.serialize().unwrap();
+        let restored = Engine::deserialize(&data).unwrap();
+        assert!(restored.is_paused());
     }
 }

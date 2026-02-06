@@ -126,6 +126,8 @@ struct EngineSnapshot {
     transports: SecondaryMap<EdgeId, Transport>,
     transport_states: SecondaryMap<EdgeId, TransportState>,
     last_state_hash: u64,
+    #[serde(default)]
+    paused: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -276,6 +278,7 @@ impl Engine {
             transports: self.transports.clone(),
             transport_states: self.transport_states.clone(),
             last_state_hash: self.last_state_hash,
+            paused: self.paused,
         };
 
         bitcode::serialize(&snapshot).map_err(|e| SerializeError::Encode(e.to_string()))
@@ -311,6 +314,7 @@ impl Engine {
             transports: snapshot.transports,
             transport_states: snapshot.transport_states,
             last_state_hash: snapshot.last_state_hash,
+            paused: snapshot.paused,
             event_bus: EventBus::default(),
             #[cfg(feature = "profiling")]
             last_profile: None,

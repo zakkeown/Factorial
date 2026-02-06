@@ -300,6 +300,40 @@ impl std::fmt::Debug for Subscriber {
 }
 
 // ---------------------------------------------------------------------------
+// Subscriber priorities & filters
+// ---------------------------------------------------------------------------
+
+/// Priority level for event subscribers. Lower priorities run first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SubscriberPriority {
+    Pre = 0,
+    Normal = 1,
+    Post = 2,
+}
+
+/// Optional predicate that filters events for a subscriber.
+pub type EventFilter = Box<dyn Fn(&Event) -> bool>;
+
+/// Wraps a [`Subscriber`] with priority, optional filter, and insertion order.
+struct SubscriberEntry {
+    subscriber: Subscriber,
+    priority: SubscriberPriority,
+    filter: Option<EventFilter>,
+    insertion_order: u64,
+}
+
+impl std::fmt::Debug for SubscriberEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SubscriberEntry")
+            .field("subscriber", &self.subscriber)
+            .field("priority", &self.priority)
+            .field("filter", &if self.filter.is_some() { "Some(<fn>)" } else { "None" })
+            .field("insertion_order", &self.insertion_order)
+            .finish()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // EventBus
 // ---------------------------------------------------------------------------
 
@@ -313,7 +347,7 @@ pub struct EventBus {
     suppressed: [bool; EVENT_KIND_COUNT],
 
     /// Subscribers indexed by event kind.
-    subscribers: [Vec<Subscriber>; EVENT_KIND_COUNT],
+    subscribers: [Vec<SubscriberEntry>; EVENT_KIND_COUNT],
 
     /// Mutations collected from reactive handlers during delivery.
     /// Drained by the engine after post-tick to apply during next pre-tick.
@@ -321,6 +355,9 @@ pub struct EventBus {
 
     /// Default buffer capacity for new event buffers.
     default_capacity: usize,
+
+    /// Monotonically increasing counter for stable sort ordering.
+    next_insertion_order: u64,
 }
 
 impl std::fmt::Debug for EventBus {
@@ -334,7 +371,7 @@ impl std::fmt::Debug for EventBus {
     }
 }
 
-const fn empty_subscriber_array() -> [Vec<Subscriber>; EVENT_KIND_COUNT] {
+const fn empty_subscriber_array() -> [Vec<SubscriberEntry>; EVENT_KIND_COUNT] {
     // Cannot use Default in const context, so we build it manually.
     [
         Vec::new(),
@@ -361,6 +398,7 @@ impl EventBus {
             subscribers: empty_subscriber_array(),
             pending_mutations: Vec::new(),
             default_capacity,
+            next_insertion_order: 0,
         }
     }
 
@@ -395,24 +433,61 @@ impl EventBus {
     }
 
     /// Register a passive listener for an event kind. Listeners are called
-    /// in registration order during delivery.
+    /// in registration order during delivery with Normal priority and no filter.
     pub fn on_passive(&mut self, kind: EventKind, listener: PassiveListener) {
-        self.subscribers[kind.index()].push(Subscriber::Passive(listener));
+        self.on_passive_filtered(kind, SubscriberPriority::Normal, None, listener);
     }
 
     /// Register a reactive handler for an event kind. Handlers are called
-    /// in registration order during delivery; returned mutations are collected.
+    /// in registration order during delivery with Normal priority and no filter.
     pub fn on_reactive(&mut self, kind: EventKind, handler: ReactiveHandler) {
-        self.subscribers[kind.index()].push(Subscriber::Reactive(handler));
+        self.on_reactive_filtered(kind, SubscriberPriority::Normal, None, handler);
+    }
+
+    /// Register a passive listener with explicit priority and optional filter.
+    pub fn on_passive_filtered(
+        &mut self,
+        kind: EventKind,
+        priority: SubscriberPriority,
+        filter: Option<EventFilter>,
+        listener: PassiveListener,
+    ) {
+        let order = self.next_insertion_order;
+        self.next_insertion_order += 1;
+        self.subscribers[kind.index()].push(SubscriberEntry {
+            subscriber: Subscriber::Passive(listener),
+            priority,
+            filter,
+            insertion_order: order,
+        });
+    }
+
+    /// Register a reactive handler with explicit priority and optional filter.
+    pub fn on_reactive_filtered(
+        &mut self,
+        kind: EventKind,
+        priority: SubscriberPriority,
+        filter: Option<EventFilter>,
+        handler: ReactiveHandler,
+    ) {
+        let order = self.next_insertion_order;
+        self.next_insertion_order += 1;
+        self.subscribers[kind.index()].push(SubscriberEntry {
+            subscriber: Subscriber::Reactive(handler),
+            priority,
+            filter,
+            insertion_order: order,
+        });
     }
 
     /// Deliver all buffered events to subscribers. Called during post-tick.
     ///
     /// For each event kind that has buffered events:
-    /// 1. Iterate events oldest-to-newest.
-    /// 2. Call passive listeners in registration order.
-    /// 3. Call reactive handlers in registration order; collect mutations.
-    /// 4. Clear the buffer after delivery.
+    /// 1. Sort subscribers by `(priority, insertion_order)`.
+    /// 2. Iterate events oldest-to-newest.
+    /// 3. For each subscriber, check the optional filter; skip if it returns false.
+    /// 4. Call passive listeners / reactive handlers; collect mutations.
+    /// 5. Clear the buffer after delivery.
     ///
     /// Reactive handler mutations accumulate in `pending_mutations`.
     pub fn deliver(&mut self) {
@@ -433,10 +508,21 @@ impl EventBus {
             // between the buffer and subscribers.
             let events: Vec<Event> = buffer.iter().cloned().collect();
 
-            // Deliver to each subscriber in registration order.
-            for subscriber in &mut self.subscribers[idx] {
+            // Sort subscribers by (priority, insertion_order) for stable ordering.
+            self.subscribers[idx]
+                .sort_by_key(|entry| (entry.priority as u8, entry.insertion_order));
+
+            // Deliver to each subscriber in priority order.
+            for entry in &mut self.subscribers[idx] {
                 for event in &events {
-                    match subscriber {
+                    // Check optional filter — skip if it returns false.
+                    if let Some(ref filter) = entry.filter
+                        && !filter(event)
+                    {
+                        continue;
+                    }
+
+                    match &mut entry.subscriber {
                         Subscriber::Passive(listener) => {
                             listener(event);
                         }
@@ -1143,5 +1229,266 @@ mod tests {
 
         assert_eq!(bus.buffered_count(EventKind::ItemProduced), 0);
         assert_eq!(bus.buffered_count(EventKind::RecipeStarted), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 19: Priority Pre runs before Normal
+    // -----------------------------------------------------------------------
+    #[test]
+    fn priority_pre_runs_before_normal() {
+        let mut bus = EventBus::new(16);
+        let node = make_node_id();
+        let order = Rc::new(RefCell::new(Vec::new()));
+
+        let o1 = order.clone();
+        bus.on_passive_filtered(
+            EventKind::ItemProduced,
+            SubscriberPriority::Normal,
+            None,
+            Box::new(move |_| { o1.borrow_mut().push("normal"); }),
+        );
+
+        let o2 = order.clone();
+        bus.on_passive_filtered(
+            EventKind::ItemProduced,
+            SubscriberPriority::Pre,
+            None,
+            Box::new(move |_| { o2.borrow_mut().push("pre"); }),
+        );
+
+        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 1, tick: 0 });
+        bus.deliver();
+
+        assert_eq!(*order.borrow(), vec!["pre", "normal"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 20: Priority Post runs after Normal
+    // -----------------------------------------------------------------------
+    #[test]
+    fn priority_post_runs_after_normal() {
+        let mut bus = EventBus::new(16);
+        let node = make_node_id();
+        let order = Rc::new(RefCell::new(Vec::new()));
+
+        let o1 = order.clone();
+        bus.on_passive_filtered(
+            EventKind::ItemProduced,
+            SubscriberPriority::Post,
+            None,
+            Box::new(move |_| { o1.borrow_mut().push("post"); }),
+        );
+
+        let o2 = order.clone();
+        bus.on_passive_filtered(
+            EventKind::ItemProduced,
+            SubscriberPriority::Normal,
+            None,
+            Box::new(move |_| { o2.borrow_mut().push("normal"); }),
+        );
+
+        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 1, tick: 0 });
+        bus.deliver();
+
+        assert_eq!(*order.borrow(), vec!["normal", "post"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 21: All three priorities ordered
+    // -----------------------------------------------------------------------
+    #[test]
+    fn priority_all_three_ordered() {
+        let mut bus = EventBus::new(16);
+        let node = make_node_id();
+        let order = Rc::new(RefCell::new(Vec::new()));
+
+        let o1 = order.clone();
+        bus.on_passive_filtered(EventKind::ItemProduced, SubscriberPriority::Post, None,
+            Box::new(move |_| { o1.borrow_mut().push("post"); }));
+        let o2 = order.clone();
+        bus.on_passive_filtered(EventKind::ItemProduced, SubscriberPriority::Pre, None,
+            Box::new(move |_| { o2.borrow_mut().push("pre"); }));
+        let o3 = order.clone();
+        bus.on_passive_filtered(EventKind::ItemProduced, SubscriberPriority::Normal, None,
+            Box::new(move |_| { o3.borrow_mut().push("normal"); }));
+
+        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 1, tick: 0 });
+        bus.deliver();
+
+        assert_eq!(*order.borrow(), vec!["pre", "normal", "post"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 22: Filter passes matching events
+    // -----------------------------------------------------------------------
+    #[test]
+    fn filter_passes_matching() {
+        let mut bus = EventBus::new(16);
+        let node = make_node_id();
+        let count = Rc::new(RefCell::new(0u32));
+
+        let cc = count.clone();
+        bus.on_passive_filtered(
+            EventKind::ItemProduced,
+            SubscriberPriority::Normal,
+            Some(Box::new(|e| matches!(e, Event::ItemProduced { quantity, .. } if *quantity > 5))),
+            Box::new(move |_| { *cc.borrow_mut() += 1; }),
+        );
+
+        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 3, tick: 0 });
+        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 10, tick: 1 });
+        bus.deliver();
+
+        assert_eq!(*count.borrow(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 23: Filter blocks non-matching events
+    // -----------------------------------------------------------------------
+    #[test]
+    fn filter_blocks_non_matching() {
+        let mut bus = EventBus::new(16);
+        let node = make_node_id();
+        let count = Rc::new(RefCell::new(0u32));
+
+        let cc = count.clone();
+        bus.on_passive_filtered(
+            EventKind::ItemProduced,
+            SubscriberPriority::Normal,
+            Some(Box::new(|_| false)),
+            Box::new(move |_| { *cc.borrow_mut() += 1; }),
+        );
+
+        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 1, tick: 0 });
+        bus.deliver();
+
+        assert_eq!(*count.borrow(), 0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 24: No filter receives all events
+    // -----------------------------------------------------------------------
+    #[test]
+    fn filter_none_receives_all() {
+        let mut bus = EventBus::new(16);
+        let node = make_node_id();
+        let count = Rc::new(RefCell::new(0u32));
+
+        let cc = count.clone();
+        bus.on_passive_filtered(
+            EventKind::ItemProduced,
+            SubscriberPriority::Normal,
+            None,
+            Box::new(move |_| { *cc.borrow_mut() += 1; }),
+        );
+
+        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 1, tick: 0 });
+        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 2, tick: 1 });
+        bus.deliver();
+
+        assert_eq!(*count.borrow(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 25: Existing on_passive unchanged behavior
+    // -----------------------------------------------------------------------
+    #[test]
+    fn existing_on_passive_unchanged() {
+        let mut bus = EventBus::new(16);
+        let node = make_node_id();
+        let count = Rc::new(RefCell::new(0u32));
+
+        let cc = count.clone();
+        bus.on_passive(EventKind::ItemProduced, Box::new(move |_| { *cc.borrow_mut() += 1; }));
+
+        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 1, tick: 0 });
+        bus.deliver();
+
+        assert_eq!(*count.borrow(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 26: Existing on_reactive unchanged behavior
+    // -----------------------------------------------------------------------
+    #[test]
+    fn existing_on_reactive_unchanged() {
+        let mut bus = EventBus::new(16);
+        let node = make_node_id();
+
+        bus.on_reactive(EventKind::RecipeCompleted, Box::new(|event| {
+            if let Event::RecipeCompleted { node, .. } = event {
+                vec![EventMutation::RemoveNode { node: *node }]
+            } else {
+                vec![]
+            }
+        }));
+
+        bus.emit(Event::RecipeCompleted { node, tick: 5 });
+        bus.deliver();
+
+        let mutations = bus.drain_mutations();
+        assert_eq!(mutations.len(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 27: Mixed priorities and filters
+    // -----------------------------------------------------------------------
+    #[test]
+    fn mixed_priorities_and_filters() {
+        let mut bus = EventBus::new(16);
+        let node = make_node_id();
+        let order = Rc::new(RefCell::new(Vec::new()));
+
+        // Post priority, no filter
+        let o1 = order.clone();
+        bus.on_passive_filtered(EventKind::ItemProduced, SubscriberPriority::Post, None,
+            Box::new(move |_| { o1.borrow_mut().push("post"); }));
+
+        // Pre priority, filter passes
+        let o2 = order.clone();
+        bus.on_passive_filtered(EventKind::ItemProduced, SubscriberPriority::Pre,
+            Some(Box::new(|_| true)),
+            Box::new(move |_| { o2.borrow_mut().push("pre-pass"); }));
+
+        // Pre priority, filter blocks
+        let o3 = order.clone();
+        bus.on_passive_filtered(EventKind::ItemProduced, SubscriberPriority::Pre,
+            Some(Box::new(|_| false)),
+            Box::new(move |_| { o3.borrow_mut().push("pre-block"); }));
+
+        // Normal, no filter
+        let o4 = order.clone();
+        bus.on_passive_filtered(EventKind::ItemProduced, SubscriberPriority::Normal, None,
+            Box::new(move |_| { o4.borrow_mut().push("normal"); }));
+
+        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 1, tick: 0 });
+        bus.deliver();
+
+        assert_eq!(*order.borrow(), vec!["pre-pass", "normal", "post"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 28: Same priority preserves registration order
+    // -----------------------------------------------------------------------
+    #[test]
+    fn same_priority_preserves_registration_order() {
+        let mut bus = EventBus::new(16);
+        let node = make_node_id();
+        let order = Rc::new(RefCell::new(Vec::new()));
+
+        let o1 = order.clone();
+        bus.on_passive_filtered(EventKind::ItemProduced, SubscriberPriority::Normal, None,
+            Box::new(move |_| { o1.borrow_mut().push('A'); }));
+        let o2 = order.clone();
+        bus.on_passive_filtered(EventKind::ItemProduced, SubscriberPriority::Normal, None,
+            Box::new(move |_| { o2.borrow_mut().push('B'); }));
+        let o3 = order.clone();
+        bus.on_passive_filtered(EventKind::ItemProduced, SubscriberPriority::Normal, None,
+            Box::new(move |_| { o3.borrow_mut().push('C'); }));
+
+        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 1, tick: 0 });
+        bus.deliver();
+
+        assert_eq!(*order.borrow(), vec!['A', 'B', 'C']);
     }
 }

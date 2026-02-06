@@ -316,6 +316,7 @@ dependencies = [
  "factorial-core",
  "fixed",
  "serde",
+ "serde_json",
  "slotmap",
  "thiserror",
 ]

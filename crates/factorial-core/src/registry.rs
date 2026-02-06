@@ -60,6 +60,7 @@ pub struct BuildingTemplateDef {
 
 /// Builder for constructing an immutable Registry.
 /// Three-phase lifecycle: registration -> mutation -> finalization.
+#[derive(Debug)]
 pub struct RegistryBuilder {
     items: Vec<ItemTypeDef>,
     item_name_to_id: HashMap<String, ItemTypeId>,

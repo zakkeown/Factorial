@@ -9,14 +9,16 @@ serde = { workspace = true }
 bitcode = { workspace = true }
 slotmap = { workspace = true }
 thiserror = { workspace = true }
+serde_json = { version = "1", optional = true }
 
 [features]
 test-utils = []
 profiling = []
+data-loader = ["dep:serde_json"]
 
 [dev-dependencies]
 criterion = "0.5"
-factorial-core = { path = ".", features = ["test-utils"] }
+factorial-core = { path = ".", features = ["test-utils", "data-loader"] }
 
 [[bench]]
 name = "sim_bench"
