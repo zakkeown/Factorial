@@ -7,13 +7,18 @@
 //!
 //! Reference: docs/plans/2026-02-05-builderment-headless-test-design.md
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use factorial_core::engine::Engine;
+use factorial_core::event::{Event, EventKind};
 use factorial_core::fixed::Fixed64;
 use factorial_core::id::*;
 use factorial_core::sim::SimulationStrategy;
 use factorial_core::test_utils::*;
 use factorial_core::transport::*;
 use factorial_power::{PowerConsumer, PowerEvent, PowerModule, PowerProducer};
+use factorial_stats::{ProductionStats, StatsConfig};
 use factorial_tech_tree::{TechTree, Technology, TechId, ResearchCost, Unlock, TechEvent};
 
 /// Inventory capacity for single-input buildings (Furnaces, single-recipe Workshops).
@@ -729,5 +734,70 @@ fn tech_tree_progression() {
     assert!(
         all_unlocks.len() >= completed_techs.len(),
         "should have at least one unlock per completed tech"
+    );
+}
+
+#[test]
+fn stats_tracking_and_bottleneck_detection() {
+    let (mut engine, nodes) = build_builderment_factory();
+
+    // Set up stats module.
+    let mut stats = ProductionStats::new(StatsConfig {
+        window_size: 50,
+        history_capacity: 10,
+    });
+
+    // Collect events via passive listener into a shared buffer.
+    let event_buffer: Rc<RefCell<Vec<Event>>> = Rc::new(RefCell::new(Vec::new()));
+
+    // Register passive listeners for all event types we care about.
+    let kinds = [
+        EventKind::ItemProduced,
+        EventKind::ItemConsumed,
+        EventKind::BuildingStalled,
+        EventKind::BuildingResumed,
+        EventKind::ItemDelivered,
+        EventKind::TransportFull,
+    ];
+    for kind in kinds {
+        let buf = Rc::clone(&event_buffer);
+        engine.on_passive(kind, Box::new(move |event| {
+            buf.borrow_mut().push(event.clone());
+        }));
+    }
+
+    // Run 500 ticks, feeding events to stats after each step.
+    for tick in 1..=500u64 {
+        engine.step();
+
+        // Drain collected events and feed to stats.
+        let events = event_buffer.borrow().clone();
+        event_buffer.borrow_mut().clear();
+        for event in &events {
+            stats.process_event(event);
+        }
+        stats.end_tick(tick);
+    }
+
+    // Assertion 1: Iron Furnace should show non-zero production rate.
+    let iron_ingot_rate = stats.get_production_rate(nodes.iron_furnace, iron_ingot());
+    assert!(
+        iron_ingot_rate > Fixed64::from_num(0),
+        "iron furnace should have non-zero production rate, got {iron_ingot_rate}"
+    );
+
+    // Assertion 2: Total iron ingot production should exceed total copper wire production
+    // (due to the 3:1 bottleneck at Wire Workshop).
+    let total_iron_ingot = stats.get_total_production(iron_ingot());
+    let total_copper_wire = stats.get_total_production(copper_wire());
+    assert!(
+        total_iron_ingot > total_copper_wire,
+        "iron ingot production ({total_iron_ingot}) should exceed copper wire ({total_copper_wire}) due to 3:1 bottleneck"
+    );
+
+    // Assertion 3: Stats should be tracking our nodes.
+    assert!(
+        stats.tracked_node_count() > 0,
+        "stats should track production nodes"
     );
 }
