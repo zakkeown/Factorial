@@ -12,8 +12,11 @@ use std::collections::BTreeMap;
 pub mod blueprint;
 pub use blueprint::{
     Blueprint, BlueprintCommitResult, BlueprintConnection, BlueprintEntry, BlueprintEntryId,
-    BlueprintError, BlueprintNodeRef,
+    BlueprintError, BlueprintNodeRef, BlueprintUndoRecord,
 };
+pub use blueprint::BlueprintCommitError;
+#[cfg(feature = "blueprint-io")]
+pub use blueprint::BlueprintIoError;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -60,6 +63,18 @@ impl BuildingFootprint {
         }
     }
 
+    /// Return a new footprint rotated by the given rotation.
+    /// For 90/270 degrees, width and height are swapped.
+    pub fn rotated(&self, rotation: Rotation) -> Self {
+        match rotation {
+            Rotation::None | Rotation::Cw180 => *self,
+            Rotation::Cw90 | Rotation::Cw270 => Self {
+                width: self.height,
+                height: self.width,
+            },
+        }
+    }
+
     /// Iterate over all tiles occupied by this footprint at the given origin.
     /// Origin is the top-left corner.
     pub fn tiles(&self, origin: GridPosition) -> impl Iterator<Item = GridPosition> {
@@ -68,6 +83,47 @@ impl BuildingFootprint {
         let ox = origin.x;
         let oy = origin.y;
         (0..h).flat_map(move |dy| (0..w).map(move |dx| GridPosition::new(ox + dx, oy + dy)))
+    }
+}
+
+/// Rotation applied to a building or blueprint entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum Rotation {
+    /// No rotation.
+    #[default]
+    None,
+    /// 90 degrees clockwise.
+    Cw90,
+    /// 180 degrees.
+    Cw180,
+    /// 270 degrees clockwise (90 degrees counter-clockwise).
+    Cw270,
+}
+
+impl Rotation {
+    /// All four rotation values.
+    pub fn all() -> [Rotation; 4] {
+        [Rotation::None, Rotation::Cw90, Rotation::Cw180, Rotation::Cw270]
+    }
+
+    /// Rotate 90 degrees clockwise.
+    pub fn rotate_cw(self) -> Self {
+        match self {
+            Rotation::None => Rotation::Cw90,
+            Rotation::Cw90 => Rotation::Cw180,
+            Rotation::Cw180 => Rotation::Cw270,
+            Rotation::Cw270 => Rotation::None,
+        }
+    }
+
+    /// Rotate 90 degrees counter-clockwise.
+    pub fn rotate_ccw(self) -> Self {
+        match self {
+            Rotation::None => Rotation::Cw270,
+            Rotation::Cw90 => Rotation::None,
+            Rotation::Cw180 => Rotation::Cw90,
+            Rotation::Cw270 => Rotation::Cw180,
+        }
     }
 }
 

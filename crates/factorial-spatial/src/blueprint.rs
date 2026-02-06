@@ -1,13 +1,15 @@
 //! Blueprint / ghost placement system for previewing and staging building
 //! placement before committing to the simulation.
 
-use crate::{BuildingFootprint, GridPosition, SpatialIndex};
+use crate::{BuildingFootprint, GridPosition, Rotation, SpatialIndex};
 use factorial_core::engine::Engine;
 use factorial_core::id::{BuildingTypeId, EdgeId, ItemTypeId, NodeId};
 use factorial_core::item::Inventory;
 use factorial_core::processor::Processor;
+use factorial_core::serialize::{SerializeError, SnapshotEntry, SnapshotRingBuffer};
 use factorial_core::transport::Transport;
 use serde::{Deserialize, Serialize};
+use slotmap::Key;
 use std::collections::BTreeMap;
 
 // ---------------------------------------------------------------------------
@@ -31,6 +33,8 @@ pub struct BlueprintEntry {
     pub building_type: BuildingTypeId,
     pub position: GridPosition,
     pub footprint: BuildingFootprint,
+    #[serde(default)]
+    pub rotation: Rotation,
     pub processor: Processor,
     pub input_capacity: u32,
     pub output_capacity: u32,
@@ -58,6 +62,31 @@ pub enum BlueprintError {
     NodeNotFound,
     #[error("blueprint is empty")]
     Empty,
+    #[error("partial commit rolled back ({placed_count} placed): {cause}")]
+    PartialCommitRollback { placed_count: usize, cause: String },
+    #[error("rollback failed: original={original_error}, rollback={rollback_error}")]
+    RollbackFailed { original_error: String, rollback_error: String },
+}
+
+/// Error combining a blueprint commit with a snapshot.
+#[derive(Debug, thiserror::Error)]
+pub enum BlueprintCommitError {
+    #[error("commit failed: {0}")]
+    Commit(#[from] BlueprintError),
+    #[error("snapshot failed: {0}")]
+    Snapshot(#[from] SerializeError),
+}
+
+/// Error type for blueprint save/load I/O operations.
+#[cfg(feature = "blueprint-io")]
+#[derive(Debug, thiserror::Error)]
+pub enum BlueprintIoError {
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("serialization error: {0}")]
+    Serialize(#[source] serde_json::Error),
+    #[error("deserialization error: {0}")]
+    Deserialize(#[source] serde_json::Error),
 }
 
 /// Result of committing a blueprint to the engine.
@@ -66,6 +95,23 @@ pub struct BlueprintCommitResult {
     /// Maps blueprint entry IDs to their assigned NodeIds.
     pub node_map: BTreeMap<BlueprintEntryId, NodeId>,
     /// Edge IDs created for connections.
+    pub edge_ids: Vec<EdgeId>,
+}
+
+impl BlueprintCommitResult {
+    /// Create an undo record from this commit result.
+    pub fn undo_record(&self) -> BlueprintUndoRecord {
+        BlueprintUndoRecord {
+            node_ids: self.node_map.values().copied().collect(),
+            edge_ids: self.edge_ids.clone(),
+        }
+    }
+}
+
+/// Record of committed nodes/edges that can be used to undo a commit.
+#[derive(Debug, Clone)]
+pub struct BlueprintUndoRecord {
+    pub node_ids: Vec<NodeId>,
     pub edge_ids: Vec<EdgeId>,
 }
 
@@ -98,10 +144,11 @@ impl<'de> Deserialize<'de> for Blueprint {
 
         let data = BlueprintData::deserialize(deserializer)?;
 
-        // Rebuild ghost_tiles from entries.
+        // Rebuild ghost_tiles from entries (using rotation-aware footprint).
         let mut ghost_tiles = BTreeMap::new();
         for (&id, entry) in &data.entries {
-            for tile in entry.footprint.tiles(entry.position) {
+            let effective = entry.footprint.rotated(entry.rotation);
+            for tile in effective.tiles(entry.position) {
                 ghost_tiles.insert(tile, id);
             }
         }
@@ -135,14 +182,15 @@ impl Blueprint {
         entry: BlueprintEntry,
         spatial: &SpatialIndex,
     ) -> Result<BlueprintEntryId, BlueprintError> {
+        let effective = entry.footprint.rotated(entry.rotation);
         // Check overlap with real buildings.
-        for tile in entry.footprint.tiles(entry.position) {
+        for tile in effective.tiles(entry.position) {
             if spatial.is_occupied(tile) {
                 return Err(BlueprintError::OverlapsExisting);
             }
         }
         // Check overlap with ghost tiles.
-        for tile in entry.footprint.tiles(entry.position) {
+        for tile in effective.tiles(entry.position) {
             if self.ghost_tiles.contains_key(&tile) {
                 return Err(BlueprintError::OverlapsPlanned);
             }
@@ -152,7 +200,7 @@ impl Blueprint {
         self.next_id += 1;
 
         // Insert ghost tiles.
-        for tile in entry.footprint.tiles(entry.position) {
+        for tile in effective.tiles(entry.position) {
             self.ghost_tiles.insert(tile, id);
         }
 
@@ -166,7 +214,8 @@ impl Blueprint {
         let entry = self.entries.remove(&id).ok_or(BlueprintError::EntryNotFound)?;
 
         // Remove ghost tiles.
-        for tile in entry.footprint.tiles(entry.position) {
+        let effective = entry.footprint.rotated(entry.rotation);
+        for tile in effective.tiles(entry.position) {
             self.ghost_tiles.remove(&tile);
         }
 
@@ -190,28 +239,28 @@ impl Blueprint {
     ) -> Result<(), BlueprintError> {
         let entry = self.entries.get(&id).ok_or(BlueprintError::EntryNotFound)?;
         let old_pos = entry.position;
-        let footprint = entry.footprint;
+        let effective = entry.footprint.rotated(entry.rotation);
 
         // Remove old ghost tiles.
-        for tile in footprint.tiles(old_pos) {
+        for tile in effective.tiles(old_pos) {
             self.ghost_tiles.remove(&tile);
         }
 
         // Check overlap with real buildings.
-        for tile in footprint.tiles(new_pos) {
+        for tile in effective.tiles(new_pos) {
             if spatial.is_occupied(tile) {
                 // Rollback: re-insert old ghost tiles.
-                for tile in footprint.tiles(old_pos) {
+                for tile in effective.tiles(old_pos) {
                     self.ghost_tiles.insert(tile, id);
                 }
                 return Err(BlueprintError::OverlapsExisting);
             }
         }
         // Check overlap with other ghost tiles.
-        for tile in footprint.tiles(new_pos) {
+        for tile in effective.tiles(new_pos) {
             if self.ghost_tiles.contains_key(&tile) {
                 // Rollback.
-                for tile in footprint.tiles(old_pos) {
+                for tile in effective.tiles(old_pos) {
                     self.ghost_tiles.insert(tile, id);
                 }
                 return Err(BlueprintError::OverlapsPlanned);
@@ -219,7 +268,7 @@ impl Blueprint {
         }
 
         // Insert new ghost tiles.
-        for tile in footprint.tiles(new_pos) {
+        for tile in effective.tiles(new_pos) {
             self.ghost_tiles.insert(tile, id);
         }
 
@@ -307,8 +356,9 @@ impl Blueprint {
     /// Returns a list of errors for entries that now overlap.
     pub fn validate(&self, spatial: &SpatialIndex) -> Vec<BlueprintError> {
         let mut errors = Vec::new();
-        for (_id, entry) in &self.entries {
-            for tile in entry.footprint.tiles(entry.position) {
+        for entry in self.entries.values() {
+            let effective = entry.footprint.rotated(entry.rotation);
+            for tile in effective.tiles(entry.position) {
                 if spatial.is_occupied(tile) {
                     errors.push(BlueprintError::OverlapsExisting);
                     break;
@@ -327,6 +377,8 @@ impl Blueprint {
     /// 5. Sets up processors and inventories
     /// 6. Creates all connections
     /// 7. Returns the mapping from blueprint IDs to real NodeIds
+    ///
+    /// If placement fails partway through, already-placed nodes are rolled back.
     pub fn commit(
         self,
         engine: &mut Engine,
@@ -337,8 +389,9 @@ impl Blueprint {
         }
 
         // Validate no overlaps with real buildings.
-        for (_id, entry) in &self.entries {
-            for tile in entry.footprint.tiles(entry.position) {
+        for entry in self.entries.values() {
+            let effective = entry.footprint.rotated(entry.rotation);
+            for tile in effective.tiles(entry.position) {
                 if spatial.is_occupied(tile) {
                     return Err(BlueprintError::OverlapsExisting);
                 }
@@ -347,15 +400,15 @@ impl Blueprint {
 
         // Validate Existing node refs.
         for conn in &self.connections {
-            if let BlueprintNodeRef::Existing(node_id) = conn.from {
-                if !engine.graph.contains_node(node_id) {
-                    return Err(BlueprintError::NodeNotFound);
-                }
+            if let BlueprintNodeRef::Existing(node_id) = conn.from
+                && !engine.graph.contains_node(node_id)
+            {
+                return Err(BlueprintError::NodeNotFound);
             }
-            if let BlueprintNodeRef::Existing(node_id) = conn.to {
-                if !engine.graph.contains_node(node_id) {
-                    return Err(BlueprintError::NodeNotFound);
-                }
+            if let BlueprintNodeRef::Existing(node_id) = conn.to
+                && !engine.graph.contains_node(node_id)
+            {
+                return Err(BlueprintError::NodeNotFound);
             }
         }
 
@@ -376,13 +429,37 @@ impl Blueprint {
         }
 
         // Place in spatial index and set up processors/inventories.
+        // Track placed nodes for rollback on failure.
+        let mut placed_nodes: Vec<(NodeId, BlueprintEntryId)> = Vec::new();
         for (&id, entry) in &self.entries {
             let node_id = node_map[&id];
-            spatial.place(node_id, entry.position, entry.footprint)
-                .map_err(|_| BlueprintError::OverlapsExisting)?;
+            let effective = entry.footprint.rotated(entry.rotation);
+            if let Err(e) = spatial.place(node_id, entry.position, effective) {
+                // Rollback: remove already-placed nodes.
+                let placed_count = placed_nodes.len();
+                let cause = e.to_string();
+                let mut rollback_errors = Vec::new();
+                for &(placed_node, _) in &placed_nodes {
+                    if let Err(re) = spatial.remove(placed_node) {
+                        rollback_errors.push(re.to_string());
+                    }
+                    engine.remove_node_state(placed_node);
+                    engine.graph.queue_remove_node(placed_node);
+                }
+                engine.graph.apply_mutations();
+                if rollback_errors.is_empty() {
+                    return Err(BlueprintError::PartialCommitRollback { placed_count, cause });
+                } else {
+                    return Err(BlueprintError::RollbackFailed {
+                        original_error: cause,
+                        rollback_error: rollback_errors.join("; "),
+                    });
+                }
+            }
             engine.set_processor(node_id, entry.processor.clone());
             engine.set_input_inventory(node_id, Inventory::new(1, 1, entry.input_capacity));
             engine.set_output_inventory(node_id, Inventory::new(1, 1, entry.output_capacity));
+            placed_nodes.push((node_id, id));
         }
 
         // Queue connections.
@@ -413,6 +490,163 @@ impl Blueprint {
 
         Ok(BlueprintCommitResult { node_map, edge_ids })
     }
+
+    /// Commit the blueprint and take an incremental snapshot atomically.
+    pub fn commit_with_snapshot(
+        self,
+        engine: &mut Engine,
+        spatial: &mut SpatialIndex,
+        ring_buffer: &mut SnapshotRingBuffer,
+        baseline: Option<&[u8]>,
+    ) -> Result<(BlueprintCommitResult, Vec<u8>), BlueprintCommitError> {
+        let commit_result = self.commit(engine, spatial)?;
+        let snapshot_data = engine.serialize_incremental(baseline)?;
+        ring_buffer.push(SnapshotEntry {
+            tick: engine.sim_state.tick,
+            data: snapshot_data.clone(),
+        });
+        Ok((commit_result, snapshot_data))
+    }
+
+    /// Undo a previously committed blueprint, removing its nodes and edges.
+    pub fn undo(
+        record: &BlueprintUndoRecord,
+        engine: &mut Engine,
+        spatial: &mut SpatialIndex,
+    ) -> Result<(), BlueprintError> {
+        // Disconnect edges first.
+        for &edge_id in &record.edge_ids {
+            engine.graph.queue_disconnect(edge_id);
+        }
+        engine.graph.apply_mutations();
+
+        // Remove edge state.
+        for &edge_id in &record.edge_ids {
+            engine.remove_edge_state(edge_id);
+        }
+
+        // Remove nodes from spatial and graph.
+        for &node_id in &record.node_ids {
+            let _ = spatial.remove(node_id);
+            engine.remove_node_state(node_id);
+            engine.graph.queue_remove_node(node_id);
+        }
+        engine.graph.apply_mutations();
+
+        Ok(())
+    }
+
+    /// Estimate the total resource cost of all buildings in this blueprint.
+    pub fn estimate_cost<F>(&self, cost_fn: F) -> BTreeMap<ItemTypeId, u32>
+    where
+        F: Fn(BuildingTypeId) -> Vec<(ItemTypeId, u32)>,
+    {
+        let mut totals = BTreeMap::new();
+        for entry in self.entries.values() {
+            for (item, qty) in cost_fn(entry.building_type) {
+                *totals.entry(item).or_insert(0) += qty;
+            }
+        }
+        totals
+    }
+
+    /// Capture a region from an existing engine/spatial into a new blueprint.
+    ///
+    /// Scans all nodes in the rectangle `[min, max]`, creates blueprint entries
+    /// for each, and preserves connections between captured nodes.
+    /// Positions are translated by `offset`.
+    pub fn capture_region(
+        engine: &Engine,
+        spatial: &SpatialIndex,
+        min: GridPosition,
+        max: GridPosition,
+        offset: GridPosition,
+    ) -> Self {
+        let nodes = spatial.nodes_in_rect(min, max);
+        let mut bp = Blueprint::new();
+        let mut node_to_bp: BTreeMap<u64, BlueprintEntryId> = BTreeMap::new();
+
+        for &node_id in &nodes {
+            let Some(position) = spatial.get_position(node_id) else { continue };
+            let Some(footprint) = spatial.get_footprint(node_id) else { continue };
+            let Some(node_data) = engine.graph.get_node(node_id) else { continue };
+
+            let processor = engine.get_processor(node_id)
+                .cloned()
+                .unwrap_or(Processor::Passthrough);
+
+            let input_capacity = engine.get_input_inventory(node_id)
+                .and_then(|inv| inv.input_slots.first())
+                .map(|s| s.capacity)
+                .unwrap_or(100);
+
+            let output_capacity = engine.get_output_inventory(node_id)
+                .and_then(|inv| inv.output_slots.first())
+                .map(|s| s.capacity)
+                .unwrap_or(100);
+
+            let entry = BlueprintEntry {
+                building_type: node_data.building_type,
+                position: GridPosition::new(
+                    position.x + offset.x,
+                    position.y + offset.y,
+                ),
+                footprint,
+                rotation: Rotation::None,
+                processor,
+                input_capacity,
+                output_capacity,
+            };
+
+            let bp_id = BlueprintEntryId(bp.next_id);
+            bp.next_id += 1;
+            bp.entries.insert(bp_id, entry);
+            node_to_bp.insert(node_id.data().as_ffi(), bp_id);
+        }
+
+        // Capture connections between captured nodes.
+        for &node_id in &nodes {
+            let node_key = node_id.data().as_ffi();
+            let Some(&from_bp_id) = node_to_bp.get(&node_key) else { continue };
+            for &edge_id in engine.graph.get_outputs(node_id) {
+                let Some(edge_data) = engine.graph.get_edge(edge_id) else { continue };
+                let to_key = edge_data.to.data().as_ffi();
+                if let Some(&to_bp_id) = node_to_bp.get(&to_key) {
+                    let transport = engine.get_transport(edge_id)
+                        .cloned()
+                        .unwrap_or_else(|| Transport::Flow(factorial_core::transport::FlowTransport {
+                            rate: factorial_core::fixed::Fixed64::from_num(1.0),
+                            buffer_capacity: factorial_core::fixed::Fixed64::from_num(100.0),
+                            latency: 0,
+                        }));
+                    bp.connections.push(BlueprintConnection {
+                        from: BlueprintNodeRef::Planned(from_bp_id),
+                        to: BlueprintNodeRef::Planned(to_bp_id),
+                        transport,
+                        item_filter: edge_data.item_filter,
+                    });
+                }
+            }
+        }
+
+        bp
+    }
+
+    /// Save this blueprint to a JSON file.
+    #[cfg(feature = "blueprint-io")]
+    pub fn save_to_file(&self, path: impl AsRef<std::path::Path>) -> Result<(), BlueprintIoError> {
+        let json = serde_json::to_string_pretty(self)
+            .map_err(BlueprintIoError::Serialize)?;
+        std::fs::write(path, json)?;
+        Ok(())
+    }
+
+    /// Load a blueprint from a JSON file.
+    #[cfg(feature = "blueprint-io")]
+    pub fn load_from_file(path: impl AsRef<std::path::Path>) -> Result<Self, BlueprintIoError> {
+        let data = std::fs::read_to_string(path)?;
+        serde_json::from_str(&data).map_err(BlueprintIoError::Deserialize)
+    }
 }
 
 impl Default for Blueprint {
@@ -430,6 +664,7 @@ mod tests {
     use super::*;
     use factorial_core::engine::Engine;
     use factorial_core::sim::SimulationStrategy;
+    use factorial_core::serialize::SnapshotRingBuffer;
     use factorial_core::test_utils::{building, iron, make_flow_transport, make_source};
 
     fn make_entry(pos: GridPosition) -> BlueprintEntry {
@@ -437,6 +672,7 @@ mod tests {
             building_type: building(),
             position: pos,
             footprint: BuildingFootprint::single(),
+            rotation: Rotation::None,
             processor: make_source(iron(), 1.0),
             input_capacity: 100,
             output_capacity: 100,
@@ -448,6 +684,19 @@ mod tests {
             building_type: building(),
             position: pos,
             footprint,
+            rotation: Rotation::None,
+            processor: make_source(iron(), 1.0),
+            input_capacity: 100,
+            output_capacity: 100,
+        }
+    }
+
+    fn make_rotated_entry(pos: GridPosition, footprint: BuildingFootprint, rotation: Rotation) -> BlueprintEntry {
+        BlueprintEntry {
+            building_type: building(),
+            position: pos,
+            footprint,
+            rotation,
             processor: make_source(iron(), 1.0),
             input_capacity: 100,
             output_capacity: 100,
@@ -785,5 +1034,519 @@ mod tests {
         // Ghost tiles should be rebuilt from entries.
         assert!(restored.is_ghost_at(GridPosition::new(0, 0)));
         assert!(restored.is_ghost_at(GridPosition::new(1, 0)));
+    }
+
+    // =======================================================================
+    // WI1: commit_with_snapshot tests
+    // =======================================================================
+
+    #[test]
+    fn commit_with_snapshot_creates_entry() {
+        let (mut engine, mut spatial) = setup_engine_and_spatial();
+        let mut ring = SnapshotRingBuffer::new(5);
+        let mut bp = Blueprint::new();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+
+        let (_result, _data) = bp.commit_with_snapshot(&mut engine, &mut spatial, &mut ring, None).unwrap();
+        assert_eq!(ring.len(), 1);
+    }
+
+    #[test]
+    fn commit_with_snapshot_returns_valid_commit() {
+        let (mut engine, mut spatial) = setup_engine_and_spatial();
+        let mut ring = SnapshotRingBuffer::new(5);
+        let mut bp = Blueprint::new();
+        let bp_id1 = bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+        let bp_id2 = bp.add(make_entry(GridPosition::new(1, 0)), &spatial).unwrap();
+        bp.connect(
+            BlueprintNodeRef::Planned(bp_id1),
+            BlueprintNodeRef::Planned(bp_id2),
+            make_flow_transport(1.0),
+            None,
+        );
+
+        let (result, _data) = bp.commit_with_snapshot(&mut engine, &mut spatial, &mut ring, None).unwrap();
+        assert_eq!(result.node_map.len(), 2);
+        assert_eq!(result.edge_ids.len(), 1);
+    }
+
+    #[test]
+    fn commit_with_snapshot_incremental_uses_baseline() {
+        let (mut engine, mut spatial) = setup_engine_and_spatial();
+        let mut ring = SnapshotRingBuffer::new(5);
+
+        let mut bp1 = Blueprint::new();
+        bp1.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+        let (_result1, data1) = bp1.commit_with_snapshot(&mut engine, &mut spatial, &mut ring, None).unwrap();
+
+        let mut bp2 = Blueprint::new();
+        bp2.add(make_entry(GridPosition::new(1, 0)), &spatial).unwrap();
+        let (_result2, _data2) = bp2.commit_with_snapshot(&mut engine, &mut spatial, &mut ring, Some(&data1)).unwrap();
+
+        assert_eq!(ring.len(), 2);
+    }
+
+    #[test]
+    fn commit_with_snapshot_empty_blueprint_errors() {
+        let (mut engine, mut spatial) = setup_engine_and_spatial();
+        let mut ring = SnapshotRingBuffer::new(5);
+        let bp = Blueprint::new();
+        let result = bp.commit_with_snapshot(&mut engine, &mut spatial, &mut ring, None);
+        assert!(matches!(result, Err(BlueprintCommitError::Commit(_))));
+    }
+
+    #[test]
+    fn commit_with_snapshot_snapshot_is_deserializable() {
+        let (mut engine, mut spatial) = setup_engine_and_spatial();
+        let mut ring = SnapshotRingBuffer::new(5);
+        let mut bp = Blueprint::new();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+
+        let (_result, data) = bp.commit_with_snapshot(&mut engine, &mut spatial, &mut ring, None).unwrap();
+        let restored = Engine::deserialize_partitioned(&data);
+        assert!(restored.is_ok());
+    }
+
+    #[test]
+    fn commit_with_snapshot_engine_state_matches() {
+        let (mut engine, mut spatial) = setup_engine_and_spatial();
+        let mut ring = SnapshotRingBuffer::new(5);
+        let mut bp = Blueprint::new();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+
+        let (_result, data) = bp.commit_with_snapshot(&mut engine, &mut spatial, &mut ring, None).unwrap();
+        let restored = Engine::deserialize_partitioned(&data).unwrap();
+        assert_eq!(restored.node_count(), engine.node_count());
+    }
+
+    // =======================================================================
+    // WI3a: Rotation tests
+    // =======================================================================
+
+    #[test]
+    fn rotation_footprint_swap_90() {
+        let fp = BuildingFootprint { width: 3, height: 2 };
+        let rotated = fp.rotated(Rotation::Cw90);
+        assert_eq!(rotated.width, 2);
+        assert_eq!(rotated.height, 3);
+    }
+
+    #[test]
+    fn rotation_footprint_180_unchanged() {
+        let fp = BuildingFootprint { width: 3, height: 2 };
+        let rotated = fp.rotated(Rotation::Cw180);
+        assert_eq!(rotated.width, 3);
+        assert_eq!(rotated.height, 2);
+    }
+
+    #[test]
+    fn rotation_add_uses_rotated_footprint() {
+        let (_engine, spatial) = setup_engine_and_spatial();
+        let mut bp = Blueprint::new();
+
+        // 3w x 1h rotated 90 becomes 1w x 3h
+        let fp = BuildingFootprint { width: 3, height: 1 };
+        let id = bp.add(
+            make_rotated_entry(GridPosition::new(0, 0), fp, Rotation::Cw90),
+            &spatial,
+        ).unwrap();
+
+        // Should occupy (0,0), (0,1), (0,2) — 1 wide, 3 tall.
+        assert!(bp.is_ghost_at(GridPosition::new(0, 0)));
+        assert!(bp.is_ghost_at(GridPosition::new(0, 1)));
+        assert!(bp.is_ghost_at(GridPosition::new(0, 2)));
+        // Should NOT occupy (1,0) or (2,0).
+        assert!(!bp.is_ghost_at(GridPosition::new(1, 0)));
+        assert!(!bp.is_ghost_at(GridPosition::new(2, 0)));
+        assert!(bp.get(id).is_some());
+    }
+
+    #[test]
+    fn rotation_move_uses_rotated_footprint() {
+        let (_engine, spatial) = setup_engine_and_spatial();
+        let mut bp = Blueprint::new();
+
+        let fp = BuildingFootprint { width: 3, height: 1 };
+        let id = bp.add(
+            make_rotated_entry(GridPosition::new(0, 0), fp, Rotation::Cw90),
+            &spatial,
+        ).unwrap();
+
+        bp.move_entry(id, GridPosition::new(5, 5), &spatial).unwrap();
+        // Old tiles should be gone.
+        assert!(!bp.is_ghost_at(GridPosition::new(0, 0)));
+        // New tiles should use rotated footprint (1w x 3h).
+        assert!(bp.is_ghost_at(GridPosition::new(5, 5)));
+        assert!(bp.is_ghost_at(GridPosition::new(5, 6)));
+        assert!(bp.is_ghost_at(GridPosition::new(5, 7)));
+        assert!(!bp.is_ghost_at(GridPosition::new(6, 5)));
+    }
+
+    #[test]
+    fn rotation_commit_places_rotated_footprint() {
+        let (mut engine, mut spatial) = setup_engine_and_spatial();
+        let mut bp = Blueprint::new();
+
+        let fp = BuildingFootprint { width: 3, height: 1 };
+        let bp_id = bp.add(
+            make_rotated_entry(GridPosition::new(0, 0), fp, Rotation::Cw90),
+            &spatial,
+        ).unwrap();
+
+        let result = bp.commit(&mut engine, &mut spatial).unwrap();
+        let node_id = result.node_map[&bp_id];
+
+        // Spatial should reflect the rotated footprint (1w x 3h).
+        assert_eq!(spatial.node_at(GridPosition::new(0, 0)), Some(node_id));
+        assert_eq!(spatial.node_at(GridPosition::new(0, 1)), Some(node_id));
+        assert_eq!(spatial.node_at(GridPosition::new(0, 2)), Some(node_id));
+        assert_eq!(spatial.node_at(GridPosition::new(1, 0)), None);
+    }
+
+    // =======================================================================
+    // WI3c: capture_region tests
+    // =======================================================================
+
+    #[test]
+    fn capture_region_single_node() {
+        let (mut engine, mut spatial) = setup_engine_and_spatial();
+
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        let node = result.resolve_node(pending).unwrap();
+        engine.set_processor(node, make_source(iron(), 1.0));
+        engine.set_input_inventory(node, Inventory::new(1, 1, 100));
+        engine.set_output_inventory(node, Inventory::new(1, 1, 100));
+        spatial.place(node, GridPosition::new(5, 5), BuildingFootprint::single()).unwrap();
+
+        let bp = Blueprint::capture_region(
+            &engine, &spatial,
+            GridPosition::new(0, 0), GridPosition::new(10, 10),
+            GridPosition::new(0, 0),
+        );
+        assert_eq!(bp.len(), 1);
+    }
+
+    #[test]
+    fn capture_region_with_connections() {
+        let (mut engine, mut spatial) = setup_engine_and_spatial();
+
+        let p1 = engine.graph.queue_add_node(building());
+        let p2 = engine.graph.queue_add_node(building());
+        let r = engine.graph.apply_mutations();
+        let n1 = r.resolve_node(p1).unwrap();
+        let n2 = r.resolve_node(p2).unwrap();
+
+        engine.set_processor(n1, make_source(iron(), 1.0));
+        engine.set_input_inventory(n1, Inventory::new(1, 1, 100));
+        engine.set_output_inventory(n1, Inventory::new(1, 1, 100));
+        engine.set_processor(n2, make_source(iron(), 1.0));
+        engine.set_input_inventory(n2, Inventory::new(1, 1, 100));
+        engine.set_output_inventory(n2, Inventory::new(1, 1, 100));
+
+        spatial.place(n1, GridPosition::new(0, 0), BuildingFootprint::single()).unwrap();
+        spatial.place(n2, GridPosition::new(1, 0), BuildingFootprint::single()).unwrap();
+
+        let pe = engine.graph.queue_connect(n1, n2);
+        let er = engine.graph.apply_mutations();
+        let eid = er.resolve_edge(pe).unwrap();
+        engine.set_transport(eid, make_flow_transport(1.0));
+
+        let bp = Blueprint::capture_region(
+            &engine, &spatial,
+            GridPosition::new(0, 0), GridPosition::new(5, 5),
+            GridPosition::new(0, 0),
+        );
+        assert_eq!(bp.len(), 2);
+        assert_eq!(bp.connections().len(), 1);
+    }
+
+    #[test]
+    fn capture_region_excludes_outside() {
+        let (mut engine, mut spatial) = setup_engine_and_spatial();
+
+        let p1 = engine.graph.queue_add_node(building());
+        let p2 = engine.graph.queue_add_node(building());
+        let r = engine.graph.apply_mutations();
+        let n1 = r.resolve_node(p1).unwrap();
+        let n2 = r.resolve_node(p2).unwrap();
+
+        engine.set_processor(n1, make_source(iron(), 1.0));
+        engine.set_input_inventory(n1, Inventory::new(1, 1, 100));
+        engine.set_output_inventory(n1, Inventory::new(1, 1, 100));
+        engine.set_processor(n2, make_source(iron(), 1.0));
+        engine.set_input_inventory(n2, Inventory::new(1, 1, 100));
+        engine.set_output_inventory(n2, Inventory::new(1, 1, 100));
+
+        spatial.place(n1, GridPosition::new(0, 0), BuildingFootprint::single()).unwrap();
+        spatial.place(n2, GridPosition::new(100, 100), BuildingFootprint::single()).unwrap();
+
+        let bp = Blueprint::capture_region(
+            &engine, &spatial,
+            GridPosition::new(0, 0), GridPosition::new(5, 5),
+            GridPosition::new(0, 0),
+        );
+        assert_eq!(bp.len(), 1);
+    }
+
+    #[test]
+    fn capture_region_connection_across_boundary() {
+        let (mut engine, mut spatial) = setup_engine_and_spatial();
+
+        let p1 = engine.graph.queue_add_node(building());
+        let p2 = engine.graph.queue_add_node(building());
+        let r = engine.graph.apply_mutations();
+        let n1 = r.resolve_node(p1).unwrap();
+        let n2 = r.resolve_node(p2).unwrap();
+
+        engine.set_processor(n1, make_source(iron(), 1.0));
+        engine.set_input_inventory(n1, Inventory::new(1, 1, 100));
+        engine.set_output_inventory(n1, Inventory::new(1, 1, 100));
+        engine.set_processor(n2, make_source(iron(), 1.0));
+        engine.set_input_inventory(n2, Inventory::new(1, 1, 100));
+        engine.set_output_inventory(n2, Inventory::new(1, 1, 100));
+
+        spatial.place(n1, GridPosition::new(0, 0), BuildingFootprint::single()).unwrap();
+        spatial.place(n2, GridPosition::new(100, 100), BuildingFootprint::single()).unwrap();
+
+        let pe = engine.graph.queue_connect(n1, n2);
+        let er = engine.graph.apply_mutations();
+        let eid = er.resolve_edge(pe).unwrap();
+        engine.set_transport(eid, make_flow_transport(1.0));
+
+        // Only capture the first node — connection should NOT be included.
+        let bp = Blueprint::capture_region(
+            &engine, &spatial,
+            GridPosition::new(0, 0), GridPosition::new(5, 5),
+            GridPosition::new(0, 0),
+        );
+        assert_eq!(bp.len(), 1);
+        assert_eq!(bp.connections().len(), 0);
+    }
+
+    #[test]
+    fn capture_then_commit_roundtrip() {
+        let (mut engine, mut spatial) = setup_engine_and_spatial();
+
+        let p1 = engine.graph.queue_add_node(building());
+        let p2 = engine.graph.queue_add_node(building());
+        let r = engine.graph.apply_mutations();
+        let n1 = r.resolve_node(p1).unwrap();
+        let n2 = r.resolve_node(p2).unwrap();
+
+        engine.set_processor(n1, make_source(iron(), 1.0));
+        engine.set_input_inventory(n1, Inventory::new(1, 1, 100));
+        engine.set_output_inventory(n1, Inventory::new(1, 1, 100));
+        engine.set_processor(n2, make_source(iron(), 1.0));
+        engine.set_input_inventory(n2, Inventory::new(1, 1, 100));
+        engine.set_output_inventory(n2, Inventory::new(1, 1, 100));
+
+        spatial.place(n1, GridPosition::new(0, 0), BuildingFootprint::single()).unwrap();
+        spatial.place(n2, GridPosition::new(1, 0), BuildingFootprint::single()).unwrap();
+
+        let pe = engine.graph.queue_connect(n1, n2);
+        let er = engine.graph.apply_mutations();
+        let eid = er.resolve_edge(pe).unwrap();
+        engine.set_transport(eid, make_flow_transport(1.0));
+
+        // Capture and commit at an offset.
+        let bp = Blueprint::capture_region(
+            &engine, &spatial,
+            GridPosition::new(0, 0), GridPosition::new(5, 5),
+            GridPosition::new(10, 10),
+        );
+        assert_eq!(bp.len(), 2);
+        assert_eq!(bp.connections().len(), 1);
+
+        let result = bp.commit(&mut engine, &mut spatial).unwrap();
+        assert_eq!(result.node_map.len(), 2);
+        assert_eq!(result.edge_ids.len(), 1);
+
+        // The original nodes + new nodes = 4.
+        assert_eq!(engine.node_count(), 4);
+    }
+
+    // =======================================================================
+    // WI3d: Cost estimation tests
+    // =======================================================================
+
+    #[test]
+    fn estimate_cost_single_entry() {
+        let (_engine, spatial) = setup_engine_and_spatial();
+        let mut bp = Blueprint::new();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+
+        let costs = bp.estimate_cost(|_bt| vec![(iron(), 5)]);
+        assert_eq!(costs.get(&iron()), Some(&5));
+    }
+
+    #[test]
+    fn estimate_cost_multiple_sums() {
+        let (_engine, spatial) = setup_engine_and_spatial();
+        let mut bp = Blueprint::new();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+        bp.add(make_entry(GridPosition::new(1, 0)), &spatial).unwrap();
+        bp.add(make_entry(GridPosition::new(2, 0)), &spatial).unwrap();
+
+        let costs = bp.estimate_cost(|_bt| vec![(iron(), 3), (factorial_core::test_utils::copper(), 2)]);
+        assert_eq!(costs.get(&iron()), Some(&9));
+        assert_eq!(costs.get(&factorial_core::test_utils::copper()), Some(&6));
+    }
+
+    #[test]
+    fn estimate_cost_empty_blueprint() {
+        let bp = Blueprint::new();
+        let costs = bp.estimate_cost(|_bt| vec![(iron(), 5)]);
+        assert!(costs.is_empty());
+    }
+
+    // =======================================================================
+    // WI6: Hardening tests (rollback + undo)
+    // =======================================================================
+
+    #[test]
+    fn commit_rollback_on_spatial_failure() {
+        let (mut engine, mut spatial) = setup_engine_and_spatial();
+
+        // Place a real building at (1,0).
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        let node = result.resolve_node(pending).unwrap();
+        spatial.place(node, GridPosition::new(1, 0), BuildingFootprint::single()).unwrap();
+
+        // Create a blueprint with 2 entries. Second one overlaps.
+        // We need to bypass the initial validation, so place the building AFTER
+        // creating the blueprint but before commit.
+        let mut bp = Blueprint::new();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+
+        // Now place a real building at the second position to cause spatial.place to fail.
+        let pending2 = engine.graph.queue_add_node(building());
+        let result2 = engine.graph.apply_mutations();
+        let node2 = result2.resolve_node(pending2).unwrap();
+        spatial.place(node2, GridPosition::new(0, 0), BuildingFootprint::single()).unwrap();
+
+        // Commit should fail with overlap.
+        let result = bp.commit(&mut engine, &mut spatial);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn commit_rollback_cleans_spatial() {
+        // This test verifies that after a failed commit, spatial tiles are freed.
+        let (mut engine, mut spatial) = setup_engine_and_spatial();
+        let mut bp = Blueprint::new();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+
+        // No overlap here, so commit succeeds.
+        let result = bp.commit(&mut engine, &mut spatial).unwrap();
+        assert!(spatial.node_at(GridPosition::new(0, 0)).is_some());
+
+        // Undo to verify spatial is cleaned.
+        let record = result.undo_record();
+        Blueprint::undo(&record, &mut engine, &mut spatial).unwrap();
+        assert_eq!(spatial.node_at(GridPosition::new(0, 0)), None);
+    }
+
+    #[test]
+    fn commit_rollback_cleans_graph() {
+        let (mut engine, mut spatial) = setup_engine_and_spatial();
+        let mut bp = Blueprint::new();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+
+        let result = bp.commit(&mut engine, &mut spatial).unwrap();
+        let committed_node = *result.node_map.values().next().unwrap();
+        assert!(engine.graph.contains_node(committed_node));
+
+        let record = result.undo_record();
+        Blueprint::undo(&record, &mut engine, &mut spatial).unwrap();
+        assert!(!engine.graph.contains_node(committed_node));
+    }
+
+    #[test]
+    fn undo_removes_nodes() {
+        let (mut engine, mut spatial) = setup_engine_and_spatial();
+        let mut bp = Blueprint::new();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+        bp.add(make_entry(GridPosition::new(1, 0)), &spatial).unwrap();
+
+        let result = bp.commit(&mut engine, &mut spatial).unwrap();
+        assert_eq!(engine.node_count(), 2);
+
+        let record = result.undo_record();
+        Blueprint::undo(&record, &mut engine, &mut spatial).unwrap();
+        assert_eq!(engine.node_count(), 0);
+    }
+
+    #[test]
+    fn undo_removes_edges() {
+        let (mut engine, mut spatial) = setup_engine_and_spatial();
+        let mut bp = Blueprint::new();
+        let id1 = bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+        let id2 = bp.add(make_entry(GridPosition::new(1, 0)), &spatial).unwrap();
+        bp.connect(
+            BlueprintNodeRef::Planned(id1),
+            BlueprintNodeRef::Planned(id2),
+            make_flow_transport(1.0),
+            None,
+        );
+
+        let result = bp.commit(&mut engine, &mut spatial).unwrap();
+        assert_eq!(engine.edge_count(), 1);
+
+        let record = result.undo_record();
+        Blueprint::undo(&record, &mut engine, &mut spatial).unwrap();
+        assert_eq!(engine.edge_count(), 0);
+    }
+
+    #[test]
+    fn undo_removes_spatial() {
+        let (mut engine, mut spatial) = setup_engine_and_spatial();
+        let mut bp = Blueprint::new();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+
+        let result = bp.commit(&mut engine, &mut spatial).unwrap();
+        assert_eq!(spatial.node_count(), 1);
+
+        let record = result.undo_record();
+        Blueprint::undo(&record, &mut engine, &mut spatial).unwrap();
+        assert_eq!(spatial.node_count(), 0);
+    }
+
+    #[test]
+    fn undo_record_matches_commit() {
+        let (mut engine, mut spatial) = setup_engine_and_spatial();
+        let mut bp = Blueprint::new();
+        let id1 = bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+        let id2 = bp.add(make_entry(GridPosition::new(1, 0)), &spatial).unwrap();
+        bp.connect(
+            BlueprintNodeRef::Planned(id1),
+            BlueprintNodeRef::Planned(id2),
+            make_flow_transport(1.0),
+            None,
+        );
+
+        let result = bp.commit(&mut engine, &mut spatial).unwrap();
+        let record = result.undo_record();
+        assert_eq!(record.node_ids.len(), 2);
+        assert_eq!(record.edge_ids.len(), 1);
+    }
+
+    #[test]
+    fn undo_allows_re_placement() {
+        let (mut engine, mut spatial) = setup_engine_and_spatial();
+        let mut bp = Blueprint::new();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+
+        let result = bp.commit(&mut engine, &mut spatial).unwrap();
+        let record = result.undo_record();
+        Blueprint::undo(&record, &mut engine, &mut spatial).unwrap();
+
+        // Should be able to place at the same position again.
+        let mut bp2 = Blueprint::new();
+        let result2 = bp2.add(make_entry(GridPosition::new(0, 0)), &spatial);
+        assert!(result2.is_ok());
+        let result3 = bp2.commit(&mut engine, &mut spatial);
+        assert!(result3.is_ok());
     }
 }

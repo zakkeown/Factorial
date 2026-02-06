@@ -13,11 +13,11 @@ new_key_type! {
 }
 
 /// Identifies an item type in the registry. Cheap to copy and compare.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ItemTypeId(pub u32);
 
 /// Identifies a building template in the registry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct BuildingTypeId(pub u32);
 
 /// Identifies a recipe in the registry.

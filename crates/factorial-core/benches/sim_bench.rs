@@ -253,5 +253,83 @@ fn bench_belt_heavy(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_small_factory, bench_medium_factory, bench_belt_heavy);
+fn bench_serialization(c: &mut Criterion) {
+    let mut group = c.benchmark_group("serialization");
+    group.sample_size(30);
+
+    let engine = build_medium_factory();
+
+    // Full (legacy) serialize.
+    group.bench_function("serialize_full_5000_nodes", |b| {
+        b.iter(|| {
+            engine.serialize().unwrap();
+        });
+    });
+
+    // Partitioned serialize.
+    group.bench_function("serialize_partitioned_5000_nodes", |b| {
+        b.iter(|| {
+            engine.serialize_partitioned().unwrap();
+        });
+    });
+
+    // Incremental with no baseline (all partitions freshly serialized).
+    group.bench_function("serialize_incremental_no_baseline", |b| {
+        b.iter_batched(
+            || {
+                let mut e = build_medium_factory();
+                // Step to dirty all partitions, then serialize.
+                e.step();
+                e
+            },
+            |mut e| {
+                e.serialize_incremental(None).unwrap();
+            },
+            criterion::BatchSize::LargeInput,
+        );
+    });
+
+    // Incremental with baseline (only partitions changed by 1 step are dirty).
+    group.bench_function("serialize_incremental_with_baseline", |b| {
+        b.iter_batched(
+            || {
+                let mut e = build_medium_factory();
+                e.step();
+                let baseline = e.serialize_incremental(None).unwrap();
+                e.step();
+                (e, baseline)
+            },
+            |(mut e, baseline)| {
+                e.serialize_incremental(Some(&baseline)).unwrap();
+            },
+            criterion::BatchSize::LargeInput,
+        );
+    });
+
+    // Legacy deserialize.
+    let legacy_data = engine.serialize().unwrap();
+    group.bench_function("deserialize_legacy_5000_nodes", |b| {
+        b.iter(|| {
+            Engine::deserialize(&legacy_data).unwrap();
+        });
+    });
+
+    // Partitioned deserialize.
+    let partitioned_data = engine.serialize_partitioned().unwrap();
+    group.bench_function("deserialize_partitioned_5000_nodes", |b| {
+        b.iter(|| {
+            Engine::deserialize_partitioned(&partitioned_data).unwrap();
+        });
+    });
+
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_small_factory,
+    bench_medium_factory,
+    bench_belt_heavy,
+    bench_serialization
+);
 criterion_main!(benches);

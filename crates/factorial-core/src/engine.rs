@@ -182,6 +182,16 @@ impl Engine {
         self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_PROCESSORS);
     }
 
+    /// Get the processor configuration for a node (read-only).
+    pub fn get_processor(&self, node: NodeId) -> Option<&Processor> {
+        self.processors.get(node)
+    }
+
+    /// Get the modifiers applied to a node (read-only).
+    pub fn get_modifiers(&self, node: NodeId) -> Option<&Vec<Modifier>> {
+        self.modifiers.get(node)
+    }
+
     /// Get the processor state for a node (read-only).
     pub fn get_processor_state(&self, node: NodeId) -> Option<&ProcessorState> {
         self.processor_states.get(node)
@@ -261,6 +271,11 @@ impl Engine {
         self.transport_states.insert(edge, state);
         self.dirty.mark_edge(edge);
         self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_TRANSPORTS);
+    }
+
+    /// Get the transport configuration for an edge (read-only).
+    pub fn get_transport(&self, edge: EdgeId) -> Option<&Transport> {
+        self.transports.get(edge)
     }
 
     /// Get the transport state for an edge (read-only).

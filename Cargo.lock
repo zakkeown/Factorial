@@ -366,6 +366,7 @@ dependencies = [
 name = "factorial-spatial"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "factorial-core",
  "serde",
  "serde_json",
