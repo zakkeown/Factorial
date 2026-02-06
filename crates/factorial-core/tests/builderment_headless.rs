@@ -545,3 +545,45 @@ fn parallel_chain_produces_basic_robots() {
     );
 }
 
+#[test]
+fn serialize_round_trip_full_factory() {
+    let (mut engine_straight, _) = build_builderment_factory();
+    let (mut engine_split, _) = build_builderment_factory();
+
+    // Run both to tick 250.
+    for _ in 0..250 {
+        engine_straight.step();
+        engine_split.step();
+    }
+
+    // Serialize the split engine.
+    let serialized = engine_split.serialize().expect("serialize should succeed");
+    let mut engine_restored = Engine::deserialize(&serialized).expect("deserialize should succeed");
+
+    // Verify restored engine matches split at tick 250.
+    assert_eq!(
+        engine_restored.state_hash(),
+        engine_split.state_hash(),
+        "restored engine should match original at tick 250"
+    );
+
+    // Run both remaining 250 ticks.
+    for _ in 0..250 {
+        engine_straight.step();
+        engine_restored.step();
+    }
+
+    // Final state hashes must match.
+    assert_eq!(
+        engine_restored.state_hash(),
+        engine_straight.state_hash(),
+        "serialized round-trip (250+250) should match straight run (500)"
+    );
+
+    assert_eq!(
+        engine_restored.sim_state.tick,
+        engine_straight.sim_state.tick,
+        "tick counts should match"
+    );
+}
+
