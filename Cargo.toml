@@ -6,6 +6,7 @@ members = [
     "crates/factorial-stats",
     "crates/factorial-tech-tree",
     "crates/factorial-power",
+    "crates/factorial-integration-tests",
 ]
 
 [workspace.dependencies]
