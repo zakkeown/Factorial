@@ -10,8 +10,8 @@ fn main() {
     println!("cargo:rerun-if-changed=src/lib.rs");
     println!("cargo:rerun-if-changed=cbindgen.toml");
 
-    let config = cbindgen::Config::from_file("cbindgen.toml")
-        .expect("failed to read cbindgen.toml");
+    let config =
+        cbindgen::Config::from_file("cbindgen.toml").expect("failed to read cbindgen.toml");
 
     match cbindgen::Builder::new()
         .with_crate(crate_dir)

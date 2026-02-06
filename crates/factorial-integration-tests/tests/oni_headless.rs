@@ -18,7 +18,9 @@ use factorial_core::processor::*;
 use factorial_core::sim::SimulationStrategy;
 use factorial_core::test_utils::*;
 use factorial_core::transport::*;
-use factorial_fluid::{FluidConsumer, FluidEvent, FluidModule, FluidPipe, FluidProducer, FluidStorage};
+use factorial_fluid::{
+    FluidConsumer, FluidEvent, FluidModule, FluidPipe, FluidProducer, FluidStorage,
+};
 use factorial_power::{PowerConsumer, PowerEvent, PowerModule, PowerProducer};
 
 // ===========================================================================
@@ -26,46 +28,126 @@ use factorial_power::{PowerConsumer, PowerEvent, PowerModule, PowerProducer};
 // ===========================================================================
 
 // --- Resources ---
-#[allow(dead_code)] fn oni_water() -> ItemTypeId { ItemTypeId(400) }
-#[allow(dead_code)] fn oni_polluted_water() -> ItemTypeId { ItemTypeId(401) }
-#[allow(dead_code)] fn oni_algae() -> ItemTypeId { ItemTypeId(402) }
-#[allow(dead_code)] fn oni_dirt() -> ItemTypeId { ItemTypeId(403) }
-#[allow(dead_code)] fn oni_coal() -> ItemTypeId { ItemTypeId(404) }
-#[allow(dead_code)] fn oni_iron_ore() -> ItemTypeId { ItemTypeId(405) }
-#[allow(dead_code)] fn oni_copper_ore() -> ItemTypeId { ItemTypeId(406) }
-#[allow(dead_code)] fn oni_sand() -> ItemTypeId { ItemTypeId(407) }
-#[allow(dead_code)] fn oni_slime() -> ItemTypeId { ItemTypeId(408) }
-#[allow(dead_code)] fn oni_crude_oil() -> ItemTypeId { ItemTypeId(409) }
+#[allow(dead_code)]
+fn oni_water() -> ItemTypeId {
+    ItemTypeId(400)
+}
+#[allow(dead_code)]
+fn oni_polluted_water() -> ItemTypeId {
+    ItemTypeId(401)
+}
+#[allow(dead_code)]
+fn oni_algae() -> ItemTypeId {
+    ItemTypeId(402)
+}
+#[allow(dead_code)]
+fn oni_dirt() -> ItemTypeId {
+    ItemTypeId(403)
+}
+#[allow(dead_code)]
+fn oni_coal() -> ItemTypeId {
+    ItemTypeId(404)
+}
+#[allow(dead_code)]
+fn oni_iron_ore() -> ItemTypeId {
+    ItemTypeId(405)
+}
+#[allow(dead_code)]
+fn oni_copper_ore() -> ItemTypeId {
+    ItemTypeId(406)
+}
+#[allow(dead_code)]
+fn oni_sand() -> ItemTypeId {
+    ItemTypeId(407)
+}
+#[allow(dead_code)]
+fn oni_slime() -> ItemTypeId {
+    ItemTypeId(408)
+}
+#[allow(dead_code)]
+fn oni_crude_oil() -> ItemTypeId {
+    ItemTypeId(409)
+}
 
 // --- Gases ---
-#[allow(dead_code)] fn oni_oxygen() -> ItemTypeId { ItemTypeId(410) }
-#[allow(dead_code)] fn oni_carbon_dioxide() -> ItemTypeId { ItemTypeId(411) }
-#[allow(dead_code)] fn oni_hydrogen() -> ItemTypeId { ItemTypeId(412) }
-#[allow(dead_code)] fn oni_natural_gas() -> ItemTypeId { ItemTypeId(413) }
-#[allow(dead_code)] fn oni_chlorine() -> ItemTypeId { ItemTypeId(414) }
-#[allow(dead_code)] fn oni_polluted_oxygen() -> ItemTypeId { ItemTypeId(415) }
+#[allow(dead_code)]
+fn oni_oxygen() -> ItemTypeId {
+    ItemTypeId(410)
+}
+#[allow(dead_code)]
+fn oni_carbon_dioxide() -> ItemTypeId {
+    ItemTypeId(411)
+}
+#[allow(dead_code)]
+fn oni_hydrogen() -> ItemTypeId {
+    ItemTypeId(412)
+}
+#[allow(dead_code)]
+fn oni_natural_gas() -> ItemTypeId {
+    ItemTypeId(413)
+}
+#[allow(dead_code)]
+fn oni_chlorine() -> ItemTypeId {
+    ItemTypeId(414)
+}
+#[allow(dead_code)]
+fn oni_polluted_oxygen() -> ItemTypeId {
+    ItemTypeId(415)
+}
 
 // --- Processed materials ---
-#[allow(dead_code)] fn oni_iron() -> ItemTypeId { ItemTypeId(420) }
-#[allow(dead_code)] fn oni_copper() -> ItemTypeId { ItemTypeId(421) }
-#[allow(dead_code)] fn oni_steel() -> ItemTypeId { ItemTypeId(422) }
-#[allow(dead_code)] fn oni_plastic() -> ItemTypeId { ItemTypeId(423) }
-#[allow(dead_code)] fn oni_petroleum() -> ItemTypeId { ItemTypeId(424) }
+#[allow(dead_code)]
+fn oni_iron() -> ItemTypeId {
+    ItemTypeId(420)
+}
+#[allow(dead_code)]
+fn oni_copper() -> ItemTypeId {
+    ItemTypeId(421)
+}
+#[allow(dead_code)]
+fn oni_steel() -> ItemTypeId {
+    ItemTypeId(422)
+}
+#[allow(dead_code)]
+fn oni_plastic() -> ItemTypeId {
+    ItemTypeId(423)
+}
+#[allow(dead_code)]
+fn oni_petroleum() -> ItemTypeId {
+    ItemTypeId(424)
+}
 
 // --- Food ---
-#[allow(dead_code)] fn oni_meal_lice() -> ItemTypeId { ItemTypeId(430) }
-#[allow(dead_code)] fn oni_bristle_berry() -> ItemTypeId { ItemTypeId(431) }
-#[allow(dead_code)] fn oni_liceloaf() -> ItemTypeId { ItemTypeId(432) }
+#[allow(dead_code)]
+fn oni_meal_lice() -> ItemTypeId {
+    ItemTypeId(430)
+}
+#[allow(dead_code)]
+fn oni_bristle_berry() -> ItemTypeId {
+    ItemTypeId(431)
+}
+#[allow(dead_code)]
+fn oni_liceloaf() -> ItemTypeId {
+    ItemTypeId(432)
+}
 
 // --- Fertilizer/organics ---
-#[allow(dead_code)] fn oni_fertilizer() -> ItemTypeId { ItemTypeId(440) }
-#[allow(dead_code)] fn oni_polluted_dirt() -> ItemTypeId { ItemTypeId(441) }
+#[allow(dead_code)]
+fn oni_fertilizer() -> ItemTypeId {
+    ItemTypeId(440)
+}
+#[allow(dead_code)]
+fn oni_polluted_dirt() -> ItemTypeId {
+    ItemTypeId(441)
+}
 
 // ===========================================================================
 // Property IDs for ONI-specific continuous properties
 // ===========================================================================
 
-fn prop_temperature() -> PropertyId { PropertyId(0) }
+fn prop_temperature() -> PropertyId {
+    PropertyId(0)
+}
 
 // ===========================================================================
 // Shared constants
@@ -263,7 +345,9 @@ fn test_spom_self_powering_oxygen() {
     power.add_consumer(
         power_net,
         electrolyzer,
-        PowerConsumer { demand: Fixed64::from_num(120) },
+        PowerConsumer {
+            demand: Fixed64::from_num(120),
+        },
     );
 
     connect(&mut engine, water_src, electrolyzer, liquid_pipe());
@@ -279,7 +363,9 @@ fn test_spom_self_powering_oxygen() {
     power.add_producer(
         power_net,
         h2_generator,
-        PowerProducer { capacity: Fixed64::from_num(800) },
+        PowerProducer {
+            capacity: Fixed64::from_num(800),
+        },
     );
 
     // ENGINE GAP: This creates a cycle: electrolyzer -> h2_generator -> (power) -> electrolyzer.
@@ -300,7 +386,9 @@ fn test_spom_self_powering_oxygen() {
     power.add_consumer(
         power_net,
         gas_pump_o2,
-        PowerConsumer { demand: Fixed64::from_num(240) },
+        PowerConsumer {
+            demand: Fixed64::from_num(240),
+        },
     );
     connect(&mut engine, electrolyzer, gas_pump_o2, gas_pipe());
 
@@ -363,7 +451,9 @@ fn test_fluid_pressure_and_overpressure() {
     fluid.add_producer(
         o2_network,
         producer_node,
-        FluidProducer { rate: Fixed64::from_num(500) },
+        FluidProducer {
+            rate: Fixed64::from_num(500),
+        },
     );
 
     // Pipe segment with limited capacity.
@@ -377,7 +467,9 @@ fn test_fluid_pressure_and_overpressure() {
     fluid.add_pipe(
         o2_network,
         pipe_node,
-        FluidPipe { capacity: Fixed64::from_num(1000) },
+        FluidPipe {
+            capacity: Fixed64::from_num(1000),
+        },
     );
 
     // Storage tank (limited capacity to force overpressure).
@@ -407,7 +499,9 @@ fn test_fluid_pressure_and_overpressure() {
     fluid.add_consumer(
         o2_network,
         consumer_node,
-        FluidConsumer { rate: Fixed64::from_num(200) },
+        FluidConsumer {
+            rate: Fixed64::from_num(200),
+        },
     );
 
     // Phase 1: Run until storage fills up.
@@ -560,7 +654,9 @@ fn test_coal_generator_power_chain() {
     power.add_producer(
         power_net,
         coal_gen,
-        PowerProducer { capacity: Fixed64::from_num(600) },
+        PowerProducer {
+            capacity: Fixed64::from_num(600),
+        },
     );
 
     connect(&mut engine, coal_src, coal_gen, oni_conveyor());
@@ -570,18 +666,16 @@ fn test_coal_generator_power_chain() {
     for _ in 0..3 {
         let consumer = add_node(
             &mut engine,
-            make_recipe(
-                vec![(oni_iron_ore(), 1)],
-                vec![(oni_iron(), 1)],
-                5,
-            ),
+            make_recipe(vec![(oni_iron_ore(), 1)], vec![(oni_iron(), 1)], 5),
             ONI_INPUT_CAP,
             ONI_OUTPUT_CAP,
         );
         power.add_consumer(
             power_net,
             consumer,
-            PowerConsumer { demand: Fixed64::from_num(150) },
+            PowerConsumer {
+                demand: Fixed64::from_num(150),
+            },
         );
         consumer_nodes.push(consumer);
     }
@@ -737,11 +831,7 @@ fn test_food_chain_mealwood_to_liceloaf() {
     // This is a slow recipe representing plant growth.
     let mealwood_farm = add_node(
         &mut engine,
-        make_recipe(
-            vec![(oni_dirt(), 10)],
-            vec![(oni_meal_lice(), 5)],
-            18,
-        ),
+        make_recipe(vec![(oni_dirt(), 10)], vec![(oni_meal_lice(), 5)], 18),
         ONI_INPUT_CAP,
         ONI_OUTPUT_CAP,
     );
@@ -776,7 +866,7 @@ fn test_food_chain_mealwood_to_liceloaf() {
     }
 
     // Debug: check farm state.
-    let dirt_at_farm = input_quantity(&engine, mealwood_farm, oni_dirt());
+    let _dirt_at_farm = input_quantity(&engine, mealwood_farm, oni_dirt());
     let farm_state = engine.get_processor_state(mealwood_farm);
     // The farm should have produced meal lice and the kitchen should have processed them.
     // Due to buffer-timing, intermediate inventories may be 0 at observation time.
@@ -795,7 +885,9 @@ fn test_food_chain_mealwood_to_liceloaf() {
     let liceloaf_out = output_quantity(&engine, kitchen, oni_liceloaf());
     let liceloaf_delivered = input_quantity(&engine, food_sink, oni_liceloaf());
     assert!(
-        liceloaf_out > 0 || liceloaf_delivered > 0 || matches!(kitchen_state, Some(ProcessorState::Working { .. })),
+        liceloaf_out > 0
+            || liceloaf_delivered > 0
+            || matches!(kitchen_state, Some(ProcessorState::Working { .. })),
         "kitchen should produce liceloaf or be working (output: {liceloaf_out}, delivered: {liceloaf_delivered}, state: {kitchen_state:?})"
     );
 }
@@ -844,16 +936,18 @@ fn test_oil_refinery_chain() {
     // This is the fluid-to-solid conversion step.
     let polymer_press = add_node(
         &mut engine,
-        make_recipe(
-            vec![(oni_petroleum(), 5)],
-            vec![(oni_plastic(), 1)],
-            5,
-        ),
+        make_recipe(vec![(oni_petroleum(), 5)], vec![(oni_plastic(), 1)], 5),
         ONI_INPUT_CAP,
         ONI_OUTPUT_CAP,
     );
     // Use connect_filtered so only petroleum flows to the polymer press.
-    connect_filtered(&mut engine, oil_refinery, polymer_press, liquid_pipe(), Some(oni_petroleum()));
+    connect_filtered(
+        &mut engine,
+        oil_refinery,
+        polymer_press,
+        liquid_pipe(),
+        Some(oni_petroleum()),
+    );
 
     // Natural gas sink (could feed a natural gas generator).
     let natgas_sink = add_node(
@@ -863,7 +957,13 @@ fn test_oil_refinery_chain() {
         ONI_OUTPUT_CAP,
     );
     // Use connect_filtered so only natural gas flows to the natgas sink.
-    connect_filtered(&mut engine, oil_refinery, natgas_sink, gas_pipe(), Some(oni_natural_gas()));
+    connect_filtered(
+        &mut engine,
+        oil_refinery,
+        natgas_sink,
+        gas_pipe(),
+        Some(oni_natural_gas()),
+    );
 
     // Plastic storage.
     let plastic_sink = add_node(
@@ -886,13 +986,19 @@ fn test_oil_refinery_chain() {
     // The polymer press needs petroleum from the refinery. If it's in Working state,
     // it successfully received and consumed petroleum (confirming filtered edges work).
     let polymer_state = engine.get_processor_state(polymer_press);
-    let polymer_started = matches!(polymer_state, Some(ProcessorState::Working { .. }) | Some(ProcessorState::Idle));
-    assert!(polymer_started, "polymer press should have started (confirming petroleum delivery via filtered edge)");
+    let polymer_started = matches!(
+        polymer_state,
+        Some(ProcessorState::Working { .. }) | Some(ProcessorState::Idle)
+    );
+    assert!(
+        polymer_started,
+        "polymer press should have started (confirming petroleum delivery via filtered edge)"
+    );
 
     // Verify natural gas was delivered via filtered edge.
     // The natgas_sink demand is 1.0/tick, so items may be consumed same-tick.
     // Check if the demand processor actually consumed items.
-    if let Some(Processor::Demand(d)) = engine.get_processor_state(natgas_sink).and_then(|_| {
+    if let Some(Processor::Demand(d)) = engine.get_processor_state(natgas_sink).and({
         // Access processor directly — check consumed_total via the processor.
         None::<&Processor>
     }) {
@@ -900,9 +1006,14 @@ fn test_oil_refinery_chain() {
     }
     // Since the natgas demand rate matches delivery, check via a broader assertion:
     // The refinery should have consumed crude oil and progressed (confirming the recipe ran).
-    let crude_consumed = ONI_INPUT_CAP as i64 - input_quantity(&engine, oil_refinery, oni_crude_oil()) as i64
-        + (500 * 3) as i64 - output_quantity(&engine, oil_src, oni_crude_oil()) as i64;
-    assert!(crude_consumed > 0, "refinery should have consumed crude oil");
+    let crude_consumed = ONI_INPUT_CAP as i64
+        - input_quantity(&engine, oil_refinery, oni_crude_oil()) as i64
+        + (500 * 3) as i64
+        - output_quantity(&engine, oil_src, oni_crude_oil()) as i64;
+    assert!(
+        crude_consumed > 0,
+        "refinery should have consumed crude oil"
+    );
 
     // Verify the polymer press produced plastic (end of chain).
     let plastic_out = output_quantity(&engine, polymer_press, oni_plastic());
@@ -917,7 +1028,9 @@ fn test_oil_refinery_chain() {
     // But the processor state proves the chain works.
     let pp_state = engine.get_processor_state(polymer_press);
     assert!(
-        plastic_out > 0 || plastic_delivered > 0 || matches!(pp_state, Some(ProcessorState::Working { .. })),
+        plastic_out > 0
+            || plastic_delivered > 0
+            || matches!(pp_state, Some(ProcessorState::Working { .. })),
         "polymer press should have produced plastic or be working (output: {plastic_out}, delivered: {plastic_delivered}, state: {pp_state:?})"
     );
 }
@@ -947,7 +1060,9 @@ fn test_duplicant_oxygen_consumption() {
     fluid.add_producer(
         o2_network,
         electrolyzer,
-        FluidProducer { rate: Fixed64::from_num(888) },
+        FluidProducer {
+            rate: Fixed64::from_num(888),
+        },
     );
 
     // 8 duplicants, each consuming 100 g/s of oxygen.
@@ -963,7 +1078,9 @@ fn test_duplicant_oxygen_consumption() {
         fluid.add_consumer(
             o2_network,
             dupe,
-            FluidConsumer { rate: Fixed64::from_num(100) },
+            FluidConsumer {
+                rate: Fixed64::from_num(100),
+            },
         );
         dupe_nodes.push(dupe);
     }
@@ -1035,11 +1152,7 @@ fn test_geyser_intermittent_source() {
     // After 100 ticks, rate should be ~2.5. After 200 ticks, ~1.25.
     let geyser = add_node(
         &mut engine,
-        make_source_with_depletion(
-            oni_water(),
-            5.0,
-            Depletion::Decaying { half_life: 100 },
-        ),
+        make_source_with_depletion(oni_water(), 5.0, Depletion::Decaying { half_life: 100 }),
         ONI_INPUT_CAP,
         ONI_OUTPUT_CAP,
     );
@@ -1057,12 +1170,12 @@ fn test_geyser_intermittent_source() {
     for _ in 1..=50 {
         engine.step();
     }
-    let early_production = output_quantity(&engine, geyser, oni_water())
-        + input_quantity(&engine, sink, oni_water());
+    let early_production =
+        output_quantity(&engine, geyser, oni_water()) + input_quantity(&engine, sink, oni_water());
 
     // Phase 2: Reset tracking and run ticks 51-250 (late, lower production).
-    let pre_late = output_quantity(&engine, geyser, oni_water())
-        + input_quantity(&engine, sink, oni_water());
+    let pre_late =
+        output_quantity(&engine, geyser, oni_water()) + input_quantity(&engine, sink, oni_water());
     for _ in 51..=250 {
         engine.step();
     }
@@ -1125,7 +1238,9 @@ fn test_power_priority_and_brownout() {
     power.add_producer(
         power_net,
         generator,
-        PowerProducer { capacity: Fixed64::from_num(300) },
+        PowerProducer {
+            capacity: Fixed64::from_num(300),
+        },
     );
 
     // High priority: Oxygen production (200W).
@@ -1138,7 +1253,9 @@ fn test_power_priority_and_brownout() {
     power.add_consumer(
         power_net,
         o2_building,
-        PowerConsumer { demand: Fixed64::from_num(200) },
+        PowerConsumer {
+            demand: Fixed64::from_num(200),
+        },
     );
     // ENGINE GAP: No way to set priority.
     // Desired: power.set_priority(o2_building, PowerPriority::High);
@@ -1153,7 +1270,9 @@ fn test_power_priority_and_brownout() {
     power.add_consumer(
         power_net,
         food_building,
-        PowerConsumer { demand: Fixed64::from_num(200) },
+        PowerConsumer {
+            demand: Fixed64::from_num(200),
+        },
     );
     // ENGINE GAP: No way to set priority.
     // Desired: power.set_priority(food_building, PowerPriority::Medium);
@@ -1168,7 +1287,9 @@ fn test_power_priority_and_brownout() {
     power.add_consumer(
         power_net,
         research_building,
-        PowerConsumer { demand: Fixed64::from_num(200) },
+        PowerConsumer {
+            demand: Fixed64::from_num(200),
+        },
     );
     // ENGINE GAP: No way to set priority.
     // Desired: power.set_priority(research_building, PowerPriority::Low);
@@ -1225,10 +1346,13 @@ fn test_continuous_flow_gas_pipes() {
         ONI_INPUT_CAP,
         ONI_OUTPUT_CAP,
     );
-    engine.set_junction(splitter, Junction::Splitter(SplitterConfig {
-        policy: SplitPolicy::EvenSplit,
-        filter: None,
-    }));
+    engine.set_junction(
+        splitter,
+        Junction::Splitter(SplitterConfig {
+            policy: SplitPolicy::EvenSplit,
+            filter: None,
+        }),
+    );
     connect(&mut engine, o2_source, splitter, gas_pipe());
 
     // Two consumer endpoints (different rooms).
@@ -1328,7 +1452,9 @@ fn test_heat_deletion_steam_turbine() {
     power.add_producer(
         power_net,
         turbine,
-        PowerProducer { capacity: Fixed64::from_num(850) },
+        PowerProducer {
+            capacity: Fixed64::from_num(850),
+        },
     );
 
     connect(&mut engine, steam_src, turbine, liquid_pipe());
@@ -1357,7 +1483,9 @@ fn test_heat_deletion_steam_turbine() {
     power.add_consumer(
         power_net,
         aquatuner,
-        PowerConsumer { demand: Fixed64::from_num(1200) },
+        PowerConsumer {
+            demand: Fixed64::from_num(1200),
+        },
     );
 
     // Run for 100 ticks.
@@ -1371,8 +1499,7 @@ fn test_heat_deletion_steam_turbine() {
     let satisfaction = power.satisfaction(power_net).unwrap();
     let expected = Fixed64::from_num(850) / Fixed64::from_num(1200);
     assert_eq!(
-        satisfaction,
-        expected,
+        satisfaction, expected,
         "steam turbine alone cannot power the aquatuner (850W < 1200W)"
     );
 

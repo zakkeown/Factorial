@@ -132,9 +132,7 @@ mod tests {
 
     impl GraphInspectorModule {
         fn new() -> Self {
-            Self {
-                last_node_count: 0,
-            }
+            Self { last_node_count: 0 }
         }
     }
 
@@ -315,12 +313,7 @@ mod tests {
         let mut engine = Engine::new(SimulationStrategy::Tick);
         let iron = test_utils::iron();
 
-        let node = test_utils::add_node(
-            &mut engine,
-            test_utils::make_source(iron, 1.0),
-            100,
-            100,
-        );
+        let node = test_utils::add_node(&mut engine, test_utils::make_source(iron, 1.0), 100, 100);
 
         // Verify input inventory starts empty.
         assert_eq!(test_utils::input_quantity(&engine, node, iron), 0);

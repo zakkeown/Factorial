@@ -282,19 +282,15 @@ impl PowerModule {
         priority: PowerPriority,
     ) {
         self.consumers.insert(node, consumer);
-        self.consumer_priorities.insert((network_id, node), priority);
+        self.consumer_priorities
+            .insert((network_id, node), priority);
         if let Some(network) = self.networks.get_mut(&network_id) {
             network.add_consumer(node);
         }
     }
 
     /// Register a storage node and add it to a network.
-    pub fn add_storage(
-        &mut self,
-        network_id: PowerNetworkId,
-        node: NodeId,
-        storage: PowerStorage,
-    ) {
+    pub fn add_storage(&mut self, network_id: PowerNetworkId, node: NodeId, storage: PowerStorage) {
         self.storage.insert(node, storage);
         if let Some(network) = self.networks.get_mut(&network_id) {
             network.add_storage(node);
@@ -367,7 +363,9 @@ impl PowerModule {
         let network_ids: Vec<PowerNetworkId> = self.networks.keys().copied().collect();
 
         for net_id in network_ids {
-            let Some(network) = self.networks.get(&net_id) else { continue; };
+            let Some(network) = self.networks.get(&net_id) else {
+                continue;
+            };
 
             // Step 1: Sum total production.
             let total_production: Fixed64 = network
@@ -522,7 +520,9 @@ impl PowerModule {
             }
 
             // Update network state.
-            let Some(network) = self.networks.get_mut(&net_id) else { continue; };
+            let Some(network) = self.networks.get_mut(&net_id) else {
+                continue;
+            };
             network.satisfaction = satisfaction;
 
             let is_brownout = satisfaction < one;
@@ -583,8 +583,20 @@ mod tests {
         let net = module.create_network();
         let nodes = make_node_ids(2);
 
-        module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(100.0) });
-        module.add_consumer(net, nodes[1], PowerConsumer { demand: fixed(100.0) });
+        module.add_producer(
+            net,
+            nodes[0],
+            PowerProducer {
+                capacity: fixed(100.0),
+            },
+        );
+        module.add_consumer(
+            net,
+            nodes[1],
+            PowerConsumer {
+                demand: fixed(100.0),
+            },
+        );
 
         let events = module.tick(1);
 
@@ -601,8 +613,20 @@ mod tests {
         let net = module.create_network();
         let nodes = make_node_ids(2);
 
-        module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(200.0) });
-        module.add_consumer(net, nodes[1], PowerConsumer { demand: fixed(50.0) });
+        module.add_producer(
+            net,
+            nodes[0],
+            PowerProducer {
+                capacity: fixed(200.0),
+            },
+        );
+        module.add_consumer(
+            net,
+            nodes[1],
+            PowerConsumer {
+                demand: fixed(50.0),
+            },
+        );
 
         let events = module.tick(1);
 
@@ -619,8 +643,20 @@ mod tests {
         let net = module.create_network();
         let nodes = make_node_ids(2);
 
-        module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(50.0) });
-        module.add_consumer(net, nodes[1], PowerConsumer { demand: fixed(100.0) });
+        module.add_producer(
+            net,
+            nodes[0],
+            PowerProducer {
+                capacity: fixed(50.0),
+            },
+        );
+        module.add_consumer(
+            net,
+            nodes[1],
+            PowerConsumer {
+                demand: fixed(100.0),
+            },
+        );
 
         let events = module.tick(1);
 
@@ -632,7 +668,11 @@ mod tests {
         // Should emit brownout event.
         assert_eq!(events.len(), 1);
         match &events[0] {
-            PowerEvent::PowerGridBrownout { network_id, deficit, tick } => {
+            PowerEvent::PowerGridBrownout {
+                network_id,
+                deficit,
+                tick,
+            } => {
                 assert_eq!(*network_id, net);
                 assert_eq!(*deficit, fixed(50.0));
                 assert_eq!(*tick, 1);
@@ -650,7 +690,13 @@ mod tests {
         let net = module.create_network();
         let node = make_node_id();
 
-        module.add_producer(net, node, PowerProducer { capacity: fixed(100.0) });
+        module.add_producer(
+            net,
+            node,
+            PowerProducer {
+                capacity: fixed(100.0),
+            },
+        );
         // No consumers.
 
         let events = module.tick(1);
@@ -682,8 +728,20 @@ mod tests {
         let net = module.create_network();
         let nodes = make_node_ids(3);
 
-        module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(150.0) });
-        module.add_consumer(net, nodes[1], PowerConsumer { demand: fixed(100.0) });
+        module.add_producer(
+            net,
+            nodes[0],
+            PowerProducer {
+                capacity: fixed(150.0),
+            },
+        );
+        module.add_consumer(
+            net,
+            nodes[1],
+            PowerConsumer {
+                demand: fixed(100.0),
+            },
+        );
         module.add_storage(
             net,
             nodes[2],
@@ -713,8 +771,20 @@ mod tests {
         let net = module.create_network();
         let nodes = make_node_ids(3);
 
-        module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(50.0) });
-        module.add_consumer(net, nodes[1], PowerConsumer { demand: fixed(100.0) });
+        module.add_producer(
+            net,
+            nodes[0],
+            PowerProducer {
+                capacity: fixed(50.0),
+            },
+        );
+        module.add_consumer(
+            net,
+            nodes[1],
+            PowerConsumer {
+                demand: fixed(100.0),
+            },
+        );
         module.add_storage(
             net,
             nodes[2],
@@ -745,8 +815,20 @@ mod tests {
         let net = module.create_network();
         let nodes = make_node_ids(3);
 
-        module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(30.0) });
-        module.add_consumer(net, nodes[1], PowerConsumer { demand: fixed(100.0) });
+        module.add_producer(
+            net,
+            nodes[0],
+            PowerProducer {
+                capacity: fixed(30.0),
+            },
+        );
+        module.add_consumer(
+            net,
+            nodes[1],
+            PowerConsumer {
+                demand: fixed(100.0),
+            },
+        );
         module.add_storage(
             net,
             nodes[2],
@@ -782,8 +864,20 @@ mod tests {
         let net = module.create_network();
         let nodes = make_node_ids(2);
 
-        module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(50.0) });
-        module.add_consumer(net, nodes[1], PowerConsumer { demand: fixed(100.0) });
+        module.add_producer(
+            net,
+            nodes[0],
+            PowerProducer {
+                capacity: fixed(50.0),
+            },
+        );
+        module.add_consumer(
+            net,
+            nodes[1],
+            PowerConsumer {
+                demand: fixed(100.0),
+            },
+        );
 
         // Tick 1: transition to brownout -> event.
         let events = module.tick(1);
@@ -809,8 +903,20 @@ mod tests {
         let nodes = make_node_ids(3);
 
         // Start underpowered.
-        module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(50.0) });
-        module.add_consumer(net, nodes[1], PowerConsumer { demand: fixed(100.0) });
+        module.add_producer(
+            net,
+            nodes[0],
+            PowerProducer {
+                capacity: fixed(50.0),
+            },
+        );
+        module.add_consumer(
+            net,
+            nodes[1],
+            PowerConsumer {
+                demand: fixed(100.0),
+            },
+        );
 
         // Tick 1: brownout.
         let events = module.tick(1);
@@ -818,7 +924,13 @@ mod tests {
         assert!(matches!(events[0], PowerEvent::PowerGridBrownout { .. }));
 
         // Add another producer to meet demand.
-        module.add_producer(net, nodes[2], PowerProducer { capacity: fixed(50.0) });
+        module.add_producer(
+            net,
+            nodes[2],
+            PowerProducer {
+                capacity: fixed(50.0),
+            },
+        );
 
         // Tick 2: restored.
         let events = module.tick(2);
@@ -847,12 +959,36 @@ mod tests {
         let nodes = make_node_ids(4);
 
         // Network A: balanced.
-        module.add_producer(net_a, nodes[0], PowerProducer { capacity: fixed(100.0) });
-        module.add_consumer(net_a, nodes[1], PowerConsumer { demand: fixed(100.0) });
+        module.add_producer(
+            net_a,
+            nodes[0],
+            PowerProducer {
+                capacity: fixed(100.0),
+            },
+        );
+        module.add_consumer(
+            net_a,
+            nodes[1],
+            PowerConsumer {
+                demand: fixed(100.0),
+            },
+        );
 
         // Network B: underpowered.
-        module.add_producer(net_b, nodes[2], PowerProducer { capacity: fixed(25.0) });
-        module.add_consumer(net_b, nodes[3], PowerConsumer { demand: fixed(100.0) });
+        module.add_producer(
+            net_b,
+            nodes[2],
+            PowerProducer {
+                capacity: fixed(25.0),
+            },
+        );
+        module.add_consumer(
+            net_b,
+            nodes[3],
+            PowerConsumer {
+                demand: fixed(100.0),
+            },
+        );
 
         let events = module.tick(1);
 
@@ -883,7 +1019,13 @@ mod tests {
         let nodes = make_node_ids(2);
 
         // 200 excess production, but storage can only charge at 30/tick.
-        module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(200.0) });
+        module.add_producer(
+            net,
+            nodes[0],
+            PowerProducer {
+                capacity: fixed(200.0),
+            },
+        );
         module.add_storage(
             net,
             nodes[1],
@@ -910,7 +1052,13 @@ mod tests {
         let nodes = make_node_ids(2);
 
         // 100 demand, 0 production, storage has plenty but rate-limited to 40/tick.
-        module.add_consumer(net, nodes[0], PowerConsumer { demand: fixed(100.0) });
+        module.add_consumer(
+            net,
+            nodes[0],
+            PowerConsumer {
+                demand: fixed(100.0),
+            },
+        );
         module.add_storage(
             net,
             nodes[1],
@@ -945,7 +1093,13 @@ mod tests {
         let nodes = make_node_ids(2);
 
         // 100 excess, storage almost full.
-        module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(100.0) });
+        module.add_producer(
+            net,
+            nodes[0],
+            PowerProducer {
+                capacity: fixed(100.0),
+            },
+        );
         module.add_storage(
             net,
             nodes[1],
@@ -972,7 +1126,13 @@ mod tests {
         let net = module.create_network();
         let nodes = make_node_ids(2);
 
-        module.add_consumer(net, nodes[0], PowerConsumer { demand: fixed(100.0) });
+        module.add_consumer(
+            net,
+            nodes[0],
+            PowerConsumer {
+                demand: fixed(100.0),
+            },
+        );
         module.add_storage(
             net,
             nodes[1],
@@ -1003,10 +1163,34 @@ mod tests {
         let net = module.create_network();
         let nodes = make_node_ids(4);
 
-        module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(30.0) });
-        module.add_producer(net, nodes[1], PowerProducer { capacity: fixed(40.0) });
-        module.add_producer(net, nodes[2], PowerProducer { capacity: fixed(30.0) });
-        module.add_consumer(net, nodes[3], PowerConsumer { demand: fixed(100.0) });
+        module.add_producer(
+            net,
+            nodes[0],
+            PowerProducer {
+                capacity: fixed(30.0),
+            },
+        );
+        module.add_producer(
+            net,
+            nodes[1],
+            PowerProducer {
+                capacity: fixed(40.0),
+            },
+        );
+        module.add_producer(
+            net,
+            nodes[2],
+            PowerProducer {
+                capacity: fixed(30.0),
+            },
+        );
+        module.add_consumer(
+            net,
+            nodes[3],
+            PowerConsumer {
+                demand: fixed(100.0),
+            },
+        );
 
         let events = module.tick(1);
 
@@ -1023,10 +1207,34 @@ mod tests {
         let net = module.create_network();
         let nodes = make_node_ids(4);
 
-        module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(100.0) });
-        module.add_consumer(net, nodes[1], PowerConsumer { demand: fixed(40.0) });
-        module.add_consumer(net, nodes[2], PowerConsumer { demand: fixed(30.0) });
-        module.add_consumer(net, nodes[3], PowerConsumer { demand: fixed(30.0) });
+        module.add_producer(
+            net,
+            nodes[0],
+            PowerProducer {
+                capacity: fixed(100.0),
+            },
+        );
+        module.add_consumer(
+            net,
+            nodes[1],
+            PowerConsumer {
+                demand: fixed(40.0),
+            },
+        );
+        module.add_consumer(
+            net,
+            nodes[2],
+            PowerConsumer {
+                demand: fixed(30.0),
+            },
+        );
+        module.add_consumer(
+            net,
+            nodes[3],
+            PowerConsumer {
+                demand: fixed(30.0),
+            },
+        );
 
         let events = module.tick(1);
 
@@ -1044,7 +1252,13 @@ mod tests {
         let nodes = make_node_ids(3);
 
         // 100 excess, two storage nodes each with rate 60.
-        module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(100.0) });
+        module.add_producer(
+            net,
+            nodes[0],
+            PowerProducer {
+                capacity: fixed(100.0),
+            },
+        );
         module.add_storage(
             net,
             nodes[1],
@@ -1083,8 +1297,20 @@ mod tests {
         let net = module.create_network();
         let nodes = make_node_ids(3);
 
-        module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(100.0) });
-        module.add_consumer(net, nodes[1], PowerConsumer { demand: fixed(50.0) });
+        module.add_producer(
+            net,
+            nodes[0],
+            PowerProducer {
+                capacity: fixed(100.0),
+            },
+        );
+        module.add_consumer(
+            net,
+            nodes[1],
+            PowerConsumer {
+                demand: fixed(50.0),
+            },
+        );
         module.add_storage(
             net,
             nodes[2],
@@ -1125,8 +1351,20 @@ mod tests {
         let nodes = make_node_ids(3);
 
         // Production=30, storage discharge=20, demand=100, deficit=50.
-        module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(30.0) });
-        module.add_consumer(net, nodes[1], PowerConsumer { demand: fixed(100.0) });
+        module.add_producer(
+            net,
+            nodes[0],
+            PowerProducer {
+                capacity: fixed(30.0),
+            },
+        );
+        module.add_consumer(
+            net,
+            nodes[1],
+            PowerConsumer {
+                demand: fixed(100.0),
+            },
+        );
         module.add_storage(
             net,
             nodes[2],
@@ -1157,8 +1395,20 @@ mod tests {
         let net = module.create_network();
         let nodes = make_node_ids(3);
 
-        module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(50.0) });
-        module.add_consumer(net, nodes[1], PowerConsumer { demand: fixed(100.0) });
+        module.add_producer(
+            net,
+            nodes[0],
+            PowerProducer {
+                capacity: fixed(50.0),
+            },
+        );
+        module.add_consumer(
+            net,
+            nodes[1],
+            PowerConsumer {
+                demand: fixed(100.0),
+            },
+        );
 
         // Tick 1: brownout.
         let events = module.tick(1);
@@ -1171,7 +1421,13 @@ mod tests {
         assert!(events.is_empty());
 
         // Add producer to meet demand.
-        module.add_producer(net, nodes[2], PowerProducer { capacity: fixed(50.0) });
+        module.add_producer(
+            net,
+            nodes[2],
+            PowerProducer {
+                capacity: fixed(50.0),
+            },
+        );
 
         // Tick 3: restored.
         let events = module.tick(3);
@@ -1193,8 +1449,20 @@ mod tests {
         let net = module.create_network();
         let nodes = make_node_ids(3);
 
-        module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(150.0) });
-        module.add_consumer(net, nodes[1], PowerConsumer { demand: fixed(100.0) });
+        module.add_producer(
+            net,
+            nodes[0],
+            PowerProducer {
+                capacity: fixed(150.0),
+            },
+        );
+        module.add_consumer(
+            net,
+            nodes[1],
+            PowerConsumer {
+                demand: fixed(100.0),
+            },
+        );
         module.add_storage(
             net,
             nodes[2],
@@ -1276,9 +1544,21 @@ mod tests {
         let net = module.create_network();
         let node = make_node_id();
 
-        module.add_producer(net, node, PowerProducer { capacity: fixed(100.0) });
+        module.add_producer(
+            net,
+            node,
+            PowerProducer {
+                capacity: fixed(100.0),
+            },
+        );
         // Adding same node again should not duplicate.
-        module.add_producer(net, node, PowerProducer { capacity: fixed(200.0) });
+        module.add_producer(
+            net,
+            node,
+            PowerProducer {
+                capacity: fixed(200.0),
+            },
+        );
 
         let network = module.network(net).unwrap();
         assert_eq!(network.producers.len(), 1);
@@ -1296,7 +1576,13 @@ mod tests {
         let net = module.create_network();
         let node = make_node_id();
 
-        module.add_consumer(net, node, PowerConsumer { demand: fixed(100.0) });
+        module.add_consumer(
+            net,
+            node,
+            PowerConsumer {
+                demand: fixed(100.0),
+            },
+        );
 
         let events = module.tick(1);
 
@@ -1338,7 +1624,13 @@ mod tests {
         let nodes = make_node_ids(3);
 
         // 0 production, 50 demand, storage has 500 with rate 100.
-        module.add_consumer(net, nodes[0], PowerConsumer { demand: fixed(50.0) });
+        module.add_consumer(
+            net,
+            nodes[0],
+            PowerConsumer {
+                demand: fixed(50.0),
+            },
+        );
         module.add_storage(
             net,
             nodes[1],
@@ -1368,11 +1660,41 @@ mod tests {
             let mut module = PowerModule::new();
             let net = module.create_network();
             let nodes = make_node_ids(5);
-            module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(50.0) });
-            module.add_consumer(net, nodes[1], PowerConsumer { demand: fixed(25.0) });
-            module.add_consumer(net, nodes[2], PowerConsumer { demand: fixed(25.0) });
-            module.add_consumer(net, nodes[3], PowerConsumer { demand: fixed(25.0) });
-            module.add_consumer(net, nodes[4], PowerConsumer { demand: fixed(25.0) });
+            module.add_producer(
+                net,
+                nodes[0],
+                PowerProducer {
+                    capacity: fixed(50.0),
+                },
+            );
+            module.add_consumer(
+                net,
+                nodes[1],
+                PowerConsumer {
+                    demand: fixed(25.0),
+                },
+            );
+            module.add_consumer(
+                net,
+                nodes[2],
+                PowerConsumer {
+                    demand: fixed(25.0),
+                },
+            );
+            module.add_consumer(
+                net,
+                nodes[3],
+                PowerConsumer {
+                    demand: fixed(25.0),
+                },
+            );
+            module.add_consumer(
+                net,
+                nodes[4],
+                PowerConsumer {
+                    demand: fixed(25.0),
+                },
+            );
             module.tick(1);
             module.satisfaction(net).unwrap()
         }
@@ -1393,17 +1715,27 @@ mod tests {
         let nodes = make_node_ids(3);
 
         // 100W producer, two 100W consumers: one High, one Low.
-        module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(100.0) });
+        module.add_producer(
+            net,
+            nodes[0],
+            PowerProducer {
+                capacity: fixed(100.0),
+            },
+        );
         module.add_consumer_with_priority(
             net,
             nodes[1],
-            PowerConsumer { demand: fixed(100.0) },
+            PowerConsumer {
+                demand: fixed(100.0),
+            },
             PowerPriority::High,
         );
         module.add_consumer_with_priority(
             net,
             nodes[2],
-            PowerConsumer { demand: fixed(100.0) },
+            PowerConsumer {
+                demand: fixed(100.0),
+            },
             PowerPriority::Low,
         );
 
@@ -1411,11 +1743,19 @@ mod tests {
 
         // High priority consumer should get 100% satisfaction.
         let high_sat = module.get_consumer_satisfaction(net, nodes[1]).unwrap();
-        assert_eq!(high_sat, fixed(1.0), "high priority consumer should be fully satisfied");
+        assert_eq!(
+            high_sat,
+            fixed(1.0),
+            "high priority consumer should be fully satisfied"
+        );
 
         // Low priority consumer should get 0% satisfaction.
         let low_sat = module.get_consumer_satisfaction(net, nodes[2]).unwrap();
-        assert_eq!(low_sat, fixed(0.0), "low priority consumer should get no power");
+        assert_eq!(
+            low_sat,
+            fixed(0.0),
+            "low priority consumer should get no power"
+        );
 
         // Overall network satisfaction = 100 / 200 = 0.5.
         assert_eq!(module.satisfaction(net).unwrap(), fixed(0.5));
@@ -1431,8 +1771,20 @@ mod tests {
         let nodes = make_node_ids(2);
 
         // 100W producer, 200W consumer. Satisfaction = 0.5.
-        module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(100.0) });
-        module.add_consumer(net, nodes[1], PowerConsumer { demand: fixed(200.0) });
+        module.add_producer(
+            net,
+            nodes[0],
+            PowerProducer {
+                capacity: fixed(100.0),
+            },
+        );
+        module.add_consumer(
+            net,
+            nodes[1],
+            PowerConsumer {
+                demand: fixed(200.0),
+            },
+        );
 
         module.tick(1);
         assert_eq!(module.satisfaction(net).unwrap(), fixed(0.5));

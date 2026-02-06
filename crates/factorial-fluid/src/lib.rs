@@ -255,8 +255,7 @@ impl FluidModule {
     pub fn create_network(&mut self, fluid_type: ItemTypeId) -> FluidNetworkId {
         let id = FluidNetworkId(self.next_network_id);
         self.next_network_id += 1;
-        self.networks
-            .insert(id, FluidNetwork::new(id, fluid_type));
+        self.networks.insert(id, FluidNetwork::new(id, fluid_type));
         id
     }
 
@@ -302,12 +301,7 @@ impl FluidModule {
     }
 
     /// Register a storage node and add it to a network.
-    pub fn add_storage(
-        &mut self,
-        network_id: FluidNetworkId,
-        node: NodeId,
-        storage: FluidStorage,
-    ) {
+    pub fn add_storage(&mut self, network_id: FluidNetworkId, node: NodeId, storage: FluidStorage) {
         self.storage.insert(node, storage);
         if let Some(network) = self.networks.get_mut(&network_id) {
             network.add_storage(node);
@@ -315,12 +309,7 @@ impl FluidModule {
     }
 
     /// Register a pipe node and add it to a network.
-    pub fn add_pipe(
-        &mut self,
-        network_id: FluidNetworkId,
-        node: NodeId,
-        pipe: FluidPipe,
-    ) {
+    pub fn add_pipe(&mut self, network_id: FluidNetworkId, node: NodeId, pipe: FluidPipe) {
         self.pipes.insert(node, pipe);
         if let Some(network) = self.networks.get_mut(&network_id) {
             network.add_pipe(node);
@@ -379,7 +368,9 @@ impl FluidModule {
         let network_ids: Vec<FluidNetworkId> = self.networks.keys().copied().collect();
 
         for net_id in network_ids {
-            let Some(network) = self.networks.get(&net_id) else { continue; };
+            let Some(network) = self.networks.get(&net_id) else {
+                continue;
+            };
 
             // Step 1: Sum total production.
             let total_production: Fixed64 = network
@@ -476,12 +467,7 @@ impl FluidModule {
             }
 
             // Record per-consumer consumption for this tick.
-            let consumer_nodes: Vec<NodeId> = self
-                .networks
-                .get(&net_id)
-                .unwrap()
-                .consumers
-                .clone();
+            let consumer_nodes: Vec<NodeId> = self.networks.get(&net_id).unwrap().consumers.clone();
             for &node_id in &consumer_nodes {
                 if let Some(consumer) = self.consumers.get(&node_id) {
                     let consumed = if pressure >= one {
@@ -489,7 +475,8 @@ impl FluidModule {
                     } else {
                         consumer.rate * pressure
                     };
-                    self.consumer_consumption.insert((net_id, node_id), consumed);
+                    self.consumer_consumption
+                        .insert((net_id, node_id), consumed);
                 }
             }
 
@@ -514,7 +501,9 @@ impl FluidModule {
             }
 
             // Update network state.
-            let Some(network) = self.networks.get_mut(&net_id) else { continue; };
+            let Some(network) = self.networks.get_mut(&net_id) else {
+                continue;
+            };
             network.pressure = pressure;
 
             let is_low_pressure = pressure < one;
@@ -617,9 +606,17 @@ mod tests {
         // No transition events on a balanced network.
         let pressure_events: Vec<_> = events
             .iter()
-            .filter(|e| matches!(e, FluidEvent::PressureLow { .. } | FluidEvent::PressureRestored { .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    FluidEvent::PressureLow { .. } | FluidEvent::PressureRestored { .. }
+                )
+            })
             .collect();
-        assert!(pressure_events.is_empty(), "no pressure events on balanced network");
+        assert!(
+            pressure_events.is_empty(),
+            "no pressure events on balanced network"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -639,7 +636,12 @@ mod tests {
         assert_eq!(module.pressure(net), Some(Fixed64::from_num(1)));
         let pressure_events: Vec<_> = events
             .iter()
-            .filter(|e| matches!(e, FluidEvent::PressureLow { .. } | FluidEvent::PressureRestored { .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    FluidEvent::PressureLow { .. } | FluidEvent::PressureRestored { .. }
+                )
+            })
             .collect();
         assert!(pressure_events.is_empty());
     }
@@ -670,7 +672,11 @@ mod tests {
             .collect();
         assert_eq!(low_events.len(), 1);
         match &low_events[0] {
-            FluidEvent::PressureLow { network_id, pressure, tick } => {
+            FluidEvent::PressureLow {
+                network_id,
+                pressure,
+                tick,
+            } => {
                 assert_eq!(*network_id, net);
                 assert_eq!(*pressure, fixed(0.5));
                 assert_eq!(*tick, 1);
@@ -696,7 +702,12 @@ mod tests {
         assert_eq!(module.pressure(net), Some(Fixed64::from_num(1)));
         let pressure_events: Vec<_> = events
             .iter()
-            .filter(|e| matches!(e, FluidEvent::PressureLow { .. } | FluidEvent::PressureRestored { .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    FluidEvent::PressureLow { .. } | FluidEvent::PressureRestored { .. }
+                )
+            })
             .collect();
         assert!(pressure_events.is_empty());
     }
@@ -843,7 +854,12 @@ mod tests {
         assert_eq!(module.pressure(net), Some(Fixed64::from_num(1)));
         let pressure_events: Vec<_> = events
             .iter()
-            .filter(|e| matches!(e, FluidEvent::PressureLow { .. } | FluidEvent::PressureRestored { .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    FluidEvent::PressureLow { .. } | FluidEvent::PressureRestored { .. }
+                )
+            })
             .collect();
         assert!(pressure_events.is_empty());
 
@@ -1001,7 +1017,10 @@ mod tests {
             .iter()
             .filter(|e| matches!(e, FluidEvent::PressureLow { .. }))
             .collect();
-        assert!(low_events.is_empty(), "no event when already in low pressure");
+        assert!(
+            low_events.is_empty(),
+            "no event when already in low pressure"
+        );
 
         // Tick 3: still low pressure -> NO event.
         let events = module.tick(3);
@@ -1027,7 +1046,11 @@ mod tests {
 
         // Tick 1: low pressure.
         let events = module.tick(1);
-        assert!(events.iter().any(|e| matches!(e, FluidEvent::PressureLow { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, FluidEvent::PressureLow { .. }))
+        );
 
         // Add another producer to meet demand.
         module.add_producer(net, nodes[2], FluidProducer { rate: fixed(50.0) });
@@ -1051,7 +1074,12 @@ mod tests {
         let events = module.tick(3);
         let pressure_events: Vec<_> = events
             .iter()
-            .filter(|e| matches!(e, FluidEvent::PressureLow { .. } | FluidEvent::PressureRestored { .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    FluidEvent::PressureLow { .. } | FluidEvent::PressureRestored { .. }
+                )
+            })
             .collect();
         assert!(pressure_events.is_empty());
     }
@@ -1088,7 +1116,11 @@ mod tests {
             .collect();
         assert_eq!(full_events.len(), 1);
         match full_events[0] {
-            FluidEvent::StorageFull { network_id, node, tick } => {
+            FluidEvent::StorageFull {
+                network_id,
+                node,
+                tick,
+            } => {
                 assert_eq!(*network_id, net);
                 assert_eq!(*node, nodes[1]);
                 assert_eq!(*tick, 1);
@@ -1129,7 +1161,11 @@ mod tests {
             .collect();
         assert_eq!(empty_events.len(), 1);
         match empty_events[0] {
-            FluidEvent::StorageEmpty { network_id, node, tick } => {
+            FluidEvent::StorageEmpty {
+                network_id,
+                node,
+                tick,
+            } => {
                 assert_eq!(*network_id, net);
                 assert_eq!(*node, nodes[1]);
                 assert_eq!(*tick, 1);
@@ -1199,7 +1235,13 @@ mod tests {
                 fill_rate: fixed(10.0),
             },
         );
-        module.add_pipe(net, nodes[3], FluidPipe { capacity: fixed(200.0) });
+        module.add_pipe(
+            net,
+            nodes[3],
+            FluidPipe {
+                capacity: fixed(200.0),
+            },
+        );
 
         // Remove consumer.
         module.remove_node(nodes[1]);
@@ -1250,11 +1292,41 @@ mod tests {
             let mut module = FluidModule::new();
             let net = module.create_network(ItemTypeId(0));
             let nodes = make_node_ids(5);
-            module.add_producer(net, nodes[0], FluidProducer { rate: Fixed64::from_num(50) });
-            module.add_consumer(net, nodes[1], FluidConsumer { rate: Fixed64::from_num(25) });
-            module.add_consumer(net, nodes[2], FluidConsumer { rate: Fixed64::from_num(25) });
-            module.add_consumer(net, nodes[3], FluidConsumer { rate: Fixed64::from_num(25) });
-            module.add_consumer(net, nodes[4], FluidConsumer { rate: Fixed64::from_num(25) });
+            module.add_producer(
+                net,
+                nodes[0],
+                FluidProducer {
+                    rate: Fixed64::from_num(50),
+                },
+            );
+            module.add_consumer(
+                net,
+                nodes[1],
+                FluidConsumer {
+                    rate: Fixed64::from_num(25),
+                },
+            );
+            module.add_consumer(
+                net,
+                nodes[2],
+                FluidConsumer {
+                    rate: Fixed64::from_num(25),
+                },
+            );
+            module.add_consumer(
+                net,
+                nodes[3],
+                FluidConsumer {
+                    rate: Fixed64::from_num(25),
+                },
+            );
+            module.add_consumer(
+                net,
+                nodes[4],
+                FluidConsumer {
+                    rate: Fixed64::from_num(25),
+                },
+            );
             module.tick(1);
             module.pressure(net).unwrap()
         }
@@ -1262,7 +1334,11 @@ mod tests {
         let p1 = run();
         let p2 = run();
         assert_eq!(p1, p2, "pressure should be deterministic");
-        assert_eq!(p1, Fixed64::from_num(50) / Fixed64::from_num(100), "50/100 = 0.5");
+        assert_eq!(
+            p1,
+            Fixed64::from_num(50) / Fixed64::from_num(100),
+            "50/100 = 0.5"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1340,14 +1416,23 @@ mod tests {
 
         // Tick 1: low pressure.
         let events = module.tick(1);
-        assert!(events.iter().any(|e| matches!(e, FluidEvent::PressureLow { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, FluidEvent::PressureLow { .. }))
+        );
         assert_eq!(module.pressure(net).unwrap(), fixed(0.5));
 
         // Tick 2: still low pressure, no event.
         let events = module.tick(2);
         let pressure_events: Vec<_> = events
             .iter()
-            .filter(|e| matches!(e, FluidEvent::PressureLow { .. } | FluidEvent::PressureRestored { .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    FluidEvent::PressureLow { .. } | FluidEvent::PressureRestored { .. }
+                )
+            })
             .collect();
         assert!(pressure_events.is_empty());
 
@@ -1356,14 +1441,23 @@ mod tests {
 
         // Tick 3: restored.
         let events = module.tick(3);
-        assert!(events.iter().any(|e| matches!(e, FluidEvent::PressureRestored { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, FluidEvent::PressureRestored { .. }))
+        );
         assert_eq!(module.pressure(net), Some(Fixed64::from_num(1)));
 
         // Tick 4: still satisfied, no event.
         let events = module.tick(4);
         let pressure_events: Vec<_> = events
             .iter()
-            .filter(|e| matches!(e, FluidEvent::PressureLow { .. } | FluidEvent::PressureRestored { .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    FluidEvent::PressureLow { .. } | FluidEvent::PressureRestored { .. }
+                )
+            })
             .collect();
         assert!(pressure_events.is_empty());
     }
@@ -1418,7 +1512,11 @@ mod tests {
         let expected = Fixed64::from_num(80) / Fixed64::from_num(100);
         assert_eq!(pressure, expected);
         assert_eq!(module.storage.get(&nodes[2]).unwrap().current, fixed(0.0));
-        assert!(events.iter().any(|e| matches!(e, FluidEvent::PressureLow { .. })));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, FluidEvent::PressureLow { .. }))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1470,7 +1568,13 @@ mod tests {
         let net = module.create_network(water());
         let node = make_node_id();
 
-        module.add_pipe(net, node, FluidPipe { capacity: fixed(500.0) });
+        module.add_pipe(
+            net,
+            node,
+            FluidPipe {
+                capacity: fixed(500.0),
+            },
+        );
 
         assert!(module.pipes.contains_key(&node));
         let network = module.network(net).unwrap();
@@ -1514,7 +1618,12 @@ mod tests {
         assert_eq!(module.pressure(net), Some(Fixed64::from_num(1)));
         let pressure_events: Vec<_> = events
             .iter()
-            .filter(|e| matches!(e, FluidEvent::PressureLow { .. } | FluidEvent::PressureRestored { .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    FluidEvent::PressureLow { .. } | FluidEvent::PressureRestored { .. }
+                )
+            })
             .collect();
         assert!(pressure_events.is_empty());
     }
@@ -1538,7 +1647,12 @@ mod tests {
         assert_eq!(module.pressure(net), Some(Fixed64::from_num(1)));
         let pressure_events: Vec<_> = events
             .iter()
-            .filter(|e| matches!(e, FluidEvent::PressureLow { .. } | FluidEvent::PressureRestored { .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    FluidEvent::PressureLow { .. } | FluidEvent::PressureRestored { .. }
+                )
+            })
             .collect();
         assert!(pressure_events.is_empty());
     }
@@ -1555,25 +1669,23 @@ mod tests {
         let consumer = make_node_id();
 
         // Consumer wants water from the water network.
-        module.add_consumer(
-            water_net,
-            consumer,
-            FluidConsumer {
-                rate: fixed(10.0),
-            },
-        );
+        module.add_consumer(water_net, consumer, FluidConsumer { rate: fixed(10.0) });
 
         // Verify consumer is on the water network, not the steam network.
-        assert!(module
-            .network(water_net)
-            .unwrap()
-            .consumers
-            .contains(&consumer));
-        assert!(!module
-            .network(steam_net)
-            .unwrap()
-            .consumers
-            .contains(&consumer));
+        assert!(
+            module
+                .network(water_net)
+                .unwrap()
+                .consumers
+                .contains(&consumer)
+        );
+        assert!(
+            !module
+                .network(steam_net)
+                .unwrap()
+                .consumers
+                .contains(&consumer)
+        );
 
         // Verify the water network carries water type.
         assert_eq!(module.network(water_net).unwrap().fluid_type, water());
@@ -1591,42 +1703,14 @@ mod tests {
         let node = make_node_id();
 
         // Node produces steam and consumes water.
-        module.add_producer(
-            steam_net,
-            node,
-            FluidProducer {
-                rate: fixed(5.0),
-            },
-        );
-        module.add_consumer(
-            water_net,
-            node,
-            FluidConsumer {
-                rate: fixed(10.0),
-            },
-        );
+        module.add_producer(steam_net, node, FluidProducer { rate: fixed(5.0) });
+        module.add_consumer(water_net, node, FluidConsumer { rate: fixed(10.0) });
 
         // Node should be on both networks with correct roles.
-        assert!(module
-            .network(steam_net)
-            .unwrap()
-            .producers
-            .contains(&node));
-        assert!(!module
-            .network(steam_net)
-            .unwrap()
-            .consumers
-            .contains(&node));
-        assert!(module
-            .network(water_net)
-            .unwrap()
-            .consumers
-            .contains(&node));
-        assert!(!module
-            .network(water_net)
-            .unwrap()
-            .producers
-            .contains(&node));
+        assert!(module.network(steam_net).unwrap().producers.contains(&node));
+        assert!(!module.network(steam_net).unwrap().consumers.contains(&node));
+        assert!(module.network(water_net).unwrap().consumers.contains(&node));
+        assert!(!module.network(water_net).unwrap().producers.contains(&node));
 
         // Tick to verify both networks work independently with the shared node.
         // Add a consumer for steam and a producer for water so networks are balanced.
@@ -1634,16 +1718,12 @@ mod tests {
         module.add_consumer(
             steam_net,
             other_nodes[0],
-            FluidConsumer {
-                rate: fixed(5.0),
-            },
+            FluidConsumer { rate: fixed(5.0) },
         );
         module.add_producer(
             water_net,
             other_nodes[1],
-            FluidProducer {
-                rate: fixed(10.0),
-            },
+            FluidProducer { rate: fixed(10.0) },
         );
 
         let events = module.tick(1);

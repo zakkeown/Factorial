@@ -18,17 +18,43 @@ use crate::transport::Transport;
 /// A command that can be recorded and replayed.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum ReplayCommand {
-    Advance { dt: u64 },
+    Advance {
+        dt: u64,
+    },
     Step,
-    QueueAddNode { building_type: BuildingTypeId },
-    QueueRemoveNode { node: NodeId },
-    QueueConnect { from: NodeId, to: NodeId },
-    QueueDisconnect { edge: EdgeId },
-    SetProcessor { node: NodeId, processor: Processor },
-    SetInputInventory { node: NodeId, inventory: Inventory },
-    SetOutputInventory { node: NodeId, inventory: Inventory },
-    SetModifiers { node: NodeId, modifiers: Vec<Modifier> },
-    SetTransport { edge: EdgeId, transport: Transport },
+    QueueAddNode {
+        building_type: BuildingTypeId,
+    },
+    QueueRemoveNode {
+        node: NodeId,
+    },
+    QueueConnect {
+        from: NodeId,
+        to: NodeId,
+    },
+    QueueDisconnect {
+        edge: EdgeId,
+    },
+    SetProcessor {
+        node: NodeId,
+        processor: Processor,
+    },
+    SetInputInventory {
+        node: NodeId,
+        inventory: Inventory,
+    },
+    SetOutputInventory {
+        node: NodeId,
+        inventory: Inventory,
+    },
+    SetModifiers {
+        node: NodeId,
+        modifiers: Vec<Modifier>,
+    },
+    SetTransport {
+        edge: EdgeId,
+        transport: Transport,
+    },
     ApplyMutations,
 }
 

@@ -1,6 +1,6 @@
 //! Criterion benchmarks for the blueprint system.
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use factorial_core::engine::Engine;
 use factorial_core::sim::SimulationStrategy;
 use factorial_core::test_utils::*;

@@ -328,7 +328,14 @@ impl std::fmt::Debug for SubscriberEntry {
         f.debug_struct("SubscriberEntry")
             .field("subscriber", &self.subscriber)
             .field("priority", &self.priority)
-            .field("filter", &if self.filter.is_some() { "Some(<fn>)" } else { "None" })
+            .field(
+                "filter",
+                &if self.filter.is_some() {
+                    "Some(<fn>)"
+                } else {
+                    "None"
+                },
+            )
             .field("insertion_order", &self.insertion_order)
             .finish()
     }
@@ -1246,7 +1253,9 @@ mod tests {
             EventKind::ItemProduced,
             SubscriberPriority::Normal,
             None,
-            Box::new(move |_| { o1.borrow_mut().push("normal"); }),
+            Box::new(move |_| {
+                o1.borrow_mut().push("normal");
+            }),
         );
 
         let o2 = order.clone();
@@ -1254,10 +1263,17 @@ mod tests {
             EventKind::ItemProduced,
             SubscriberPriority::Pre,
             None,
-            Box::new(move |_| { o2.borrow_mut().push("pre"); }),
+            Box::new(move |_| {
+                o2.borrow_mut().push("pre");
+            }),
         );
 
-        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 1, tick: 0 });
+        bus.emit(Event::ItemProduced {
+            node,
+            item_type: iron(),
+            quantity: 1,
+            tick: 0,
+        });
         bus.deliver();
 
         assert_eq!(*order.borrow(), vec!["pre", "normal"]);
@@ -1277,7 +1293,9 @@ mod tests {
             EventKind::ItemProduced,
             SubscriberPriority::Post,
             None,
-            Box::new(move |_| { o1.borrow_mut().push("post"); }),
+            Box::new(move |_| {
+                o1.borrow_mut().push("post");
+            }),
         );
 
         let o2 = order.clone();
@@ -1285,10 +1303,17 @@ mod tests {
             EventKind::ItemProduced,
             SubscriberPriority::Normal,
             None,
-            Box::new(move |_| { o2.borrow_mut().push("normal"); }),
+            Box::new(move |_| {
+                o2.borrow_mut().push("normal");
+            }),
         );
 
-        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 1, tick: 0 });
+        bus.emit(Event::ItemProduced {
+            node,
+            item_type: iron(),
+            quantity: 1,
+            tick: 0,
+        });
         bus.deliver();
 
         assert_eq!(*order.borrow(), vec!["normal", "post"]);
@@ -1304,16 +1329,39 @@ mod tests {
         let order = Rc::new(RefCell::new(Vec::new()));
 
         let o1 = order.clone();
-        bus.on_passive_filtered(EventKind::ItemProduced, SubscriberPriority::Post, None,
-            Box::new(move |_| { o1.borrow_mut().push("post"); }));
+        bus.on_passive_filtered(
+            EventKind::ItemProduced,
+            SubscriberPriority::Post,
+            None,
+            Box::new(move |_| {
+                o1.borrow_mut().push("post");
+            }),
+        );
         let o2 = order.clone();
-        bus.on_passive_filtered(EventKind::ItemProduced, SubscriberPriority::Pre, None,
-            Box::new(move |_| { o2.borrow_mut().push("pre"); }));
+        bus.on_passive_filtered(
+            EventKind::ItemProduced,
+            SubscriberPriority::Pre,
+            None,
+            Box::new(move |_| {
+                o2.borrow_mut().push("pre");
+            }),
+        );
         let o3 = order.clone();
-        bus.on_passive_filtered(EventKind::ItemProduced, SubscriberPriority::Normal, None,
-            Box::new(move |_| { o3.borrow_mut().push("normal"); }));
+        bus.on_passive_filtered(
+            EventKind::ItemProduced,
+            SubscriberPriority::Normal,
+            None,
+            Box::new(move |_| {
+                o3.borrow_mut().push("normal");
+            }),
+        );
 
-        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 1, tick: 0 });
+        bus.emit(Event::ItemProduced {
+            node,
+            item_type: iron(),
+            quantity: 1,
+            tick: 0,
+        });
         bus.deliver();
 
         assert_eq!(*order.borrow(), vec!["pre", "normal", "post"]);
@@ -1332,12 +1380,26 @@ mod tests {
         bus.on_passive_filtered(
             EventKind::ItemProduced,
             SubscriberPriority::Normal,
-            Some(Box::new(|e| matches!(e, Event::ItemProduced { quantity, .. } if *quantity > 5))),
-            Box::new(move |_| { *cc.borrow_mut() += 1; }),
+            Some(Box::new(
+                |e| matches!(e, Event::ItemProduced { quantity, .. } if *quantity > 5),
+            )),
+            Box::new(move |_| {
+                *cc.borrow_mut() += 1;
+            }),
         );
 
-        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 3, tick: 0 });
-        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 10, tick: 1 });
+        bus.emit(Event::ItemProduced {
+            node,
+            item_type: iron(),
+            quantity: 3,
+            tick: 0,
+        });
+        bus.emit(Event::ItemProduced {
+            node,
+            item_type: iron(),
+            quantity: 10,
+            tick: 1,
+        });
         bus.deliver();
 
         assert_eq!(*count.borrow(), 1);
@@ -1357,10 +1419,17 @@ mod tests {
             EventKind::ItemProduced,
             SubscriberPriority::Normal,
             Some(Box::new(|_| false)),
-            Box::new(move |_| { *cc.borrow_mut() += 1; }),
+            Box::new(move |_| {
+                *cc.borrow_mut() += 1;
+            }),
         );
 
-        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 1, tick: 0 });
+        bus.emit(Event::ItemProduced {
+            node,
+            item_type: iron(),
+            quantity: 1,
+            tick: 0,
+        });
         bus.deliver();
 
         assert_eq!(*count.borrow(), 0);
@@ -1380,11 +1449,23 @@ mod tests {
             EventKind::ItemProduced,
             SubscriberPriority::Normal,
             None,
-            Box::new(move |_| { *cc.borrow_mut() += 1; }),
+            Box::new(move |_| {
+                *cc.borrow_mut() += 1;
+            }),
         );
 
-        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 1, tick: 0 });
-        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 2, tick: 1 });
+        bus.emit(Event::ItemProduced {
+            node,
+            item_type: iron(),
+            quantity: 1,
+            tick: 0,
+        });
+        bus.emit(Event::ItemProduced {
+            node,
+            item_type: iron(),
+            quantity: 2,
+            tick: 1,
+        });
         bus.deliver();
 
         assert_eq!(*count.borrow(), 2);
@@ -1400,9 +1481,19 @@ mod tests {
         let count = Rc::new(RefCell::new(0u32));
 
         let cc = count.clone();
-        bus.on_passive(EventKind::ItemProduced, Box::new(move |_| { *cc.borrow_mut() += 1; }));
+        bus.on_passive(
+            EventKind::ItemProduced,
+            Box::new(move |_| {
+                *cc.borrow_mut() += 1;
+            }),
+        );
 
-        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 1, tick: 0 });
+        bus.emit(Event::ItemProduced {
+            node,
+            item_type: iron(),
+            quantity: 1,
+            tick: 0,
+        });
         bus.deliver();
 
         assert_eq!(*count.borrow(), 1);
@@ -1416,13 +1507,16 @@ mod tests {
         let mut bus = EventBus::new(16);
         let node = make_node_id();
 
-        bus.on_reactive(EventKind::RecipeCompleted, Box::new(|event| {
-            if let Event::RecipeCompleted { node, .. } = event {
-                vec![EventMutation::RemoveNode { node: *node }]
-            } else {
-                vec![]
-            }
-        }));
+        bus.on_reactive(
+            EventKind::RecipeCompleted,
+            Box::new(|event| {
+                if let Event::RecipeCompleted { node, .. } = event {
+                    vec![EventMutation::RemoveNode { node: *node }]
+                } else {
+                    vec![]
+                }
+            }),
+        );
 
         bus.emit(Event::RecipeCompleted { node, tick: 5 });
         bus.deliver();
@@ -1442,27 +1536,54 @@ mod tests {
 
         // Post priority, no filter
         let o1 = order.clone();
-        bus.on_passive_filtered(EventKind::ItemProduced, SubscriberPriority::Post, None,
-            Box::new(move |_| { o1.borrow_mut().push("post"); }));
+        bus.on_passive_filtered(
+            EventKind::ItemProduced,
+            SubscriberPriority::Post,
+            None,
+            Box::new(move |_| {
+                o1.borrow_mut().push("post");
+            }),
+        );
 
         // Pre priority, filter passes
         let o2 = order.clone();
-        bus.on_passive_filtered(EventKind::ItemProduced, SubscriberPriority::Pre,
+        bus.on_passive_filtered(
+            EventKind::ItemProduced,
+            SubscriberPriority::Pre,
             Some(Box::new(|_| true)),
-            Box::new(move |_| { o2.borrow_mut().push("pre-pass"); }));
+            Box::new(move |_| {
+                o2.borrow_mut().push("pre-pass");
+            }),
+        );
 
         // Pre priority, filter blocks
         let o3 = order.clone();
-        bus.on_passive_filtered(EventKind::ItemProduced, SubscriberPriority::Pre,
+        bus.on_passive_filtered(
+            EventKind::ItemProduced,
+            SubscriberPriority::Pre,
             Some(Box::new(|_| false)),
-            Box::new(move |_| { o3.borrow_mut().push("pre-block"); }));
+            Box::new(move |_| {
+                o3.borrow_mut().push("pre-block");
+            }),
+        );
 
         // Normal, no filter
         let o4 = order.clone();
-        bus.on_passive_filtered(EventKind::ItemProduced, SubscriberPriority::Normal, None,
-            Box::new(move |_| { o4.borrow_mut().push("normal"); }));
+        bus.on_passive_filtered(
+            EventKind::ItemProduced,
+            SubscriberPriority::Normal,
+            None,
+            Box::new(move |_| {
+                o4.borrow_mut().push("normal");
+            }),
+        );
 
-        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 1, tick: 0 });
+        bus.emit(Event::ItemProduced {
+            node,
+            item_type: iron(),
+            quantity: 1,
+            tick: 0,
+        });
         bus.deliver();
 
         assert_eq!(*order.borrow(), vec!["pre-pass", "normal", "post"]);
@@ -1478,16 +1599,39 @@ mod tests {
         let order = Rc::new(RefCell::new(Vec::new()));
 
         let o1 = order.clone();
-        bus.on_passive_filtered(EventKind::ItemProduced, SubscriberPriority::Normal, None,
-            Box::new(move |_| { o1.borrow_mut().push('A'); }));
+        bus.on_passive_filtered(
+            EventKind::ItemProduced,
+            SubscriberPriority::Normal,
+            None,
+            Box::new(move |_| {
+                o1.borrow_mut().push('A');
+            }),
+        );
         let o2 = order.clone();
-        bus.on_passive_filtered(EventKind::ItemProduced, SubscriberPriority::Normal, None,
-            Box::new(move |_| { o2.borrow_mut().push('B'); }));
+        bus.on_passive_filtered(
+            EventKind::ItemProduced,
+            SubscriberPriority::Normal,
+            None,
+            Box::new(move |_| {
+                o2.borrow_mut().push('B');
+            }),
+        );
         let o3 = order.clone();
-        bus.on_passive_filtered(EventKind::ItemProduced, SubscriberPriority::Normal, None,
-            Box::new(move |_| { o3.borrow_mut().push('C'); }));
+        bus.on_passive_filtered(
+            EventKind::ItemProduced,
+            SubscriberPriority::Normal,
+            None,
+            Box::new(move |_| {
+                o3.borrow_mut().push('C');
+            }),
+        );
 
-        bus.emit(Event::ItemProduced { node, item_type: iron(), quantity: 1, tick: 0 });
+        bus.emit(Event::ItemProduced {
+            node,
+            item_type: iron(),
+            quantity: 1,
+            tick: 0,
+        });
         bus.deliver();
 
         assert_eq!(*order.borrow(), vec!['A', 'B', 'C']);

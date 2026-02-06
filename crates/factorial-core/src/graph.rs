@@ -1,5 +1,5 @@
 use crate::id::*;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use slotmap::{SecondaryMap, SlotMap};
 use std::collections::VecDeque;
 
@@ -222,8 +222,17 @@ impl ProductionGraph {
     }
 
     /// Connect two nodes immediately with an optional item filter. Returns the assigned `EdgeId`.
-    fn connect_immediate_filtered(&mut self, from: NodeId, to: NodeId, item_filter: Option<ItemTypeId>) -> EdgeId {
-        let edge_id = self.edges.insert(EdgeData { from, to, item_filter });
+    fn connect_immediate_filtered(
+        &mut self,
+        from: NodeId,
+        to: NodeId,
+        item_filter: Option<ItemTypeId>,
+    ) -> EdgeId {
+        let edge_id = self.edges.insert(EdgeData {
+            from,
+            to,
+            item_filter,
+        });
 
         if let Some(adj) = self.adjacency.get_mut(from) {
             adj.outputs.push(edge_id);
@@ -543,11 +552,7 @@ impl ProductionGraph {
             .filter_map(|(eid, edge)| {
                 let from_pos = position.get(edge.from).copied().unwrap_or(0);
                 let to_pos = position.get(edge.to).copied().unwrap_or(0);
-                if to_pos <= from_pos {
-                    Some(eid)
-                } else {
-                    None
-                }
+                if to_pos <= from_pos { Some(eid) } else { None }
             })
             .collect();
 
@@ -627,9 +632,8 @@ mod tests {
         let mut graph = ProductionGraph::new();
         let building = BuildingTypeId(0);
 
-        let pending: Vec<PendingNodeId> = (0..count)
-            .map(|_| graph.queue_add_node(building))
-            .collect();
+        let pending: Vec<PendingNodeId> =
+            (0..count).map(|_| graph.queue_add_node(building)).collect();
 
         let result = graph.apply_mutations();
 
@@ -1039,7 +1043,10 @@ mod tests {
 
         let (order, back_edges) = graph.topological_order_with_feedback();
         assert_eq!(order.len(), 3);
-        assert!(back_edges.is_empty(), "acyclic graph should have no back edges");
+        assert!(
+            back_edges.is_empty(),
+            "acyclic graph should have no back edges"
+        );
     }
 
     #[test]
@@ -1052,8 +1059,15 @@ mod tests {
         graph.apply_mutations();
 
         let (order, back_edges) = graph.topological_order_with_feedback();
-        assert_eq!(order.len(), 3, "all nodes should appear in order even with cycle");
-        assert!(!back_edges.is_empty(), "cyclic graph should have back edges");
+        assert_eq!(
+            order.len(),
+            3,
+            "all nodes should appear in order even with cycle"
+        );
+        assert!(
+            !back_edges.is_empty(),
+            "cyclic graph should have back edges"
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use crate::fixed::{Fixed64, Fixed32, Ticks};
+use crate::fixed::{Fixed32, Fixed64, Ticks};
 use crate::id::*;
 use std::collections::HashMap;
 

@@ -47,38 +47,86 @@ pub fn hydrogen() -> ItemTypeId {
 // ===========================================================================
 
 // Raw resources
-pub fn iron_ore() -> ItemTypeId { ItemTypeId(10) }
-pub fn copper_ore() -> ItemTypeId { ItemTypeId(11) }
-pub fn coal() -> ItemTypeId { ItemTypeId(12) }
-pub fn stone() -> ItemTypeId { ItemTypeId(13) }
-pub fn wood() -> ItemTypeId { ItemTypeId(14) }
-pub fn tungsten_ore() -> ItemTypeId { ItemTypeId(15) }
+pub fn iron_ore() -> ItemTypeId {
+    ItemTypeId(10)
+}
+pub fn copper_ore() -> ItemTypeId {
+    ItemTypeId(11)
+}
+pub fn coal() -> ItemTypeId {
+    ItemTypeId(12)
+}
+pub fn stone() -> ItemTypeId {
+    ItemTypeId(13)
+}
+pub fn wood() -> ItemTypeId {
+    ItemTypeId(14)
+}
+pub fn tungsten_ore() -> ItemTypeId {
+    ItemTypeId(15)
+}
 
 // Tier 1: Furnace/Workshop products
-pub fn iron_ingot() -> ItemTypeId { ItemTypeId(20) }
-pub fn copper_ingot() -> ItemTypeId { ItemTypeId(21) }
-pub fn sand() -> ItemTypeId { ItemTypeId(22) }
-pub fn glass() -> ItemTypeId { ItemTypeId(23) }
-pub fn wood_plank() -> ItemTypeId { ItemTypeId(24) }
-pub fn iron_gear_b() -> ItemTypeId { ItemTypeId(25) }
-pub fn copper_wire() -> ItemTypeId { ItemTypeId(26) }
+pub fn iron_ingot() -> ItemTypeId {
+    ItemTypeId(20)
+}
+pub fn copper_ingot() -> ItemTypeId {
+    ItemTypeId(21)
+}
+pub fn sand() -> ItemTypeId {
+    ItemTypeId(22)
+}
+pub fn glass() -> ItemTypeId {
+    ItemTypeId(23)
+}
+pub fn wood_plank() -> ItemTypeId {
+    ItemTypeId(24)
+}
+pub fn iron_gear_b() -> ItemTypeId {
+    ItemTypeId(25)
+}
+pub fn copper_wire() -> ItemTypeId {
+    ItemTypeId(26)
+}
 
 // Tier 2: Machine Shop/Forge products
-pub fn motor() -> ItemTypeId { ItemTypeId(30) }
-pub fn wood_frame() -> ItemTypeId { ItemTypeId(31) }
-pub fn light_bulb() -> ItemTypeId { ItemTypeId(32) }
-pub fn graphite() -> ItemTypeId { ItemTypeId(33) }
-pub fn steel() -> ItemTypeId { ItemTypeId(34) }
-pub fn tungsten_carbide() -> ItemTypeId { ItemTypeId(35) }
+pub fn motor() -> ItemTypeId {
+    ItemTypeId(30)
+}
+pub fn wood_frame() -> ItemTypeId {
+    ItemTypeId(31)
+}
+pub fn light_bulb() -> ItemTypeId {
+    ItemTypeId(32)
+}
+pub fn graphite() -> ItemTypeId {
+    ItemTypeId(33)
+}
+pub fn steel() -> ItemTypeId {
+    ItemTypeId(34)
+}
+pub fn tungsten_carbide() -> ItemTypeId {
+    ItemTypeId(35)
+}
 
 // Tier 3: Industrial Factory products
-pub fn electric_motor() -> ItemTypeId { ItemTypeId(40) }
-pub fn circuit_board() -> ItemTypeId { ItemTypeId(41) }
-pub fn basic_robot() -> ItemTypeId { ItemTypeId(42) }
+pub fn electric_motor() -> ItemTypeId {
+    ItemTypeId(40)
+}
+pub fn circuit_board() -> ItemTypeId {
+    ItemTypeId(41)
+}
+pub fn basic_robot() -> ItemTypeId {
+    ItemTypeId(42)
+}
 
 // Tier 4: Manufacturer products
-pub fn computer() -> ItemTypeId { ItemTypeId(50) }
-pub fn super_computer() -> ItemTypeId { ItemTypeId(51) }
+pub fn computer() -> ItemTypeId {
+    ItemTypeId(50)
+}
+pub fn super_computer() -> ItemTypeId {
+    ItemTypeId(51)
+}
 
 // ===========================================================================
 // Building constructor

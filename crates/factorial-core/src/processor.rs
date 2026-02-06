@@ -137,8 +137,12 @@ pub enum StallReason {
 pub enum ProcessorState {
     #[default]
     Idle,
-    Working { progress: u32 },
-    Stalled { reason: StallReason },
+    Working {
+        progress: u32,
+    },
+    Stalled {
+        reason: StallReason,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -288,15 +292,9 @@ impl Processor {
             Processor::Fixed(recipe) => {
                 tick_fixed(recipe, state, modifiers, available_inputs, output_space)
             }
-            Processor::Property(prop) => {
-                tick_property(prop, state, available_inputs, output_space)
-            }
-            Processor::Demand(demand) => {
-                tick_demand(demand, state, modifiers, available_inputs)
-            }
-            Processor::Passthrough => {
-                tick_passthrough(state, available_inputs, output_space)
-            }
+            Processor::Property(prop) => tick_property(prop, state, available_inputs, output_space),
+            Processor::Demand(demand) => tick_demand(demand, state, modifiers, available_inputs),
+            Processor::Passthrough => tick_passthrough(state, available_inputs, output_space),
         }
     }
 }
@@ -317,7 +315,11 @@ fn tick_source(
     if let Depletion::Finite { remaining } = &src.depletion
         && *remaining <= Fixed64::from_num(0)
     {
-        if *state != (ProcessorState::Stalled { reason: StallReason::Depleted }) {
+        if *state
+            != (ProcessorState::Stalled {
+                reason: StallReason::Depleted,
+            })
+        {
             *state = ProcessorState::Stalled {
                 reason: StallReason::Depleted,
             };
@@ -327,7 +329,11 @@ fn tick_source(
     }
 
     if output_space == 0 {
-        if *state != (ProcessorState::Stalled { reason: StallReason::OutputFull }) {
+        if *state
+            != (ProcessorState::Stalled {
+                reason: StallReason::OutputFull,
+            })
+        {
             *state = ProcessorState::Stalled {
                 reason: StallReason::OutputFull,
             };
@@ -429,8 +435,7 @@ fn tick_fixed(
             let mut to_consume: Vec<(ItemTypeId, u32)> = Vec::new();
             for input in &recipe.inputs {
                 // Effective quantity = ceil(base_quantity * efficiency).
-                let eff_qty_fixed =
-                    Fixed64::from_num(input.quantity) * mods.efficiency;
+                let eff_qty_fixed = Fixed64::from_num(input.quantity) * mods.efficiency;
                 let eff_qty = {
                     let raw: i64 = eff_qty_fixed.to_num();
                     let frac = eff_qty_fixed.frac();
@@ -497,7 +502,10 @@ fn tick_fixed(
 
 /// Apply productivity modifier to outputs. Productivity > 1.0 means extra
 /// items. We round down fractional bonus items for simplicity.
-fn apply_productivity(outputs: &[RecipeOutput], mods: &ResolvedModifiers) -> Vec<(ItemTypeId, u32)> {
+fn apply_productivity(
+    outputs: &[RecipeOutput],
+    mods: &ResolvedModifiers,
+) -> Vec<(ItemTypeId, u32)> {
     outputs
         .iter()
         .map(|o| {
@@ -857,11 +865,7 @@ mod tests {
     #[test]
     fn fixed_recipe_multi_output() {
         // 1 copper -> 1 gear + 1 wire, 5 ticks
-        let mut proc = make_fixed_recipe(
-            vec![(copper(), 1)],
-            vec![(gear(), 2), (wire(), 3)],
-            5,
-        );
+        let mut proc = make_fixed_recipe(vec![(copper(), 1)], vec![(gear(), 2), (wire(), 3)], 5);
         let mut state = ProcessorState::Idle;
         let no_mods: Vec<Modifier> = vec![];
 

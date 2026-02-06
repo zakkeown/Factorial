@@ -35,7 +35,10 @@ impl TickProfile {
             ("post_tick", self.post_tick),
             ("bookkeeping", self.bookkeeping),
         ];
-        phases.into_iter().max_by_key(|(_, d)| *d).expect("phases array is non-empty")
+        phases
+            .into_iter()
+            .max_by_key(|(_, d)| *d)
+            .expect("phases array is non-empty")
     }
 }
 
@@ -68,7 +71,7 @@ mod tests {
     use crate::item::Inventory;
     use crate::processor::*;
     use crate::sim::SimulationStrategy;
-    use crate::test_utils::{iron, gear, building, simple_inventory, make_source, make_recipe};
+    use crate::test_utils::{building, gear, iron, make_recipe, make_source, simple_inventory};
 
     // -----------------------------------------------------------------------
     // Helpers (profiling-specific)
@@ -268,10 +271,7 @@ mod tests {
         let node = add_node(&mut engine);
 
         // Recipe: 1 iron -> 1 gear, 5 ticks.
-        engine.set_processor(
-            node,
-            make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 5),
-        );
+        engine.set_processor(node, make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 5));
         let mut input_inv = simple_inventory(100);
         let _ = input_inv.input_slots[0].add(iron(), 10);
         engine.set_input_inventory(node, input_inv);
@@ -295,10 +295,7 @@ mod tests {
         let node = add_node(&mut engine);
 
         // Recipe requires iron but none available.
-        engine.set_processor(
-            node,
-            make_recipe(vec![(iron(), 5)], vec![(gear(), 1)], 10),
-        );
+        engine.set_processor(node, make_recipe(vec![(iron(), 5)], vec![(gear(), 1)], 10));
         engine.set_input_inventory(node, simple_inventory(100));
         engine.set_output_inventory(node, simple_inventory(100));
 
@@ -321,10 +318,7 @@ mod tests {
         let node = add_node(&mut engine);
 
         // Recipe: 1 iron -> 1 gear, 2 ticks. Output capacity is 0.
-        engine.set_processor(
-            node,
-            make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 2),
-        );
+        engine.set_processor(node, make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 2));
         let mut input_inv = simple_inventory(100);
         let _ = input_inv.input_slots[0].add(iron(), 50);
         engine.set_input_inventory(node, input_inv);

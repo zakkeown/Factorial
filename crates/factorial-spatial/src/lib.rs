@@ -10,13 +10,13 @@ use slotmap::{Key, SecondaryMap};
 use std::collections::BTreeMap;
 
 pub mod blueprint;
+pub use blueprint::BlueprintCommitError;
+#[cfg(feature = "blueprint-io")]
+pub use blueprint::BlueprintIoError;
 pub use blueprint::{
     Blueprint, BlueprintCommitResult, BlueprintConnection, BlueprintEntry, BlueprintEntryId,
     BlueprintError, BlueprintNodeRef, BlueprintUndoRecord,
 };
-pub use blueprint::BlueprintCommitError;
-#[cfg(feature = "blueprint-io")]
-pub use blueprint::BlueprintIoError;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -103,7 +103,12 @@ pub enum Rotation {
 impl Rotation {
     /// All four rotation values.
     pub fn all() -> [Rotation; 4] {
-        [Rotation::None, Rotation::Cw90, Rotation::Cw180, Rotation::Cw270]
+        [
+            Rotation::None,
+            Rotation::Cw90,
+            Rotation::Cw180,
+            Rotation::Cw270,
+        ]
     }
 
     /// Rotate 90 degrees clockwise.
@@ -320,8 +325,7 @@ impl SpatialIndex {
             return Vec::new();
         };
 
-        let own_tiles: std::collections::BTreeSet<GridPosition> =
-            footprint.tiles(origin).collect();
+        let own_tiles: std::collections::BTreeSet<GridPosition> = footprint.tiles(origin).collect();
         let mut result = Vec::new();
         let mut seen = std::collections::BTreeSet::new();
 
@@ -352,8 +356,7 @@ impl SpatialIndex {
             return Vec::new();
         };
 
-        let own_tiles: std::collections::BTreeSet<GridPosition> =
-            footprint.tiles(origin).collect();
+        let own_tiles: std::collections::BTreeSet<GridPosition> = footprint.tiles(origin).collect();
         let mut result_set = std::collections::BTreeSet::new();
         let mut result = Vec::new();
 

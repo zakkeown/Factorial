@@ -24,40 +24,88 @@ use factorial_core::transport::*;
 // ===========================================================================
 
 // --- Raw shapes ---
-fn circle_uncolored() -> ItemTypeId { ItemTypeId(300) }
-fn rectangle_uncolored() -> ItemTypeId { ItemTypeId(301) }
-fn star_uncolored() -> ItemTypeId { ItemTypeId(302) }
-fn windmill_corner() -> ItemTypeId { ItemTypeId(303) }
+fn circle_uncolored() -> ItemTypeId {
+    ItemTypeId(300)
+}
+fn rectangle_uncolored() -> ItemTypeId {
+    ItemTypeId(301)
+}
+fn star_uncolored() -> ItemTypeId {
+    ItemTypeId(302)
+}
+fn windmill_corner() -> ItemTypeId {
+    ItemTypeId(303)
+}
 
 // --- Half shapes (output of cutter) ---
-fn half_circle_left() -> ItemTypeId { ItemTypeId(310) }
-fn half_circle_right() -> ItemTypeId { ItemTypeId(311) }
-fn half_rect_left() -> ItemTypeId { ItemTypeId(312) }
-fn half_rect_right() -> ItemTypeId { ItemTypeId(313) }
+fn half_circle_left() -> ItemTypeId {
+    ItemTypeId(310)
+}
+fn half_circle_right() -> ItemTypeId {
+    ItemTypeId(311)
+}
+fn half_rect_left() -> ItemTypeId {
+    ItemTypeId(312)
+}
+fn half_rect_right() -> ItemTypeId {
+    ItemTypeId(313)
+}
 
 // --- Rotated shapes ---
-fn circle_rotated_90() -> ItemTypeId { ItemTypeId(320) }
-fn rect_rotated_90() -> ItemTypeId { ItemTypeId(321) }
+fn circle_rotated_90() -> ItemTypeId {
+    ItemTypeId(320)
+}
+fn rect_rotated_90() -> ItemTypeId {
+    ItemTypeId(321)
+}
 
 // --- Colored shapes ---
-fn circle_red() -> ItemTypeId { ItemTypeId(330) }
-fn circle_green() -> ItemTypeId { ItemTypeId(331) }
-fn circle_blue() -> ItemTypeId { ItemTypeId(332) }
-fn rect_red() -> ItemTypeId { ItemTypeId(333) }
+fn circle_red() -> ItemTypeId {
+    ItemTypeId(330)
+}
+fn circle_green() -> ItemTypeId {
+    ItemTypeId(331)
+}
+fn circle_blue() -> ItemTypeId {
+    ItemTypeId(332)
+}
+fn rect_red() -> ItemTypeId {
+    ItemTypeId(333)
+}
 
 // --- Stacked shapes (multi-layer) ---
-fn circle_on_rect() -> ItemTypeId { ItemTypeId(340) }
-fn colored_stack() -> ItemTypeId { ItemTypeId(341) }
-fn triple_stack() -> ItemTypeId { ItemTypeId(342) }
-fn quad_stack() -> ItemTypeId { ItemTypeId(343) }
+fn circle_on_rect() -> ItemTypeId {
+    ItemTypeId(340)
+}
+fn colored_stack() -> ItemTypeId {
+    ItemTypeId(341)
+}
+fn triple_stack() -> ItemTypeId {
+    ItemTypeId(342)
+}
+fn quad_stack() -> ItemTypeId {
+    ItemTypeId(343)
+}
 
 // --- Colors as items ---
-fn color_red() -> ItemTypeId { ItemTypeId(350) }
-fn color_green() -> ItemTypeId { ItemTypeId(351) }
-fn color_blue() -> ItemTypeId { ItemTypeId(352) }
-fn color_yellow() -> ItemTypeId { ItemTypeId(353) }  // red + green
-fn color_purple() -> ItemTypeId { ItemTypeId(354) }  // red + blue
-fn color_white() -> ItemTypeId { ItemTypeId(355) }   // all three
+fn color_red() -> ItemTypeId {
+    ItemTypeId(350)
+}
+fn color_green() -> ItemTypeId {
+    ItemTypeId(351)
+}
+fn color_blue() -> ItemTypeId {
+    ItemTypeId(352)
+}
+fn color_yellow() -> ItemTypeId {
+    ItemTypeId(353)
+} // red + green
+fn color_purple() -> ItemTypeId {
+    ItemTypeId(354)
+} // red + blue
+fn color_white() -> ItemTypeId {
+    ItemTypeId(355)
+} // all three
 
 // ===========================================================================
 // Shared constants
@@ -357,12 +405,7 @@ fn test_painter_two_inputs() {
     );
 
     // Red color source.
-    let red_src = add_node(
-        &mut engine,
-        make_source(color_red(), 1.0),
-        STD_CAP,
-        STD_CAP,
-    );
+    let red_src = add_node(&mut engine, make_source(color_red(), 1.0), STD_CAP, STD_CAP);
 
     // Painter: 1 circle + 1 red -> 1 red circle, 2 ticks.
     let painter = add_node(
@@ -413,7 +456,12 @@ fn test_color_mixing() {
 
     // --- Yellow: Red + Green -> Yellow ---
     let red_src_1 = add_node(&mut engine, make_source(color_red(), 1.0), STD_CAP, STD_CAP);
-    let green_src_1 = add_node(&mut engine, make_source(color_green(), 1.0), STD_CAP, STD_CAP);
+    let green_src_1 = add_node(
+        &mut engine,
+        make_source(color_green(), 1.0),
+        STD_CAP,
+        STD_CAP,
+    );
     let yellow_mixer = add_node(
         &mut engine,
         make_recipe(
@@ -424,14 +472,24 @@ fn test_color_mixing() {
         MULTI_INPUT_CAP,
         STD_CAP,
     );
-    let yellow_sink = add_node(&mut engine, make_demand(color_yellow(), 1.0), SINK_CAP, STD_CAP);
+    let yellow_sink = add_node(
+        &mut engine,
+        make_demand(color_yellow(), 1.0),
+        SINK_CAP,
+        STD_CAP,
+    );
     connect(&mut engine, red_src_1, yellow_mixer, belt());
     connect(&mut engine, green_src_1, yellow_mixer, belt());
     connect(&mut engine, yellow_mixer, yellow_sink, belt());
 
     // --- Purple: Red + Blue -> Purple ---
     let red_src_2 = add_node(&mut engine, make_source(color_red(), 1.0), STD_CAP, STD_CAP);
-    let blue_src_1 = add_node(&mut engine, make_source(color_blue(), 1.0), STD_CAP, STD_CAP);
+    let blue_src_1 = add_node(
+        &mut engine,
+        make_source(color_blue(), 1.0),
+        STD_CAP,
+        STD_CAP,
+    );
     let purple_mixer = add_node(
         &mut engine,
         make_recipe(
@@ -442,15 +500,30 @@ fn test_color_mixing() {
         MULTI_INPUT_CAP,
         STD_CAP,
     );
-    let purple_sink = add_node(&mut engine, make_demand(color_purple(), 1.0), SINK_CAP, STD_CAP);
+    let purple_sink = add_node(
+        &mut engine,
+        make_demand(color_purple(), 1.0),
+        SINK_CAP,
+        STD_CAP,
+    );
     connect(&mut engine, red_src_2, purple_mixer, belt());
     connect(&mut engine, blue_src_1, purple_mixer, belt());
     connect(&mut engine, purple_mixer, purple_sink, belt());
 
     // --- White: Red + Green + Blue -> White ---
     let red_src_3 = add_node(&mut engine, make_source(color_red(), 1.0), STD_CAP, STD_CAP);
-    let green_src_2 = add_node(&mut engine, make_source(color_green(), 1.0), STD_CAP, STD_CAP);
-    let blue_src_2 = add_node(&mut engine, make_source(color_blue(), 1.0), STD_CAP, STD_CAP);
+    let green_src_2 = add_node(
+        &mut engine,
+        make_source(color_green(), 1.0),
+        STD_CAP,
+        STD_CAP,
+    );
+    let blue_src_2 = add_node(
+        &mut engine,
+        make_source(color_blue(), 1.0),
+        STD_CAP,
+        STD_CAP,
+    );
     let white_mixer = add_node(
         &mut engine,
         make_recipe(
@@ -461,7 +534,12 @@ fn test_color_mixing() {
         MULTI_INPUT_CAP,
         STD_CAP,
     );
-    let white_sink = add_node(&mut engine, make_demand(color_white(), 1.0), SINK_CAP, STD_CAP);
+    let white_sink = add_node(
+        &mut engine,
+        make_demand(color_white(), 1.0),
+        SINK_CAP,
+        STD_CAP,
+    );
     connect(&mut engine, red_src_3, white_mixer, belt());
     connect(&mut engine, green_src_2, white_mixer, belt());
     connect(&mut engine, blue_src_2, white_mixer, belt());
@@ -477,9 +555,18 @@ fn test_color_mixing() {
     let white_total = input_quantity(&engine, white_sink, color_white())
         + output_quantity(&engine, white_mixer, color_white());
 
-    assert!(yellow_total > 0, "yellow mixer should produce yellow; got {yellow_total}");
-    assert!(purple_total > 0, "purple mixer should produce purple; got {purple_total}");
-    assert!(white_total > 0, "white mixer should produce white; got {white_total}");
+    assert!(
+        yellow_total > 0,
+        "yellow mixer should produce yellow; got {yellow_total}"
+    );
+    assert!(
+        purple_total > 0,
+        "purple mixer should produce purple; got {purple_total}"
+    );
+    assert!(
+        white_total > 0,
+        "white mixer should produce white; got {white_total}"
+    );
 }
 
 // ===========================================================================
@@ -974,8 +1061,8 @@ fn test_floating_layers_deep_stack() {
 ///   1. Processor swapping at runtime (change the recipe of a node),
 ///   2. Conditional routing (send items down different paths based on demand), or
 ///   3. A meta-processor that selects from a recipe set based on downstream demand.
-/// None of these exist today. This test models a simplified version: parallel
-/// fixed lines all feeding into one merger -> hub.
+///      None of these exist today. This test models a simplified version: parallel
+///      fixed lines all feeding into one merger -> hub.
 #[test]
 fn test_make_anything_machine_concept() {
     let mut engine = Engine::new(SimulationStrategy::Tick);

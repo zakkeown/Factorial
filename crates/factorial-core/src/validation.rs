@@ -19,10 +19,7 @@ pub enum NodeDiff {
     /// Node exists only in engine B.
     OnlyInB(NodeId),
     /// Node exists in both but has different state.
-    StateMismatch {
-        node: NodeId,
-        description: String,
-    },
+    StateMismatch { node: NodeId, description: String },
 }
 
 /// Difference between two engine states at the edge level.
@@ -33,10 +30,7 @@ pub enum EdgeDiff {
     /// Edge exists only in engine B.
     OnlyInB(EdgeId),
     /// Edge exists in both but has different state.
-    StateMismatch {
-        edge: EdgeId,
-        description: String,
-    },
+    StateMismatch { edge: EdgeId, description: String },
 }
 
 /// Per-subsystem match results.

@@ -73,23 +73,13 @@ mod tests {
         let mut engine = Engine::new(SimulationStrategy::Tick);
 
         // Bridge node: a passthrough processor with inventory.
-        let bridge_node = test_utils::add_node(
-            &mut engine,
-            Processor::Passthrough,
-            100,
-            100,
-        );
+        let bridge_node = test_utils::add_node(&mut engine, Processor::Passthrough, 100, 100);
 
         let mut fluid = FluidModule::new();
         let net = fluid.create_network(water);
 
         // Producer feeds 10 water/tick into the network.
-        let well_node = test_utils::add_node(
-            &mut engine,
-            Processor::Passthrough,
-            0,
-            0,
-        );
+        let well_node = test_utils::add_node(&mut engine, Processor::Passthrough, 0, 0);
         fluid.add_producer(
             net,
             well_node,

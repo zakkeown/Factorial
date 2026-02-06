@@ -208,12 +208,8 @@ impl Transport {
     /// Panics if `state` variant does not match `self` variant.
     pub fn advance(&self, state: &mut TransportState, available: u32) -> TransportResult {
         match (self, state) {
-            (Transport::Flow(flow), TransportState::Flow(fs)) => {
-                advance_flow(flow, fs, available)
-            }
-            (Transport::Item(item), TransportState::Item(bs)) => {
-                advance_item(item, bs, available)
-            }
+            (Transport::Flow(flow), TransportState::Flow(fs)) => advance_flow(flow, fs, available),
+            (Transport::Item(item), TransportState::Item(bs)) => advance_item(item, bs, available),
             (Transport::Batch(batch), TransportState::Batch(bs)) => {
                 advance_batch(batch, bs, available)
             }
@@ -221,8 +217,14 @@ impl Transport {
                 advance_vehicle(vehicle, vs, available)
             }
             _ => {
-                debug_assert!(false, "Transport variant does not match TransportState variant");
-                TransportResult { items_moved: 0, items_delivered: 0 }
+                debug_assert!(
+                    false,
+                    "Transport variant does not match TransportState variant"
+                );
+                TransportResult {
+                    items_moved: 0,
+                    items_delivered: 0,
+                }
             }
         }
     }
@@ -238,11 +240,7 @@ impl Transport {
 /// 1. Accept up to `rate` items from source, limited by buffer capacity.
 /// 2. If latency has expired, deliver buffered items (up to rate) to destination.
 /// 3. If latency has not expired, decrement latency counter (no delivery).
-fn advance_flow(
-    flow: &FlowTransport,
-    state: &mut FlowState,
-    available: u32,
-) -> TransportResult {
+fn advance_flow(flow: &FlowTransport, state: &mut FlowState, available: u32) -> TransportResult {
     let available_fixed = Fixed64::from_num(available);
     let rate = flow.rate;
 
@@ -250,7 +248,11 @@ fn advance_flow(
     let space_in_buffer = flow.buffer_capacity - state.buffered;
     let can_accept = rate.min(available_fixed).min(space_in_buffer);
     // Clamp to zero in case of negative from rounding.
-    let accepted = if can_accept > Fixed64::ZERO { can_accept } else { Fixed64::ZERO };
+    let accepted = if can_accept > Fixed64::ZERO {
+        can_accept
+    } else {
+        Fixed64::ZERO
+    };
 
     state.buffered += accepted;
 
@@ -263,7 +265,11 @@ fn advance_flow(
     } else {
         // Deliver up to rate from the buffer.
         let can_deliver = rate.min(state.buffered);
-        let delivered = if can_deliver > Fixed64::ZERO { can_deliver } else { Fixed64::ZERO };
+        let delivered = if can_deliver > Fixed64::ZERO {
+            can_deliver
+        } else {
+            Fixed64::ZERO
+        };
         state.buffered -= delivered;
         delivered.to_num()
     };
@@ -290,11 +296,7 @@ fn advance_flow(
 ///
 /// For simplicity in this initial implementation, `speed` is treated as
 /// integer slots per tick (the integer part of the fixed-point value).
-fn advance_item(
-    item: &ItemTransport,
-    state: &mut BeltState,
-    available: u32,
-) -> TransportResult {
+fn advance_item(item: &ItemTransport, state: &mut BeltState, available: u32) -> TransportResult {
     let slot_count = item.slot_count as usize;
     let lanes = item.lanes as usize;
     let steps: usize = item.speed.to_num::<u32>() as usize;
@@ -607,7 +609,10 @@ mod tests {
         // is still occupied and no new item can be inserted.
         let r = t.advance(&mut s, 10);
         assert_eq!(r.items_delivered, 1);
-        assert_eq!(r.items_moved, 0, "cannot insert when input slot is occupied");
+        assert_eq!(
+            r.items_moved, 0,
+            "cannot insert when input slot is occupied"
+        );
 
         // After the tick, belt has 2 items: slots 1 and 2 occupied, slot 0 free.
         if let TransportState::Item(ref bs) = s {
@@ -700,9 +705,13 @@ mod tests {
             latency: 5,
         });
         let state = TransportState::new_for(&flow);
-        assert!(matches!(state, TransportState::Flow(FlowState {
-            latency_remaining: 5, ..
-        })));
+        assert!(matches!(
+            state,
+            TransportState::Flow(FlowState {
+                latency_remaining: 5,
+                ..
+            })
+        ));
 
         let item = Transport::Item(ItemTransport {
             speed: Fixed64::from_num(1),
@@ -721,10 +730,13 @@ mod tests {
             cycle_time: 3,
         });
         let state = TransportState::new_for(&batch);
-        assert!(matches!(state, TransportState::Batch(BatchState {
-            progress: 0,
-            pending: 0,
-        })));
+        assert!(matches!(
+            state,
+            TransportState::Batch(BatchState {
+                progress: 0,
+                pending: 0,
+            })
+        ));
 
         let vehicle = Transport::Vehicle(VehicleTransport {
             capacity: 100,
@@ -863,6 +875,12 @@ mod tests {
             pending: 0,
         });
         let result = t.advance(&mut s, 10);
-        assert_eq!(result, TransportResult { items_moved: 0, items_delivered: 0 });
+        assert_eq!(
+            result,
+            TransportResult {
+                items_moved: 0,
+                items_delivered: 0
+            }
+        );
     }
 }

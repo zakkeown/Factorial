@@ -26,10 +26,10 @@ use crate::fixed::{Fixed64, Ticks};
 use crate::graph::ProductionGraph;
 use crate::id::{EdgeId, ItemTypeId, NodeId, PropertyId};
 use crate::item::{Inventory, ItemStack};
+use crate::junction::{Junction, JunctionState};
 use crate::processor::{Modifier, Processor, ProcessorResult, ProcessorState};
 use crate::query::{NodeSnapshot, TransportSnapshot};
 use crate::sim::{AdvanceResult, SimState, SimulationStrategy, StateHash};
-use crate::junction::{Junction, JunctionState};
 use crate::transport::{Transport, TransportResult, TransportState};
 use slotmap::SecondaryMap;
 
@@ -151,7 +151,8 @@ impl Engine {
         self.processor_states
             .insert(node, ProcessorState::default());
         self.dirty.mark_node(node);
-        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_PROCESSORS);
+        self.dirty
+            .mark_partition(crate::dirty::DirtyTracker::PARTITION_PROCESSORS);
     }
 
     /// Replace a node's processor and reset its processing state to Idle.
@@ -165,21 +166,24 @@ impl Engine {
     pub fn set_input_inventory(&mut self, node: NodeId, inventory: Inventory) {
         self.inputs.insert(node, inventory);
         self.dirty.mark_node(node);
-        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_INVENTORIES);
+        self.dirty
+            .mark_partition(crate::dirty::DirtyTracker::PARTITION_INVENTORIES);
     }
 
     /// Set the output inventory for a node.
     pub fn set_output_inventory(&mut self, node: NodeId, inventory: Inventory) {
         self.outputs.insert(node, inventory);
         self.dirty.mark_node(node);
-        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_INVENTORIES);
+        self.dirty
+            .mark_partition(crate::dirty::DirtyTracker::PARTITION_INVENTORIES);
     }
 
     /// Set the modifiers for a node.
     pub fn set_modifiers(&mut self, node: NodeId, mods: Vec<Modifier>) {
         self.modifiers.insert(node, mods);
         self.dirty.mark_node(node);
-        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_PROCESSORS);
+        self.dirty
+            .mark_partition(crate::dirty::DirtyTracker::PARTITION_PROCESSORS);
     }
 
     /// Get the processor configuration for a node (read-only).
@@ -270,7 +274,8 @@ impl Engine {
         self.transports.insert(edge, transport);
         self.transport_states.insert(edge, state);
         self.dirty.mark_edge(edge);
-        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_TRANSPORTS);
+        self.dirty
+            .mark_partition(crate::dirty::DirtyTracker::PARTITION_TRANSPORTS);
     }
 
     /// Get the transport configuration for an edge (read-only).
@@ -318,7 +323,8 @@ impl Engine {
             entry.or_default();
         }
         self.dirty.mark_node(node);
-        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_JUNCTIONS);
+        self.dirty
+            .mark_partition(crate::dirty::DirtyTracker::PARTITION_JUNCTIONS);
     }
 
     /// Remove a junction from a node.
@@ -326,7 +332,8 @@ impl Engine {
         self.junctions.remove(node);
         self.junction_states.remove(node);
         self.dirty.mark_node(node);
-        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_JUNCTIONS);
+        self.dirty
+            .mark_partition(crate::dirty::DirtyTracker::PARTITION_JUNCTIONS);
     }
 
     /// Get the junction configuration for a node.
@@ -579,7 +586,8 @@ impl Engine {
             let mutation_result = self.graph.apply_mutations();
             result.mutation_results.push(mutation_result);
             self.dirty.mark_graph();
-            self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_GRAPH);
+            self.dirty
+                .mark_partition(crate::dirty::DirtyTracker::PARTITION_GRAPH);
         }
     }
 
@@ -678,12 +686,18 @@ impl Engine {
             // Check if any edge from this node already has an item_filter.
             // If ALL edges have filters, they handle their own routing.
             let has_unfiltered = outputs.iter().any(|&eid| {
-                self.graph.get_edge(eid).is_none_or(|e| e.item_filter.is_none())
+                self.graph
+                    .get_edge(eid)
+                    .is_none_or(|e| e.item_filter.is_none())
             });
-            if !has_unfiltered { continue; }
+            if !has_unfiltered {
+                continue;
+            }
 
             let total = self.output_total(node_id);
-            if total == 0 { continue; }
+            if total == 0 {
+                continue;
+            }
 
             let num = outputs.len() as u32;
             let share = total / num;
@@ -691,7 +705,11 @@ impl Engine {
             let outputs_vec: Vec<EdgeId> = outputs.to_vec();
             for (i, &edge_id) in outputs_vec.iter().enumerate() {
                 // Only set budget for unfiltered edges (filtered edges handle themselves).
-                if self.graph.get_edge(edge_id).is_some_and(|e| e.item_filter.is_some()) {
+                if self
+                    .graph
+                    .get_edge(edge_id)
+                    .is_some_and(|e| e.item_filter.is_some())
+                {
                     continue;
                 }
                 let budget = share + if i == 0 { remainder } else { 0 };
@@ -789,7 +807,9 @@ impl Engine {
         result: &TransportResult,
     ) {
         // Use edge filter if present, otherwise fall back to processor-based detection.
-        let item_type = self.graph.get_edge(edge_id)
+        let item_type = self
+            .graph
+            .get_edge(edge_id)
             .and_then(|e| e.item_filter)
             .unwrap_or_else(|| self.determine_item_type_for_edge(source));
 
@@ -903,11 +923,7 @@ impl Engine {
         let output_space = self.calculate_output_space(node_id);
 
         // Get modifiers (clone to avoid borrow conflict).
-        let mods = self
-            .modifiers
-            .get(node_id)
-            .cloned()
-            .unwrap_or_default();
+        let mods = self.modifiers.get(node_id).cloned().unwrap_or_default();
 
         // Snapshot previous state for detecting state transitions.
         let prev_state = self.processor_states.get(node_id).cloned();
@@ -957,7 +973,10 @@ impl Engine {
 
             match (prev_state.as_ref(), new_state) {
                 // Transition to Working from Idle or Stalled => RecipeStarted.
-                (Some(ProcessorState::Idle) | Some(ProcessorState::Stalled { .. }), Some(ProcessorState::Working { .. })) => {
+                (
+                    Some(ProcessorState::Idle) | Some(ProcessorState::Stalled { .. }),
+                    Some(ProcessorState::Working { .. }),
+                ) => {
                     self.event_bus.emit(Event::RecipeStarted {
                         node: node_id,
                         tick,
@@ -1031,7 +1050,10 @@ impl Engine {
     }
 
     /// Capture input item properties for a node (used before consuming for PropertyProcessor).
-    fn capture_input_properties(&self, node_id: NodeId) -> Option<std::collections::BTreeMap<PropertyId, Fixed64>> {
+    fn capture_input_properties(
+        &self,
+        node_id: NodeId,
+    ) -> Option<std::collections::BTreeMap<PropertyId, Fixed64>> {
         // Get the input type from the PropertyProcessor.
         let input_type = match self.processors.get(node_id)? {
             Processor::Property(prop) => prop.input_type,
@@ -1237,10 +1259,14 @@ impl Engine {
     // -----------------------------------------------------------------------
 
     fn phase_bookkeeping(&mut self) {
-        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_GRAPH);
-        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_PROCESSORS);
-        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_INVENTORIES);
-        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_TRANSPORTS);
+        self.dirty
+            .mark_partition(crate::dirty::DirtyTracker::PARTITION_GRAPH);
+        self.dirty
+            .mark_partition(crate::dirty::DirtyTracker::PARTITION_PROCESSORS);
+        self.dirty
+            .mark_partition(crate::dirty::DirtyTracker::PARTITION_INVENTORIES);
+        self.dirty
+            .mark_partition(crate::dirty::DirtyTracker::PARTITION_TRANSPORTS);
         self.sim_state.tick += 1;
         self.last_state_hash = self.compute_state_hash();
     }
@@ -1342,11 +1368,7 @@ impl Engine {
     /// Create a snapshot of a single node.
     pub fn snapshot_node(&self, node: NodeId) -> Option<NodeSnapshot> {
         let node_data = self.graph.get_node(node)?;
-        let processor_state = self
-            .processor_states
-            .get(node)
-            .cloned()
-            .unwrap_or_default();
+        let processor_state = self.processor_states.get(node).cloned().unwrap_or_default();
         let progress = self.get_processor_progress(node).unwrap_or(Fixed64::ZERO);
         let input_contents = inventory_contents(self.inputs.get(node), true);
         let output_contents = inventory_contents(self.outputs.get(node), false);
@@ -1425,11 +1447,7 @@ impl Engine {
         // Check node exists in the graph.
         let _node_data = self.graph.get_node(node)?;
 
-        let processor_state = self
-            .processor_states
-            .get(node)
-            .cloned()
-            .unwrap_or_default();
+        let processor_state = self.processor_states.get(node).cloned().unwrap_or_default();
 
         let stall_reason = match &processor_state {
             ProcessorState::Stalled { reason } => Some(*reason),
@@ -1719,7 +1737,10 @@ mod tests {
         engine.set_output_inventory(src_node, simple_inventory(100));
 
         // Set up consumer node.
-        engine.set_processor(consumer_node, make_recipe(recipe_inputs, recipe_outputs, recipe_duration));
+        engine.set_processor(
+            consumer_node,
+            make_recipe(recipe_inputs, recipe_outputs, recipe_duration),
+        );
         engine.set_input_inventory(consumer_node, simple_inventory(100));
         engine.set_output_inventory(consumer_node, simple_inventory(100));
 
@@ -1735,11 +1756,11 @@ mod tests {
     #[test]
     fn engine_single_tick_source_transport_consumer() {
         let (mut engine, src_node, consumer_node, _edge) = setup_source_transport_consumer(
-            5.0,                     // source produces 5/tick
-            10.0,                    // transport moves up to 10/tick
-            vec![(iron(), 2)],       // consumer needs 2 iron
-            vec![(gear(), 1)],       // consumer produces 1 gear
-            3,                       // 3 tick duration
+            5.0,               // source produces 5/tick
+            10.0,              // transport moves up to 10/tick
+            vec![(iron(), 2)], // consumer needs 2 iron
+            vec![(gear(), 1)], // consumer produces 1 gear
+            3,                 // 3 tick duration
         );
 
         // Step 1: Source produces, transport has nothing to move yet, consumer stalls.
@@ -1975,7 +1996,10 @@ mod tests {
         let run1 = run_simulation();
         let run2 = run_simulation();
 
-        assert_eq!(run1, run2, "two identical runs should produce identical state hashes");
+        assert_eq!(
+            run1, run2,
+            "two identical runs should produce identical state hashes"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -2047,10 +2071,7 @@ mod tests {
         // B consumes iron (but let's just track what arrives).
         // Give B a recipe it can't start (needs gear, which doesn't exist)
         // so items just accumulate in its input.
-        engine.set_processor(
-            b,
-            make_recipe(vec![(gear(), 999)], vec![(iron(), 1)], 1),
-        );
+        engine.set_processor(b, make_recipe(vec![(gear(), 999)], vec![(iron(), 1)], 1));
         engine.set_input_inventory(b, simple_inventory(1000));
         engine.set_output_inventory(b, simple_inventory(100));
 
@@ -2171,7 +2192,12 @@ mod tests {
         engine.step();
         let state = engine.get_processor_state(node).unwrap();
         assert!(
-            matches!(state, ProcessorState::Stalled { reason: StallReason::OutputFull }),
+            matches!(
+                state,
+                ProcessorState::Stalled {
+                    reason: StallReason::OutputFull
+                }
+            ),
             "source should stall when output is full, got {:?}",
             state
         );
@@ -2255,10 +2281,7 @@ mod tests {
         engine.on_passive(
             EventKind::ItemProduced,
             Box::new(move |event| {
-                if let Event::ItemProduced {
-                    quantity, tick, ..
-                } = event
-                {
+                if let Event::ItemProduced { quantity, tick, .. } = event {
                     produced_clone.borrow_mut().push((*quantity, *tick));
                 }
             }),
@@ -2389,10 +2412,7 @@ mod tests {
         engine.set_input_inventory(a, simple_inventory(100));
         engine.set_output_inventory(a, simple_inventory(100));
 
-        engine.set_processor(
-            b,
-            make_recipe(vec![(gear(), 999)], vec![(iron(), 1)], 1),
-        );
+        engine.set_processor(b, make_recipe(vec![(gear(), 999)], vec![(iron(), 1)], 1));
         engine.set_input_inventory(b, simple_inventory(1000));
         engine.set_output_inventory(b, simple_inventory(100));
 
@@ -2801,10 +2821,7 @@ mod tests {
         engine.set_input_inventory(a, simple_inventory(100));
         engine.set_output_inventory(a, simple_inventory(100));
 
-        engine.set_processor(
-            b,
-            make_recipe(vec![(gear(), 999)], vec![(iron(), 1)], 1),
-        );
+        engine.set_processor(b, make_recipe(vec![(gear(), 999)], vec![(iron(), 1)], 1));
         engine.set_input_inventory(b, simple_inventory(1000));
         engine.set_output_inventory(b, simple_inventory(100));
 
@@ -2862,7 +2879,10 @@ mod tests {
         // Tick 1: starts working, consumes 1 iron.
         engine.step();
         let snap = engine.snapshot_node(node).unwrap();
-        assert!(matches!(snap.processor_state, ProcessorState::Working { .. }));
+        assert!(matches!(
+            snap.processor_state,
+            ProcessorState::Working { .. }
+        ));
         assert_eq!(snap.progress, Fixed64::from_num(1) / Fixed64::from_num(4));
         // Input should have 9 iron (consumed 1).
         assert_eq!(snap.input_contents[0].quantity, 9);
@@ -3514,11 +3534,7 @@ mod tests {
 
         let electrolyzer = test_utils::add_node(
             &mut engine,
-            test_utils::make_recipe(
-                vec![(water, 1)],
-                vec![(oxygen, 1), (hydrogen, 1)],
-                1,
-            ),
+            test_utils::make_recipe(vec![(water, 1)], vec![(oxygen, 1), (hydrogen, 1)], 1),
             100,
             100,
         );
@@ -3540,8 +3556,20 @@ mod tests {
         );
 
         // Connect with item_type filters on edges.
-        test_utils::connect_filtered(&mut engine, electrolyzer, o2_sink, test_utils::make_flow_transport(10.0), Some(oxygen));
-        test_utils::connect_filtered(&mut engine, electrolyzer, h2_sink, test_utils::make_flow_transport(10.0), Some(hydrogen));
+        test_utils::connect_filtered(
+            &mut engine,
+            electrolyzer,
+            o2_sink,
+            test_utils::make_flow_transport(10.0),
+            Some(oxygen),
+        );
+        test_utils::connect_filtered(
+            &mut engine,
+            electrolyzer,
+            h2_sink,
+            test_utils::make_flow_transport(10.0),
+            Some(hydrogen),
+        );
 
         for _ in 0..10 {
             engine.step();
@@ -3550,11 +3578,25 @@ mod tests {
         let o2_at_sink = test_utils::input_quantity(&engine, o2_sink, oxygen);
         let h2_at_sink = test_utils::input_quantity(&engine, h2_sink, hydrogen);
 
-        assert!(o2_at_sink > 0, "O2 sink should receive oxygen, got {o2_at_sink}");
-        assert!(h2_at_sink > 0, "H2 sink should receive hydrogen, got {h2_at_sink}");
+        assert!(
+            o2_at_sink > 0,
+            "O2 sink should receive oxygen, got {o2_at_sink}"
+        );
+        assert!(
+            h2_at_sink > 0,
+            "H2 sink should receive hydrogen, got {h2_at_sink}"
+        );
         // Ensure no cross-contamination.
-        assert_eq!(test_utils::input_quantity(&engine, o2_sink, hydrogen), 0, "O2 sink should not have hydrogen");
-        assert_eq!(test_utils::input_quantity(&engine, h2_sink, oxygen), 0, "H2 sink should not have oxygen");
+        assert_eq!(
+            test_utils::input_quantity(&engine, o2_sink, hydrogen),
+            0,
+            "O2 sink should not have hydrogen"
+        );
+        assert_eq!(
+            test_utils::input_quantity(&engine, h2_sink, oxygen),
+            0,
+            "H2 sink should not have oxygen"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -3569,12 +3611,7 @@ mod tests {
         let iron = test_utils::iron();
 
         // A -> B -> A (cycle). A produces iron, B passes it through.
-        let a = test_utils::add_node(
-            &mut engine,
-            test_utils::make_source(iron, 2.0),
-            100,
-            100,
-        );
+        let a = test_utils::add_node(&mut engine, test_utils::make_source(iron, 2.0), 100, 100);
         let b = test_utils::add_node(
             &mut engine,
             test_utils::make_recipe(vec![(iron, 1)], vec![(iron, 1)], 1),
@@ -3616,31 +3653,42 @@ mod tests {
         let mut engine = Engine::new(SimulationStrategy::Tick);
         let iron = test_utils::iron();
 
-        let source = test_utils::add_node(
-            &mut engine,
-            test_utils::make_source(iron, 10.0),
-            100,
-            100,
-        );
+        let source =
+            test_utils::add_node(&mut engine, test_utils::make_source(iron, 10.0), 100, 100);
 
         // Splitter node with RoundRobin policy and Passthrough processor.
-        let splitter = test_utils::add_node(
-            &mut engine,
-            Processor::Passthrough,
-            100,
-            100,
+        let splitter = test_utils::add_node(&mut engine, Processor::Passthrough, 100, 100);
+        engine.set_junction(
+            splitter,
+            Junction::Splitter(SplitterConfig {
+                policy: SplitPolicy::RoundRobin,
+                filter: None,
+            }),
         );
-        engine.set_junction(splitter, Junction::Splitter(SplitterConfig {
-            policy: SplitPolicy::RoundRobin,
-            filter: None,
-        }));
 
-        let sink_a = test_utils::add_node(&mut engine, test_utils::make_source(iron, 0.0), 100, 100);
-        let sink_b = test_utils::add_node(&mut engine, test_utils::make_source(iron, 0.0), 100, 100);
+        let sink_a =
+            test_utils::add_node(&mut engine, test_utils::make_source(iron, 0.0), 100, 100);
+        let sink_b =
+            test_utils::add_node(&mut engine, test_utils::make_source(iron, 0.0), 100, 100);
 
-        test_utils::connect(&mut engine, source, splitter, test_utils::make_flow_transport(20.0));
-        test_utils::connect(&mut engine, splitter, sink_a, test_utils::make_flow_transport(20.0));
-        test_utils::connect(&mut engine, splitter, sink_b, test_utils::make_flow_transport(20.0));
+        test_utils::connect(
+            &mut engine,
+            source,
+            splitter,
+            test_utils::make_flow_transport(20.0),
+        );
+        test_utils::connect(
+            &mut engine,
+            splitter,
+            sink_a,
+            test_utils::make_flow_transport(20.0),
+        );
+        test_utils::connect(
+            &mut engine,
+            splitter,
+            sink_b,
+            test_utils::make_flow_transport(20.0),
+        );
 
         for _ in 0..20 {
             engine.step();
@@ -3653,7 +3701,10 @@ mod tests {
         assert!(at_b > 0, "Sink B should receive items, got {at_b}");
         // Round-robin should give roughly equal distribution.
         let diff = (at_a as i64 - at_b as i64).unsigned_abs();
-        assert!(diff <= at_a.max(at_b) as u64 / 2, "Distribution should be roughly even: A={at_a}, B={at_b}");
+        assert!(
+            diff <= at_a.max(at_b) as u64 / 2,
+            "Distribution should be roughly even: A={at_a}, B={at_b}"
+        );
     }
 
     #[test]
@@ -3663,18 +3714,26 @@ mod tests {
         let mut engine = Engine::new(SimulationStrategy::Tick);
         let iron = test_utils::iron();
 
-        let source = test_utils::add_node(
+        let source =
+            test_utils::add_node(&mut engine, test_utils::make_source(iron, 10.0), 100, 100);
+
+        let sink_a =
+            test_utils::add_node(&mut engine, test_utils::make_source(iron, 0.0), 100, 100);
+        let sink_b =
+            test_utils::add_node(&mut engine, test_utils::make_source(iron, 0.0), 100, 100);
+
+        test_utils::connect(
             &mut engine,
-            test_utils::make_source(iron, 10.0),
-            100,
-            100,
+            source,
+            sink_a,
+            test_utils::make_flow_transport(20.0),
         );
-
-        let sink_a = test_utils::add_node(&mut engine, test_utils::make_source(iron, 0.0), 100, 100);
-        let sink_b = test_utils::add_node(&mut engine, test_utils::make_source(iron, 0.0), 100, 100);
-
-        test_utils::connect(&mut engine, source, sink_a, test_utils::make_flow_transport(20.0));
-        test_utils::connect(&mut engine, source, sink_b, test_utils::make_flow_transport(20.0));
+        test_utils::connect(
+            &mut engine,
+            source,
+            sink_b,
+            test_utils::make_flow_transport(20.0),
+        );
 
         for _ in 0..20 {
             engine.step();
@@ -3734,12 +3793,7 @@ mod tests {
         let iron = test_utils::iron();
         let temp = crate::id::PropertyId(0);
 
-        let node = test_utils::add_node(
-            &mut engine,
-            test_utils::make_source(iron, 1.0),
-            100,
-            100,
-        );
+        let node = test_utils::add_node(&mut engine, test_utils::make_source(iron, 1.0), 100, 100);
 
         // Manually add an item with a property to the output inventory.
         if let Some(inv) = engine.outputs.get_mut(node) {
@@ -3763,12 +3817,8 @@ mod tests {
         let mut engine = Engine::new(SimulationStrategy::Tick);
         let iron = test_utils::iron();
 
-        let source = test_utils::add_node(
-            &mut engine,
-            test_utils::make_source(iron, 5.0),
-            100,
-            100,
-        );
+        let source =
+            test_utils::add_node(&mut engine, test_utils::make_source(iron, 5.0), 100, 100);
         let sink = test_utils::add_node(
             &mut engine,
             Processor::Demand(DemandProcessor {
@@ -3782,7 +3832,12 @@ mod tests {
             100,
         );
 
-        test_utils::connect(&mut engine, source, sink, test_utils::make_flow_transport(10.0));
+        test_utils::connect(
+            &mut engine,
+            source,
+            sink,
+            test_utils::make_flow_transport(10.0),
+        );
 
         for _ in 0..60 {
             engine.step();
@@ -3793,7 +3848,8 @@ mod tests {
         assert!(rate.is_some(), "Should be able to query demand rate");
         assert!(
             rate.unwrap() >= Fixed64::from_num(2),
-            "Sustained rate should be near 3/tick, got {:?}", rate
+            "Sustained rate should be near 3/tick, got {:?}",
+            rate
         );
     }
 
@@ -3829,7 +3885,10 @@ mod tests {
         let remaining_copper = test_utils::input_quantity(&engine, node, copper);
 
         // Should have consumed some of both types.
-        assert!(remaining_iron < 5 || remaining_copper < 5, "Should consume some items");
+        assert!(
+            remaining_iron < 5 || remaining_copper < 5,
+            "Should consume some items"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -3952,20 +4011,21 @@ mod tests {
     fn snapshot_node_returns_correct_data() {
         let mut engine = Engine::new(SimulationStrategy::Tick);
         let iron = test_utils::iron();
-        let node = test_utils::add_node(
-            &mut engine,
-            test_utils::make_source(iron, 2.0),
-            100,
-            100,
-        );
+        let node = test_utils::add_node(&mut engine, test_utils::make_source(iron, 2.0), 100, 100);
 
         // Step to produce items
         engine.step();
 
         let snap = engine.snapshot_node(node).expect("node should exist");
         assert_eq!(snap.id, node);
-        assert_eq!(snap.processor_state, ProcessorState::Working { progress: 0 });
-        assert!(!snap.output_contents.is_empty(), "source should have produced items");
+        assert_eq!(
+            snap.processor_state,
+            ProcessorState::Working { progress: 0 }
+        );
+        assert!(
+            !snap.output_contents.is_empty(),
+            "source should have produced items"
+        );
     }
 
     #[test]
@@ -4011,7 +4071,8 @@ mod tests {
             100,
             100,
         );
-        let edge = test_utils::connect(&mut engine, src, sink, test_utils::make_flow_transport(3.0));
+        let edge =
+            test_utils::connect(&mut engine, src, sink, test_utils::make_flow_transport(3.0));
 
         engine.step();
 

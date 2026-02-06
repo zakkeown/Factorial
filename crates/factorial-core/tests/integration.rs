@@ -43,12 +43,7 @@ fn builderment_style_chain() {
     );
 
     // Connect: source -> assembler, assembler -> sink.
-    connect(
-        &mut engine,
-        source,
-        assembler,
-        make_flow_transport(10.0),
-    );
+    connect(&mut engine, source, assembler, make_flow_transport(10.0));
     connect(&mut engine, assembler, sink, make_flow_transport(10.0));
 
     // Run 20 ticks.
@@ -118,11 +113,7 @@ fn multi_output_recipe() {
 
     engine.set_processor(
         electrolyzer,
-        make_recipe(
-            vec![(water(), 1)],
-            vec![(oxygen(), 1), (hydrogen(), 1)],
-            2,
-        ),
+        make_recipe(vec![(water(), 1)], vec![(oxygen(), 1), (hydrogen(), 1)], 2),
     );
     engine.set_input_inventory(electrolyzer, simple_inventory(100));
     // Small output: capacity of 4 total items.
@@ -148,14 +139,8 @@ fn multi_output_recipe() {
     // Verify both outputs are present in the electrolyzer's output inventory.
     let o2 = output_quantity(&engine, electrolyzer, oxygen());
     let h2 = output_quantity(&engine, electrolyzer, hydrogen());
-    assert!(
-        o2 > 0,
-        "electrolyzer should produce oxygen, got {o2}"
-    );
-    assert!(
-        h2 > 0,
-        "electrolyzer should produce hydrogen, got {h2}"
-    );
+    assert!(o2 > 0, "electrolyzer should produce oxygen, got {o2}");
+    assert!(h2 > 0, "electrolyzer should produce hydrogen, got {h2}");
 
     // Now continue running. The output capacity is 4, so after 2 cycles
     // (4 items total: 2 oxygen + 2 hydrogen) the output should be full
@@ -394,8 +379,7 @@ fn serialize_round_trip_determinism() {
     }
 
     let serialized = split.serialize().expect("serialize should succeed");
-    let mut restored =
-        Engine::deserialize(&serialized).expect("deserialize should succeed");
+    let mut restored = Engine::deserialize(&serialized).expect("deserialize should succeed");
 
     // Verify the restored engine has the same state hash as the split engine at tick 50.
     assert_eq!(
@@ -472,12 +456,7 @@ fn determinism_identical_runs() {
             iron_assembler,
             make_flow_transport(10.0),
         );
-        connect(
-            &mut engine,
-            iron_assembler,
-            sink,
-            make_flow_transport(10.0),
-        );
+        connect(&mut engine, iron_assembler, sink, make_flow_transport(10.0));
 
         // Connect copper chain.
         connect(
@@ -505,15 +484,12 @@ fn determinism_identical_runs() {
     let run1 = build_and_run();
     let run2 = build_and_run();
 
-    assert_eq!(
-        run1.len(),
-        run2.len(),
-        "both runs should have 100 hashes"
-    );
+    assert_eq!(run1.len(), run2.len(), "both runs should have 100 hashes");
 
     for (tick, (h1, h2)) in run1.iter().zip(run2.iter()).enumerate() {
         assert_eq!(
-            h1, h2,
+            h1,
+            h2,
             "state hashes diverged at tick {}: run1={h1}, run2={h2}",
             tick + 1,
         );
@@ -606,8 +582,18 @@ fn mixed_transport_factory() {
         100,
         100,
     );
-    connect(&mut engine, iron_source, assembler, make_flow_transport(10.0));
-    connect(&mut engine, copper_source, assembler, make_item_transport(5));
+    connect(
+        &mut engine,
+        iron_source,
+        assembler,
+        make_flow_transport(10.0),
+    );
+    connect(
+        &mut engine,
+        copper_source,
+        assembler,
+        make_item_transport(5),
+    );
     connect(&mut engine, assembler, buffer, make_batch_transport(5, 3));
     connect(&mut engine, buffer, sink, make_vehicle_transport(10, 2));
     for _ in 0..50 {

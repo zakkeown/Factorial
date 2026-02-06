@@ -67,9 +67,12 @@ mod tests {
         let mut nodes: SlotMap<NodeId, ()> = SlotMap::with_key();
         let node = nodes.insert(());
         storage.inventories.insert(node, Inventory::new(1, 1, 50));
-        storage
-            .power_consumers
-            .insert(node, PowerConsumer { demand: Fixed64::from_num(90) });
+        storage.power_consumers.insert(
+            node,
+            PowerConsumer {
+                demand: Fixed64::from_num(90),
+            },
+        );
         storage.remove_node(node);
         assert!(!storage.inventories.contains_key(node));
         assert!(!storage.power_consumers.contains_key(node));

@@ -263,7 +263,6 @@ impl RollingWindow {
         let total = self.committed_total + self.current;
         Fixed64::from_num(total) / Fixed64::from_num(effective_count)
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -337,12 +336,14 @@ impl NodeStats {
     }
 
     fn record_produced(&mut self, item_type: ItemTypeId, quantity: u32) {
-        self.get_or_create_production(item_type).add(quantity as u64);
+        self.get_or_create_production(item_type)
+            .add(quantity as u64);
         self.current_state = NodeState::Working;
     }
 
     fn record_consumed(&mut self, item_type: ItemTypeId, quantity: u32) {
-        self.get_or_create_consumption(item_type).add(quantity as u64);
+        self.get_or_create_consumption(item_type)
+            .add(quantity as u64);
         self.current_state = NodeState::Working;
     }
 
@@ -580,7 +581,8 @@ impl ProductionStats {
                 quantity,
                 ..
             } => {
-                self.get_or_create_node(*node).record_produced(*item_type, *quantity);
+                self.get_or_create_node(*node)
+                    .record_produced(*item_type, *quantity);
                 self.get_or_create_global(*item_type)
                     .production
                     .add(*quantity as u64);
@@ -592,7 +594,8 @@ impl ProductionStats {
                 quantity,
                 ..
             } => {
-                self.get_or_create_node(*node).record_consumed(*item_type, *quantity);
+                self.get_or_create_node(*node)
+                    .record_consumed(*item_type, *quantity);
                 self.get_or_create_global(*item_type)
                     .consumption
                     .add(*quantity as u64);
@@ -606,9 +609,7 @@ impl ProductionStats {
                 self.get_or_create_node(*node).record_resumed();
             }
 
-            Event::ItemDelivered {
-                edge, quantity, ..
-            } => {
+            Event::ItemDelivered { edge, quantity, .. } => {
                 self.get_or_create_edge(*edge).record_delivered(*quantity);
             }
 
