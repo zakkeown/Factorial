@@ -176,8 +176,9 @@ pub struct EventBuffer {
 
 impl EventBuffer {
     /// Create a new ring buffer with the given capacity.
+    /// A capacity of 0 is clamped to 1.
     pub fn new(capacity: usize) -> Self {
-        assert!(capacity > 0, "EventBuffer capacity must be > 0");
+        let capacity = capacity.max(1);
         Self {
             events: (0..capacity).map(|_| None).collect(),
             head: 0,
@@ -1490,5 +1491,14 @@ mod tests {
         bus.deliver();
 
         assert_eq!(*order.borrow(), vec!['A', 'B', 'C']);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 29: Zero capacity is clamped to 1
+    // -----------------------------------------------------------------------
+    #[test]
+    fn event_buffer_zero_capacity_clamped() {
+        let buf = EventBuffer::new(0);
+        assert_eq!(buf.capacity(), 1);
     }
 }

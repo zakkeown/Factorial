@@ -35,7 +35,7 @@ impl TickProfile {
             ("post_tick", self.post_tick),
             ("bookkeeping", self.bookkeeping),
         ];
-        phases.into_iter().max_by_key(|(_, d)| *d).unwrap()
+        phases.into_iter().max_by_key(|(_, d)| *d).expect("phases array is non-empty")
     }
 }
 
@@ -64,63 +64,15 @@ mod tests {
     use std::time::Duration;
 
     use crate::engine::Engine;
-    use crate::fixed::Fixed64;
     use crate::id::*;
     use crate::item::Inventory;
     use crate::processor::*;
     use crate::sim::SimulationStrategy;
+    use crate::test_utils::{iron, gear, building, simple_inventory, make_source, make_recipe};
 
     // -----------------------------------------------------------------------
-    // Helpers
+    // Helpers (profiling-specific)
     // -----------------------------------------------------------------------
-
-    fn iron() -> ItemTypeId {
-        ItemTypeId(0)
-    }
-    fn gear() -> ItemTypeId {
-        ItemTypeId(2)
-    }
-    fn building() -> BuildingTypeId {
-        BuildingTypeId(0)
-    }
-
-    fn simple_inventory(capacity: u32) -> Inventory {
-        Inventory::new(1, 1, capacity)
-    }
-
-    fn make_source(item: ItemTypeId, rate: f64) -> Processor {
-        Processor::Source(SourceProcessor {
-            output_type: item,
-            base_rate: Fixed64::from_num(rate),
-            depletion: Depletion::Infinite,
-            accumulated: Fixed64::from_num(0.0),
-            initial_properties: None,
-        })
-    }
-
-    fn make_recipe(
-        inputs: Vec<(ItemTypeId, u32)>,
-        outputs: Vec<(ItemTypeId, u32)>,
-        duration: u32,
-    ) -> Processor {
-        Processor::Fixed(FixedRecipe {
-            inputs: inputs
-                .into_iter()
-                .map(|(item_type, quantity)| RecipeInput {
-                    item_type,
-                    quantity,
-                })
-                .collect(),
-            outputs: outputs
-                .into_iter()
-                .map(|(item_type, quantity)| RecipeOutput {
-                    item_type,
-                    quantity,
-                })
-                .collect(),
-            duration,
-        })
-    }
 
     /// Add a single node to the engine and return its NodeId.
     fn add_node(engine: &mut Engine) -> NodeId {
@@ -321,7 +273,7 @@ mod tests {
             make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 5),
         );
         let mut input_inv = simple_inventory(100);
-        input_inv.input_slots[0].add(iron(), 10);
+        let _ = input_inv.input_slots[0].add(iron(), 10);
         engine.set_input_inventory(node, input_inv);
         engine.set_output_inventory(node, simple_inventory(100));
 
@@ -374,7 +326,7 @@ mod tests {
             make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 2),
         );
         let mut input_inv = simple_inventory(100);
-        input_inv.input_slots[0].add(iron(), 50);
+        let _ = input_inv.input_slots[0].add(iron(), 50);
         engine.set_input_inventory(node, input_inv);
         engine.set_output_inventory(node, Inventory::new(1, 1, 0)); // zero capacity
 
@@ -402,7 +354,7 @@ mod tests {
             make_recipe(vec![(iron(), 3), (gear(), 2)], vec![(ItemTypeId(5), 1)], 10),
         );
         let mut input_inv = simple_inventory(100);
-        input_inv.input_slots[0].add(iron(), 1);
+        let _ = input_inv.input_slots[0].add(iron(), 1);
         engine.set_input_inventory(node, input_inv);
         engine.set_output_inventory(node, simple_inventory(100));
 
@@ -485,7 +437,7 @@ mod tests {
         // just list what's available with need=0.
         engine.set_processor(node, make_source(iron(), 2.0));
         let mut input_inv = simple_inventory(100);
-        input_inv.input_slots[0].add(iron(), 7);
+        let _ = input_inv.input_slots[0].add(iron(), 7);
         engine.set_input_inventory(node, input_inv);
         engine.set_output_inventory(node, simple_inventory(100));
 

@@ -103,8 +103,9 @@ impl CommandQueue {
                 self.history.push((tick, cmd.clone()));
             }
             // Trim history if over limit
-            while self.history.len() > self.max_history {
-                self.history.remove(0);
+            let excess = self.history.len().saturating_sub(self.max_history);
+            if excess > 0 {
+                self.history.drain(..excess);
             }
         }
 

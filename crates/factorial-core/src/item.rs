@@ -38,7 +38,7 @@ impl ItemStack {
 }
 
 /// Inventory slot that holds either fungible counts or instance references.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct InventorySlot {
     /// Fungible item stacks keyed by item type.
     pub stacks: Vec<ItemStack>,
@@ -54,6 +54,7 @@ impl InventorySlot {
     }
 
     /// Add fungible items. Returns the amount that didn't fit.
+    #[must_use = "overflow count indicates items that did not fit"]
     pub fn add(&mut self, item_type: ItemTypeId, quantity: u32) -> u32 {
         let current_total: u32 = self.stacks.iter().map(|s| s.quantity).sum();
         let space = self.capacity.saturating_sub(current_total);
@@ -72,6 +73,7 @@ impl InventorySlot {
     }
 
     /// Remove fungible items. Returns the amount actually removed.
+    #[must_use = "returns the quantity actually removed, which may be less than requested"]
     pub fn remove(&mut self, item_type: ItemTypeId, quantity: u32) -> u32 {
         if let Some(stack) = self.stacks.iter_mut().find(|s| s.item_type == item_type) {
             let to_remove = quantity.min(stack.quantity);
@@ -152,7 +154,7 @@ impl InventorySlot {
 }
 
 /// Inventory for a building node. Multiple input/output slots.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Inventory {
     pub input_slots: Vec<InventorySlot>,
     pub output_slots: Vec<InventorySlot>,
@@ -197,7 +199,7 @@ mod tests {
     fn inventory_slot_remove_more_than_available() {
         let mut slot = InventorySlot::new(100);
         let iron = ItemTypeId(0);
-        slot.add(iron, 5);
+        let _ = slot.add(iron, 5);
         let removed = slot.remove(iron, 10);
         assert_eq!(removed, 5);
         assert_eq!(slot.quantity(iron), 0);
@@ -208,8 +210,8 @@ mod tests {
         let mut slot = InventorySlot::new(100);
         let iron = ItemTypeId(0);
         let copper = ItemTypeId(1);
-        slot.add(iron, 30);
-        slot.add(copper, 20);
+        let _ = slot.add(iron, 30);
+        let _ = slot.add(copper, 20);
         assert_eq!(slot.total(), 50);
         assert_eq!(slot.quantity(iron), 30);
         assert_eq!(slot.quantity(copper), 20);
@@ -219,7 +221,7 @@ mod tests {
     fn inventory_has_space() {
         let mut slot = InventorySlot::new(10);
         assert!(slot.has_space());
-        slot.add(ItemTypeId(0), 10);
+        let _ = slot.add(ItemTypeId(0), 10);
         assert!(!slot.has_space());
     }
 
@@ -252,7 +254,7 @@ mod tests {
         let mut slot = InventorySlot::new(100);
         let iron = ItemTypeId(0);
         let temp = PropertyId(0);
-        slot.add(iron, 10);
+        let _ = slot.add(iron, 10);
         assert!(slot.set_stack_property(iron, temp, Fixed64::from_num(95)));
         let props = slot.get_properties(iron).unwrap();
         assert_eq!(props.get(&temp).copied(), Some(Fixed64::from_num(95)));

@@ -1127,7 +1127,8 @@ pub unsafe extern "C" fn factorial_deserialize(
     match catch_unwind(std::panic::AssertUnwindSafe(|| {
         let slice = unsafe { std::slice::from_raw_parts(data, len) };
         match Engine::deserialize(slice) {
-            Ok(engine) => {
+            Ok(mut engine) => {
+                register_ffi_event_listeners(&mut engine);
                 unsafe { *out_engine = Box::into_raw(Box::new(FactorialEngine { inner: engine, poisoned: false })) };
                 FactorialResult::Ok
             }
@@ -1576,54 +1577,10 @@ mod tests {
     use super::*;
 
     // -----------------------------------------------------------------------
-    // Helpers
+    // Helpers (imported from core test_utils where possible)
     // -----------------------------------------------------------------------
 
-    fn iron() -> ItemTypeId {
-        ItemTypeId(0)
-    }
-
-    fn gear() -> ItemTypeId {
-        ItemTypeId(2)
-    }
-
-    fn make_source(item: ItemTypeId, rate: f64) -> Processor {
-        Processor::Source(SourceProcessor {
-            output_type: item,
-            base_rate: Fixed64::from_num(rate),
-            depletion: Depletion::Infinite,
-            accumulated: Fixed64::from_num(0.0),
-            initial_properties: None,
-        })
-    }
-
-    fn make_recipe(
-        inputs: Vec<(ItemTypeId, u32)>,
-        outputs: Vec<(ItemTypeId, u32)>,
-        duration: u32,
-    ) -> Processor {
-        Processor::Fixed(FixedRecipe {
-            inputs: inputs
-                .into_iter()
-                .map(|(item_type, quantity)| RecipeInput {
-                    item_type,
-                    quantity,
-                })
-                .collect(),
-            outputs: outputs
-                .into_iter()
-                .map(|(item_type, quantity)| RecipeOutput {
-                    item_type,
-                    quantity,
-                })
-                .collect(),
-            duration,
-        })
-    }
-
-    fn simple_inventory(capacity: u32) -> Inventory {
-        Inventory::new(1, 1, capacity)
-    }
+    use factorial_core::test_utils::{iron, gear, make_source, make_recipe, simple_inventory};
 
     // -----------------------------------------------------------------------
     // Test 1: Create and destroy engine lifecycle
@@ -2364,7 +2321,7 @@ mod tests {
             make_recipe(vec![(iron(), 2)], vec![(gear(), 1)], 3),
         );
         let mut consumer_input = simple_inventory(100);
-        consumer_input.input_slots[0].add(iron(), 10);
+        let _ = consumer_input.input_slots[0].add(iron(), 10);
         engine.inner.set_input_inventory(consumer_id, consumer_input);
         engine.inner.set_output_inventory(consumer_id, simple_inventory(100));
 

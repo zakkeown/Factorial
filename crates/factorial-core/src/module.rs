@@ -175,7 +175,7 @@ mod tests {
         fn on_tick(&mut self, ctx: &mut ModuleContext<'_>) {
             for (_node_id, inventory) in ctx.inputs.iter_mut() {
                 for slot in &mut inventory.input_slots {
-                    slot.add(self.item_type, self.quantity);
+                    let _ = slot.add(self.item_type, self.quantity);
                 }
             }
         }

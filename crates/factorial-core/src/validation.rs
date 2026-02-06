@@ -110,14 +110,14 @@ pub fn diff_engines(a: &Engine, b: &Engine) -> StateDiff {
             // Compare input inventories
             let inv_a = a.inputs.get(node);
             let inv_b = b.inputs.get(node);
-            if !inventories_equal(inv_a, inv_b) {
+            if inv_a != inv_b {
                 mismatches.push("input_inventory");
             }
 
             // Compare output inventories
             let out_a = a.outputs.get(node);
             let out_b = b.outputs.get(node);
-            if !inventories_equal(out_a, out_b) {
+            if out_a != out_b {
                 mismatches.push("output_inventory");
             }
 
@@ -166,38 +166,6 @@ pub fn diff_engines(a: &Engine, b: &Engine) -> StateDiff {
         subsystem_diffs,
         node_diffs,
         edge_diffs,
-    }
-}
-
-/// Compare two optional Inventory references for equality.
-fn inventories_equal(
-    a: Option<&crate::item::Inventory>,
-    b: Option<&crate::item::Inventory>,
-) -> bool {
-    match (a, b) {
-        (None, None) => true,
-        (Some(_), None) | (None, Some(_)) => false,
-        (Some(inv_a), Some(inv_b)) => {
-            // Compare input slots
-            if inv_a.input_slots.len() != inv_b.input_slots.len() {
-                return false;
-            }
-            for (sa, sb) in inv_a.input_slots.iter().zip(inv_b.input_slots.iter()) {
-                if sa.capacity != sb.capacity || sa.stacks != sb.stacks {
-                    return false;
-                }
-            }
-            // Compare output slots
-            if inv_a.output_slots.len() != inv_b.output_slots.len() {
-                return false;
-            }
-            for (sa, sb) in inv_a.output_slots.iter().zip(inv_b.output_slots.iter()) {
-                if sa.capacity != sb.capacity || sa.stacks != sb.stacks {
-                    return false;
-                }
-            }
-            true
-        }
     }
 }
 

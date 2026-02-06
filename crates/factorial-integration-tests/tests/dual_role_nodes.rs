@@ -29,7 +29,7 @@ fn dual_role_node_recipe_plus_power() {
     );
 
     // Seed the turbine's input inventory with steam so it can run recipes.
-    engine
+    let _ = engine
         .get_input_inventory_mut(turbine)
         .unwrap()
         .input_slots[0]

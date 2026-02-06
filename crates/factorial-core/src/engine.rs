@@ -105,6 +105,16 @@ pub struct Engine {
 
 impl Engine {
     /// Create a new engine with the given simulation strategy.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use factorial_core::engine::Engine;
+    /// use factorial_core::sim::SimulationStrategy;
+    ///
+    /// let engine = Engine::new(SimulationStrategy::Tick);
+    /// assert_eq!(engine.sim_state.tick, 0);
+    /// ```
     pub fn new(strategy: SimulationStrategy) -> Self {
         Self {
             graph: ProductionGraph::new(),
@@ -284,10 +294,9 @@ impl Engine {
     /// Set a junction configuration for a node.
     pub fn set_junction(&mut self, node: NodeId, junction: Junction) {
         self.junctions.insert(node, junction);
-        self.junction_states
-            .entry(node)
-            .unwrap()
-            .or_insert_with(JunctionState::default);
+        if let Some(entry) = self.junction_states.entry(node) {
+            entry.or_default();
+        }
         self.dirty.mark_node(node);
     }
 
@@ -413,17 +422,29 @@ impl Engine {
     ///
     /// - **Tick mode**: `dt` is ignored; exactly one step runs.
     /// - **Delta mode**: `dt` is accumulated; as many fixed steps run as fit.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use factorial_core::engine::Engine;
+    /// use factorial_core::sim::SimulationStrategy;
+    ///
+    /// let mut engine = Engine::new(SimulationStrategy::Tick);
+    /// let result = engine.advance(0);
+    /// assert_eq!(engine.sim_state.tick, 1);
+    /// ```
     pub fn advance(&mut self, dt: Ticks) -> AdvanceResult {
         if self.paused {
             return AdvanceResult::default();
         }
         let mut result = AdvanceResult::default();
 
-        match self.strategy.clone() {
+        match &self.strategy {
             SimulationStrategy::Tick => {
                 self.step_internal(&mut result);
             }
             SimulationStrategy::Delta { fixed_timestep } => {
+                let fixed_timestep = *fixed_timestep;
                 self.sim_state.accumulator += dt;
                 let step_size = fixed_timestep.max(1);
                 while self.sim_state.accumulator >= step_size {
@@ -559,67 +580,64 @@ impl Engine {
             .collect();
 
         for (node_id, junction) in junction_nodes {
-            match &junction {
-                Junction::Splitter(config) => {
-                    let outputs = self.graph.get_outputs(node_id);
-                    if outputs.is_empty() {
-                        continue;
-                    }
+            if let Junction::Splitter(config) = &junction {
+                let outputs = self.graph.get_outputs(node_id);
+                if outputs.is_empty() {
+                    continue;
+                }
 
-                    let total = match config.filter {
-                        Some(item_type) => self.output_quantity_of(node_id, item_type),
-                        None => self.output_total(node_id),
-                    };
+                let total = match config.filter {
+                    Some(item_type) => self.output_quantity_of(node_id, item_type),
+                    None => self.output_total(node_id),
+                };
 
-                    if total == 0 {
-                        continue;
-                    }
+                if total == 0 {
+                    continue;
+                }
 
-                    let state = self
-                        .junction_states
-                        .get(node_id)
-                        .cloned()
-                        .unwrap_or_default();
+                let state = self
+                    .junction_states
+                    .get(node_id)
+                    .cloned()
+                    .unwrap_or_default();
 
-                    let num_outputs = outputs.len();
-                    // Clone outputs to avoid borrow conflicts.
-                    let outputs_vec: Vec<EdgeId> = outputs.to_vec();
+                let num_outputs = outputs.len();
+                // Clone outputs to avoid borrow conflicts.
+                let outputs_vec: Vec<EdgeId> = outputs.to_vec();
 
-                    match config.policy {
-                        crate::junction::SplitPolicy::RoundRobin => {
-                            // Give each output an equal share, with the
-                            // current round-robin target getting the remainder.
-                            let share = total / num_outputs as u32;
-                            let remainder = total % num_outputs as u32;
-                            for (i, &edge_id) in outputs_vec.iter().enumerate() {
-                                let budget = share
-                                    + if i == state.round_robin_index % num_outputs {
-                                        remainder
-                                    } else {
-                                        0
-                                    };
-                                self.edge_budgets.insert(edge_id, budget);
-                            }
-                        }
-                        crate::junction::SplitPolicy::Priority => {
-                            // All items to the first edge.
-                            for (i, &edge_id) in outputs_vec.iter().enumerate() {
-                                if i == 0 {
-                                    self.edge_budgets.insert(edge_id, total);
+                match config.policy {
+                    crate::junction::SplitPolicy::RoundRobin => {
+                        // Give each output an equal share, with the
+                        // current round-robin target getting the remainder.
+                        let share = total / num_outputs as u32;
+                        let remainder = total % num_outputs as u32;
+                        for (i, &edge_id) in outputs_vec.iter().enumerate() {
+                            let budget = share
+                                + if i == state.round_robin_index % num_outputs {
+                                    remainder
                                 } else {
-                                    self.edge_budgets.insert(edge_id, 0);
-                                }
+                                    0
+                                };
+                            self.edge_budgets.insert(edge_id, budget);
+                        }
+                    }
+                    crate::junction::SplitPolicy::Priority => {
+                        // All items to the first edge.
+                        for (i, &edge_id) in outputs_vec.iter().enumerate() {
+                            if i == 0 {
+                                self.edge_budgets.insert(edge_id, total);
+                            } else {
+                                self.edge_budgets.insert(edge_id, 0);
                             }
                         }
-                        crate::junction::SplitPolicy::EvenSplit => {
-                            let share = total / num_outputs as u32;
-                            for &edge_id in &outputs_vec {
-                                self.edge_budgets.insert(edge_id, share);
-                            }
+                    }
+                    crate::junction::SplitPolicy::EvenSplit => {
+                        let share = total / num_outputs as u32;
+                        for &edge_id in &outputs_vec {
+                            self.edge_budgets.insert(edge_id, share);
                         }
                     }
                 }
-                _ => {} // Inserter and Merger don't need budgets.
             }
         }
 
@@ -637,7 +655,7 @@ impl Engine {
             // Check if any edge from this node already has an item_filter.
             // If ALL edges have filters, they handle their own routing.
             let has_unfiltered = outputs.iter().any(|&eid| {
-                self.graph.get_edge(eid).map_or(true, |e| e.item_filter.is_none())
+                self.graph.get_edge(eid).is_none_or(|e| e.item_filter.is_none())
             });
             if !has_unfiltered { continue; }
 
@@ -650,7 +668,7 @@ impl Engine {
             let outputs_vec: Vec<EdgeId> = outputs.to_vec();
             for (i, &edge_id) in outputs_vec.iter().enumerate() {
                 // Only set budget for unfiltered edges (filtered edges handle themselves).
-                if self.graph.get_edge(edge_id).map_or(false, |e| e.item_filter.is_some()) {
+                if self.graph.get_edge(edge_id).is_some_and(|e| e.item_filter.is_some()) {
                     continue;
                 }
                 let budget = share + if i == 0 { remainder } else { 0 };
@@ -756,10 +774,10 @@ impl Engine {
         let captured_properties = if result.items_moved > 0 {
             self.outputs.get(source).and_then(|output_inv| {
                 for slot in &output_inv.output_slots {
-                    if let Some(props) = slot.get_properties(item_type) {
-                        if !props.is_empty() {
-                            return Some(props.clone());
-                        }
+                    if let Some(props) = slot.get_properties(item_type)
+                        && !props.is_empty()
+                    {
+                        return Some(props.clone());
                     }
                 }
                 None
@@ -999,10 +1017,10 @@ impl Engine {
         // Read properties from the input inventory.
         let input_inv = self.inputs.get(node_id)?;
         for slot in &input_inv.input_slots {
-            if let Some(props) = slot.get_properties(input_type) {
-                if !props.is_empty() {
-                    return Some(props.clone());
-                }
+            if let Some(props) = slot.get_properties(input_type)
+                && !props.is_empty()
+            {
+                return Some(props.clone());
             }
         }
         None
@@ -1089,11 +1107,10 @@ impl Engine {
             let order_vec = order.to_vec();
             for &node_id in &order_vec {
                 if let Some(junction) = self.junctions.get(node_id).cloned() {
-                    let state = self
-                        .junction_states
-                        .entry(node_id)
-                        .unwrap()
-                        .or_insert_with(JunctionState::default);
+                    let Some(entry) = self.junction_states.entry(node_id) else {
+                        continue;
+                    };
+                    let state = entry.or_default();
                     // Process junction based on type.
                     match &junction {
                         Junction::Inserter(config) => {
@@ -1734,7 +1751,7 @@ mod tests {
         engine.set_processor(node, make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 5));
 
         let mut input_inv = simple_inventory(100);
-        input_inv.input_slots[0].add(iron(), 10);
+        let _ = input_inv.input_slots[0].add(iron(), 10);
         engine.set_input_inventory(node, input_inv);
         engine.set_output_inventory(node, simple_inventory(100));
 
@@ -1882,7 +1899,7 @@ mod tests {
         // But on the first tick, transport hasn't moved anything yet.
         // Let's pre-fill to verify B processes after A.
         let mut b_input = simple_inventory(100);
-        b_input.input_slots[0].add(iron(), 5);
+        let _ = b_input.input_slots[0].add(iron(), 5);
         engine.set_input_inventory(b, b_input);
 
         // Step 1.
@@ -2159,7 +2176,7 @@ mod tests {
         engine.set_processor(node, make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 2));
 
         let mut input_inv = simple_inventory(100);
-        input_inv.input_slots[0].add(iron(), 10);
+        let _ = input_inv.input_slots[0].add(iron(), 10);
         engine.set_input_inventory(node, input_inv);
         engine.set_output_inventory(node, simple_inventory(100));
 
@@ -2243,7 +2260,7 @@ mod tests {
         engine.set_processor(node, make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 3));
 
         let mut input_inv = simple_inventory(100);
-        input_inv.input_slots[0].add(iron(), 5);
+        let _ = input_inv.input_slots[0].add(iron(), 5);
         engine.set_input_inventory(node, input_inv);
         engine.set_output_inventory(node, simple_inventory(100));
 
@@ -2436,7 +2453,7 @@ mod tests {
         // 1 iron -> 1 gear, 2 ticks.
         engine.set_processor(node, make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 2));
         let mut input_inv = simple_inventory(100);
-        input_inv.input_slots[0].add(iron(), 1);
+        let _ = input_inv.input_slots[0].add(iron(), 1);
         engine.set_input_inventory(node, input_inv);
         engine.set_output_inventory(node, simple_inventory(100));
 
@@ -2562,7 +2579,7 @@ mod tests {
         // 2 iron -> 1 gear, 1 tick (instant).
         engine.set_processor(node, make_recipe(vec![(iron(), 2)], vec![(gear(), 1)], 1));
         let mut input_inv = simple_inventory(100);
-        input_inv.input_slots[0].add(iron(), 10);
+        let _ = input_inv.input_slots[0].add(iron(), 10);
         engine.set_input_inventory(node, input_inv);
         engine.set_output_inventory(node, simple_inventory(100));
 
@@ -2642,7 +2659,7 @@ mod tests {
         // 1 iron -> 1 gear, 5 ticks.
         engine.set_processor(node, make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 5));
         let mut input_inv = simple_inventory(100);
-        input_inv.input_slots[0].add(iron(), 10);
+        let _ = input_inv.input_slots[0].add(iron(), 10);
         engine.set_input_inventory(node, input_inv);
         engine.set_output_inventory(node, simple_inventory(100));
 
@@ -2798,7 +2815,7 @@ mod tests {
         // 1 iron -> 1 gear, 4 ticks.
         engine.set_processor(node, make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 4));
         let mut input_inv = simple_inventory(100);
-        input_inv.input_slots[0].add(iron(), 10);
+        let _ = input_inv.input_slots[0].add(iron(), 10);
         engine.set_input_inventory(node, input_inv);
         engine.set_output_inventory(node, simple_inventory(100));
 
@@ -3480,7 +3497,7 @@ mod tests {
         );
 
         // Seed input.
-        engine.inputs.get_mut(electrolyzer).unwrap().input_slots[0].add(water, 20);
+        let _ = engine.inputs.get_mut(electrolyzer).unwrap().input_slots[0].add(water, 20);
 
         let o2_sink = test_utils::add_node(
             &mut engine,
@@ -3661,7 +3678,7 @@ mod tests {
             100,
         );
 
-        engine.inputs.get_mut(node).unwrap().input_slots[0].add(iron, 10);
+        let _ = engine.inputs.get_mut(node).unwrap().input_slots[0].add(iron, 10);
 
         for _ in 0..5 {
             engine.step();
@@ -3774,8 +3791,8 @@ mod tests {
             100,
         );
 
-        engine.get_input_inventory_mut(node).unwrap().input_slots[0].add(iron, 5);
-        engine.get_input_inventory_mut(node).unwrap().input_slots[0].add(copper, 5);
+        let _ = engine.get_input_inventory_mut(node).unwrap().input_slots[0].add(iron, 5);
+        let _ = engine.get_input_inventory_mut(node).unwrap().input_slots[0].add(copper, 5);
 
         for _ in 0..5 {
             engine.step();

@@ -367,7 +367,7 @@ impl PowerModule {
         let network_ids: Vec<PowerNetworkId> = self.networks.keys().copied().collect();
 
         for net_id in network_ids {
-            let network = self.networks.get(&net_id).unwrap();
+            let Some(network) = self.networks.get(&net_id) else { continue; };
 
             // Step 1: Sum total production.
             let total_production: Fixed64 = network
@@ -522,7 +522,7 @@ impl PowerModule {
             }
 
             // Update network state.
-            let network = self.networks.get_mut(&net_id).unwrap();
+            let Some(network) = self.networks.get_mut(&net_id) else { continue; };
             network.satisfaction = satisfaction;
 
             let is_brownout = satisfaction < one;

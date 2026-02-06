@@ -181,12 +181,9 @@ pub struct SnapshotEntry {
 
 impl SnapshotRingBuffer {
     /// Create a new ring buffer with the given capacity.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `capacity` is zero.
+    /// A capacity of 0 is clamped to 1.
     pub fn new(capacity: usize) -> Self {
-        assert!(capacity > 0, "SnapshotRingBuffer capacity must be > 0");
+        let capacity = capacity.max(1);
         Self {
             entries: (0..capacity).map(|_| None).collect(),
             head: 0,
@@ -692,7 +689,7 @@ mod tests {
             make_recipe(vec![(iron(), 2)], vec![(gear(), 1)], 5),
         );
         let mut consumer_input = simple_inventory(100);
-        consumer_input.input_slots[0].add(iron(), 10);
+        let _ = consumer_input.input_slots[0].add(iron(), 10);
         engine.set_input_inventory(consumer_node, consumer_input);
         engine.set_output_inventory(consumer_node, simple_inventory(100));
 
@@ -1010,6 +1007,15 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Test 12b: Zero capacity ring buffer is clamped to 1
+    // -----------------------------------------------------------------------
+    #[test]
+    fn serialize_snapshot_ring_buffer_zero_capacity_clamped() {
+        let buffer = SnapshotRingBuffer::new(0);
+        assert_eq!(buffer.capacity(), 1);
+    }
+
+    // -----------------------------------------------------------------------
     // Test 13: Empty engine serializes and deserializes
     // -----------------------------------------------------------------------
     #[test]
@@ -1194,7 +1200,7 @@ mod tests {
             make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 10),
         );
         let mut input_inv = simple_inventory(100);
-        input_inv.input_slots[0].add(iron(), 5);
+        let _ = input_inv.input_slots[0].add(iron(), 5);
         engine.set_input_inventory(node, input_inv);
         engine.set_output_inventory(node, simple_inventory(100));
 

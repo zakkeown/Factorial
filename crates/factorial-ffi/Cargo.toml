@@ -11,5 +11,8 @@ crate-type = ["cdylib", "rlib"]
 factorial-core = { path = "../factorial-core" }
 slotmap = { workspace = true }
 
+[dev-dependencies]
+factorial-core = { path = "../factorial-core", features = ["test-utils"] }
+
 [build-dependencies]
 cbindgen = "0.29"

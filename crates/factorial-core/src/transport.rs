@@ -220,7 +220,10 @@ impl Transport {
             (Transport::Vehicle(vehicle), TransportState::Vehicle(vs)) => {
                 advance_vehicle(vehicle, vs, available)
             }
-            _ => panic!("Transport variant does not match TransportState variant"),
+            _ => {
+                debug_assert!(false, "Transport variant does not match TransportState variant");
+                TransportResult { items_moved: 0, items_delivered: 0 }
+            }
         }
     }
 }
@@ -829,8 +832,9 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test 14: Mismatched variant panics
+    // Test 14: Mismatched variant panics in debug, returns no-op in release
     // -----------------------------------------------------------------------
+    #[cfg(debug_assertions)]
     #[test]
     #[should_panic(expected = "Transport variant does not match TransportState variant")]
     fn mismatched_variant_panics() {
@@ -844,5 +848,21 @@ mod tests {
             pending: 0,
         });
         t.advance(&mut s, 10);
+    }
+
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn mismatched_variant_returns_noop_in_release() {
+        let t = Transport::Flow(FlowTransport {
+            rate: Fixed64::from_num(1),
+            buffer_capacity: Fixed64::from_num(10),
+            latency: 0,
+        });
+        let mut s = TransportState::Batch(BatchState {
+            progress: 0,
+            pending: 0,
+        });
+        let result = t.advance(&mut s, 10);
+        assert_eq!(result, TransportResult { items_moved: 0, items_delivered: 0 });
     }
 }

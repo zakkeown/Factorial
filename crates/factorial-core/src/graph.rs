@@ -257,6 +257,18 @@ impl ProductionGraph {
 
     /// Queue a node to be added. Returns a `PendingNodeId` that can be
     /// resolved to a real `NodeId` after `apply_mutations`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use factorial_core::graph::ProductionGraph;
+    /// use factorial_core::id::BuildingTypeId;
+    ///
+    /// let mut graph = ProductionGraph::new();
+    /// let pending = graph.queue_add_node(BuildingTypeId(1));
+    /// let result = graph.apply_mutations();
+    /// let node_id = result.resolve_node(pending).unwrap();
+    /// ```
     pub fn queue_add_node(&mut self, building_type: BuildingTypeId) -> PendingNodeId {
         let pending = PendingNodeId(self.next_pending_node);
         self.next_pending_node += 1;
@@ -273,6 +285,24 @@ impl ProductionGraph {
     }
 
     /// Queue an edge connecting two existing nodes. Returns a `PendingEdgeId`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use factorial_core::graph::ProductionGraph;
+    /// use factorial_core::id::BuildingTypeId;
+    ///
+    /// let mut graph = ProductionGraph::new();
+    /// let p1 = graph.queue_add_node(BuildingTypeId(1));
+    /// let p2 = graph.queue_add_node(BuildingTypeId(2));
+    /// let result = graph.apply_mutations();
+    /// let n1 = result.resolve_node(p1).unwrap();
+    /// let n2 = result.resolve_node(p2).unwrap();
+    ///
+    /// let pending_edge = graph.queue_connect(n1, n2);
+    /// let result = graph.apply_mutations();
+    /// let edge_id = result.resolve_edge(pending_edge).unwrap();
+    /// ```
     pub fn queue_connect(&mut self, from: NodeId, to: NodeId) -> PendingEdgeId {
         let pending = PendingEdgeId(self.next_pending_edge);
         self.next_pending_edge += 1;

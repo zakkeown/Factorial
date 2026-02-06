@@ -379,7 +379,7 @@ impl FluidModule {
         let network_ids: Vec<FluidNetworkId> = self.networks.keys().copied().collect();
 
         for net_id in network_ids {
-            let network = self.networks.get(&net_id).unwrap();
+            let Some(network) = self.networks.get(&net_id) else { continue; };
 
             // Step 1: Sum total production.
             let total_production: Fixed64 = network
@@ -514,7 +514,7 @@ impl FluidModule {
             }
 
             // Update network state.
-            let network = self.networks.get_mut(&net_id).unwrap();
+            let Some(network) = self.networks.get_mut(&net_id) else { continue; };
             network.pressure = pressure;
 
             let is_low_pressure = pressure < one;
