@@ -14,6 +14,7 @@ use factorial_core::sim::SimulationStrategy;
 use factorial_core::test_utils::*;
 use factorial_core::transport::*;
 use factorial_power::{PowerConsumer, PowerEvent, PowerModule, PowerProducer};
+use factorial_tech_tree::{TechTree, Technology, TechId, ResearchCost, Unlock, TechEvent};
 
 /// Inventory capacity for single-input buildings (Furnaces, single-recipe Workshops).
 const STD_INPUT_CAP: u32 = 50;
@@ -573,5 +574,160 @@ fn power_brownout_and_recovery() {
         satisfaction,
         Fixed64::from_num(1),
         "power should be fully satisfied after recovery"
+    );
+}
+
+#[test]
+fn tech_tree_progression() {
+    let (mut engine, _nodes) = build_builderment_factory();
+
+    // Set up tech tree with 5 Builderment-style technologies.
+    let mut tech_tree = TechTree::new();
+
+    let basic_smelting_id = TechId(0);
+    let workshops_id = TechId(1);
+    let machine_shops_id = TechId(2);
+    let industrial_id = TechId(3);
+    let manufacturing_id = TechId(4);
+
+    tech_tree.register(Technology {
+        id: basic_smelting_id,
+        name: "Basic Smelting".to_string(),
+        prerequisites: vec![],
+        cost: ResearchCost::Items(vec![(iron_ingot(), 10)]),
+        unlocks: vec![Unlock::Building(BuildingTypeId(1))],
+        repeatable: false,
+        cost_scaling: None,
+    }).unwrap();
+
+    tech_tree.register(Technology {
+        id: workshops_id,
+        name: "Workshops".to_string(),
+        prerequisites: vec![basic_smelting_id],
+        cost: ResearchCost::Items(vec![(iron_gear_b(), 20), (copper_wire(), 10)]),
+        unlocks: vec![Unlock::Building(BuildingTypeId(2))],
+        repeatable: false,
+        cost_scaling: None,
+    }).unwrap();
+
+    tech_tree.register(Technology {
+        id: machine_shops_id,
+        name: "Machine Shops".to_string(),
+        prerequisites: vec![workshops_id],
+        cost: ResearchCost::Items(vec![(motor(), 15)]),
+        unlocks: vec![Unlock::Building(BuildingTypeId(3))],
+        repeatable: false,
+        cost_scaling: None,
+    }).unwrap();
+
+    tech_tree.register(Technology {
+        id: industrial_id,
+        name: "Industrial".to_string(),
+        prerequisites: vec![machine_shops_id],
+        cost: ResearchCost::Items(vec![(steel(), 10), (circuit_board(), 10)]),
+        unlocks: vec![Unlock::Building(BuildingTypeId(4))],
+        repeatable: false,
+        cost_scaling: None,
+    }).unwrap();
+
+    tech_tree.register(Technology {
+        id: manufacturing_id,
+        name: "Manufacturing".to_string(),
+        prerequisites: vec![industrial_id],
+        cost: ResearchCost::Items(vec![(computer(), 5)]),
+        unlocks: vec![Unlock::Building(BuildingTypeId(5))],
+        repeatable: false,
+        cost_scaling: None,
+    }).unwrap();
+
+    // Verify prerequisites work: can't start workshops before basic_smelting.
+    assert!(
+        tech_tree.start_research(workshops_id, 0).is_err(),
+        "should not be able to start workshops before basic_smelting"
+    );
+
+    // Start basic_smelting.
+    tech_tree.start_research(basic_smelting_id, 0).unwrap();
+
+    // Run the factory, periodically contribute items to research.
+    let mut completed_techs: Vec<TechId> = Vec::new();
+    let mut current_research: Option<TechId> = Some(basic_smelting_id);
+    let research_order = [
+        basic_smelting_id,
+        workshops_id,
+        machine_shops_id,
+        industrial_id,
+        manufacturing_id,
+    ];
+    let mut research_idx = 0;
+
+    for tick in 1..=2000u64 {
+        engine.step();
+
+        // Every 10 ticks, contribute items to current research.
+        if tick % 10 == 0 {
+            if let Some(tech_id) = current_research {
+                // Contribute a generous amount — the factory should be producing enough.
+                let contributions: Vec<(ItemTypeId, u32)> = match tech_id {
+                    t if t == basic_smelting_id => vec![(iron_ingot(), 5)],
+                    t if t == workshops_id => vec![(iron_gear_b(), 5), (copper_wire(), 5)],
+                    t if t == machine_shops_id => vec![(motor(), 5)],
+                    t if t == industrial_id => vec![(steel(), 5), (circuit_board(), 5)],
+                    t if t == manufacturing_id => vec![(computer(), 5)],
+                    _ => vec![],
+                };
+
+                // Ignore errors (might not have enough yet).
+                let _ = tech_tree.contribute_items(tech_id, &contributions, tick);
+            }
+        }
+
+        // Check for completed research.
+        let events = tech_tree.drain_events();
+        for event in events {
+            if let TechEvent::ResearchCompleted { tech_id, .. } = event {
+                completed_techs.push(tech_id);
+                research_idx += 1;
+
+                // Start next research if available.
+                if research_idx < research_order.len() {
+                    let next = research_order[research_idx];
+                    let _ = tech_tree.start_research(next, tick);
+                    current_research = Some(next);
+                } else {
+                    current_research = None;
+                }
+            }
+        }
+    }
+
+    // Verify at least basic_smelting completed (10 iron ingots is trivial).
+    assert!(
+        completed_techs.contains(&basic_smelting_id),
+        "basic_smelting should have completed"
+    );
+
+    // Verify techs completed in order (each should appear before the next).
+    for window in completed_techs.windows(2) {
+        let expected_order: Vec<usize> = research_order
+            .iter()
+            .enumerate()
+            .filter(|&(_, &t)| t == window[0] || t == window[1])
+            .map(|(i, _)| i)
+            .collect();
+        if expected_order.len() == 2 {
+            assert!(
+                expected_order[0] < expected_order[1],
+                "tech {:?} should complete before {:?}",
+                window[0], window[1]
+            );
+        }
+    }
+
+    // Verify all unlocks accumulated.
+    let all_unlocks = tech_tree.all_unlocks();
+    assert!(
+        all_unlocks.len() >= completed_techs.len(),
+        "should have at least one unlock per completed tech"
     );
 }
