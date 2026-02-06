@@ -3243,22 +3243,9 @@ mod tests {
         // Initial state: round_robin_index = 0.
         assert_eq!(engine.junction_states.get(a).unwrap().round_robin_index, 0);
 
-        // Step: splitter should advance round_robin_index.
+        // Step: phase_transport uses index 0 for budgeting, then phase_component
+        // advances it to (0 + 1) % 2 = 1.
         engine.step();
-        let state = engine.junction_states.get(a).unwrap();
-        assert_eq!(
-            state.round_robin_index, 0,
-            "after 1 step with 2 outputs, (0 + 1) % 2 = 1, but then step resets on next read; \
-             expected 0 since RR wraps: (0+1)%2=1"
-        );
-        // Actually: the junction processes in phase_component, starting from index 0:
-        // (0 + 1) % 2 = 1. So it should be 1 after first step.
-        // But dirty.mark_clean() doesn't affect junction_states.
-        // Let me re-check: junction_states.entry().or_insert_with(default) returns the existing
-        // state, then we do (0+1)%2=1. So after step, index should be 1.
-        // Wait, let me re-read: the set_junction call already created the state with index=0.
-        // In phase_component, we get the existing state, compute (0+1)%2 = 1.
-        // So after one step, the index should be 1.
         let state = engine.junction_states.get(a).unwrap();
         assert_eq!(state.round_robin_index, 1);
 
