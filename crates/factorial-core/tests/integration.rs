@@ -301,6 +301,7 @@ fn modifier_speed_effect() {
                 vec![Modifier {
                     id: ModifierId(0),
                     kind: ModifierKind::Speed(speed),
+                    stacking: StackingRule::default(),
                 }],
             );
         }

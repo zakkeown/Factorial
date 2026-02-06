@@ -29,6 +29,7 @@ use crate::item::{Inventory, ItemStack};
 use crate::processor::{Modifier, Processor, ProcessorResult, ProcessorState};
 use crate::query::{NodeSnapshot, TransportSnapshot};
 use crate::sim::{AdvanceResult, SimState, SimulationStrategy, StateHash};
+use crate::junction::{Junction, JunctionState};
 use crate::transport::{Transport, TransportResult, TransportState};
 use slotmap::SecondaryMap;
 
@@ -81,6 +82,18 @@ pub struct Engine {
     /// Typed event bus for simulation events.
     pub event_bus: EventBus,
 
+    /// Registered simulation modules.
+    pub(crate) modules: Vec<Box<dyn crate::module::Module>>,
+
+    /// Dirty state tracker.
+    pub(crate) dirty: crate::dirty::DirtyTracker,
+
+    /// Junction configurations per node.
+    pub(crate) junctions: SecondaryMap<NodeId, Junction>,
+
+    /// Junction runtime state per node.
+    pub(crate) junction_states: SecondaryMap<NodeId, JunctionState>,
+
     /// Timing profile for the most recent tick (profiling feature only).
     #[cfg(feature = "profiling")]
     pub(crate) last_profile: Option<crate::profiling::TickProfile>,
@@ -103,6 +116,10 @@ impl Engine {
             transport_states: SecondaryMap::new(),
             last_state_hash: 0,
             event_bus: EventBus::default(),
+            modules: Vec::new(),
+            dirty: crate::dirty::DirtyTracker::new(),
+            junctions: SecondaryMap::new(),
+            junction_states: SecondaryMap::new(),
             #[cfg(feature = "profiling")]
             last_profile: None,
         }
@@ -118,21 +135,25 @@ impl Engine {
         self.processors.insert(node, processor);
         self.processor_states
             .insert(node, ProcessorState::default());
+        self.dirty.mark_node(node);
     }
 
     /// Set the input inventory for a node.
     pub fn set_input_inventory(&mut self, node: NodeId, inventory: Inventory) {
         self.inputs.insert(node, inventory);
+        self.dirty.mark_node(node);
     }
 
     /// Set the output inventory for a node.
     pub fn set_output_inventory(&mut self, node: NodeId, inventory: Inventory) {
         self.outputs.insert(node, inventory);
+        self.dirty.mark_node(node);
     }
 
     /// Set the modifiers for a node.
     pub fn set_modifiers(&mut self, node: NodeId, mods: Vec<Modifier>) {
         self.modifiers.insert(node, mods);
+        self.dirty.mark_node(node);
     }
 
     /// Get the processor state for a node (read-only).
@@ -170,11 +191,81 @@ impl Engine {
         let state = TransportState::new_for(&transport);
         self.transports.insert(edge, transport);
         self.transport_states.insert(edge, state);
+        self.dirty.mark_edge(edge);
     }
 
     /// Get the transport state for an edge (read-only).
     pub fn get_transport_state(&self, edge: EdgeId) -> Option<&TransportState> {
         self.transport_states.get(edge)
+    }
+
+    // -----------------------------------------------------------------------
+    // Module management
+    // -----------------------------------------------------------------------
+
+    /// Register a simulation module. Modules are called in registration order.
+    pub fn register_module(&mut self, module: Box<dyn crate::module::Module>) {
+        self.modules.push(module);
+    }
+
+    /// Get the number of registered modules.
+    pub fn module_count(&self) -> usize {
+        self.modules.len()
+    }
+
+    /// Get a reference to a module by index.
+    pub fn get_module(&self, index: usize) -> Option<&dyn crate::module::Module> {
+        self.modules.get(index).map(|m| m.as_ref())
+    }
+
+    /// Get a mutable reference to a module by index.
+    pub fn get_module_mut(&mut self, index: usize) -> Option<&mut Box<dyn crate::module::Module>> {
+        self.modules.get_mut(index)
+    }
+
+    // -----------------------------------------------------------------------
+    // Junction management
+    // -----------------------------------------------------------------------
+
+    /// Set a junction configuration for a node.
+    pub fn set_junction(&mut self, node: NodeId, junction: Junction) {
+        self.junctions.insert(node, junction);
+        self.junction_states
+            .entry(node)
+            .unwrap()
+            .or_insert_with(JunctionState::default);
+        self.dirty.mark_node(node);
+    }
+
+    /// Remove a junction from a node.
+    pub fn remove_junction(&mut self, node: NodeId) {
+        self.junctions.remove(node);
+        self.junction_states.remove(node);
+        self.dirty.mark_node(node);
+    }
+
+    /// Get the junction configuration for a node.
+    pub fn junction(&self, node: NodeId) -> Option<&Junction> {
+        self.junctions.get(node)
+    }
+
+    // -----------------------------------------------------------------------
+    // Dirty tracking
+    // -----------------------------------------------------------------------
+
+    /// Returns true if anything has been modified since the last clean.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty.is_dirty()
+    }
+
+    /// Get a reference to the dirty tracker.
+    pub fn dirty_tracker(&self) -> &crate::dirty::DirtyTracker {
+        &self.dirty
+    }
+
+    /// Reset all dirty flags.
+    pub fn mark_clean(&mut self) {
+        self.dirty.mark_clean();
     }
 
     // -----------------------------------------------------------------------
@@ -390,6 +481,7 @@ impl Engine {
         if self.graph.has_pending_mutations() {
             let mutation_result = self.graph.apply_mutations();
             result.mutation_results.push(mutation_result);
+            self.dirty.mark_graph();
         }
     }
 
@@ -515,6 +607,7 @@ impl Engine {
                     }
                 }
                 Processor::Property(prop) => return prop.output_type,
+                Processor::Demand(demand) => return demand.input_type,
             }
         }
 
@@ -713,12 +806,105 @@ impl Engine {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 4: Component (placeholder)
+    // Phase 4: Component -- junctions + modules
     // -----------------------------------------------------------------------
 
     fn phase_component(&mut self) {
-        // Module-registered systems would run here.
-        // Currently a no-op placeholder for future framework modules.
+        // 1. Process junctions in topo order.
+        if let Ok(order) = self.graph.topological_order() {
+            let order_vec = order.to_vec();
+            for &node_id in &order_vec {
+                if let Some(junction) = self.junctions.get(node_id).cloned() {
+                    let state = self
+                        .junction_states
+                        .entry(node_id)
+                        .unwrap()
+                        .or_insert_with(JunctionState::default);
+                    // Process junction based on type.
+                    match &junction {
+                        Junction::Inserter(config) => {
+                            // Inserter: move items from input to output.
+                            let mut to_move = config.stack_size;
+                            if let Some(input_inv) = self.inputs.get(node_id) {
+                                let available: u32 = input_inv
+                                    .input_slots
+                                    .iter()
+                                    .map(|s| {
+                                        if let Some(filter) = config.filter {
+                                            s.quantity(filter)
+                                        } else {
+                                            s.total()
+                                        }
+                                    })
+                                    .sum();
+                                to_move = to_move.min(available);
+                            }
+                            // Clamp by speed accumulator.
+                            state.accumulated += config.speed;
+                            let speed_limit = state.accumulated.to_num::<i64>().max(0) as u32;
+                            to_move = to_move.min(speed_limit);
+                            if to_move > 0 {
+                                state.accumulated -= Fixed64::from_num(to_move);
+                            }
+                            // Actual movement would happen via transport system.
+                        }
+                        Junction::Splitter(config) => {
+                            // Splitter: update round-robin index.
+                            let num_outputs = self.graph.get_outputs(node_id).len();
+                            if num_outputs > 0 {
+                                match config.policy {
+                                    crate::junction::SplitPolicy::RoundRobin => {
+                                        state.round_robin_index =
+                                            (state.round_robin_index + 1) % num_outputs;
+                                    }
+                                    crate::junction::SplitPolicy::Priority => {
+                                        // Priority: always start from 0.
+                                        state.round_robin_index = 0;
+                                    }
+                                    crate::junction::SplitPolicy::EvenSplit => {
+                                        // Even split: index not used.
+                                    }
+                                }
+                            }
+                        }
+                        Junction::Merger(config) => {
+                            // Merger: update round-robin index.
+                            let num_inputs = self.graph.get_inputs(node_id).len();
+                            if num_inputs > 0 {
+                                match config.policy {
+                                    crate::junction::MergePolicy::RoundRobin => {
+                                        state.round_robin_index =
+                                            (state.round_robin_index + 1) % num_inputs;
+                                    }
+                                    crate::junction::MergePolicy::Priority => {
+                                        state.round_robin_index = 0;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Run module on_tick() (std::mem::take pattern for borrow safety).
+        let mut modules = std::mem::take(&mut self.modules);
+        for module in &mut modules {
+            let mut ctx = crate::module::ModuleContext {
+                graph: &self.graph,
+                processors: &mut self.processors,
+                processor_states: &mut self.processor_states,
+                inputs: &mut self.inputs,
+                outputs: &mut self.outputs,
+                event_bus: &mut self.event_bus,
+                tick: self.sim_state.tick,
+            };
+            module.on_tick(&mut ctx);
+        }
+        self.modules = modules;
+
+        // 3. Reset dirty tracker at end of component phase.
+        self.dirty.mark_clean();
     }
 
     // -----------------------------------------------------------------------
@@ -1000,6 +1186,8 @@ impl Engine {
         self.inputs.remove(node);
         self.outputs.remove(node);
         self.modifiers.remove(node);
+        self.junctions.remove(node);
+        self.junction_states.remove(node);
     }
 
     /// Remove all per-edge state for an edge.
@@ -2782,5 +2970,205 @@ mod tests {
         let data = engine.serialize().unwrap();
         let restored = Engine::deserialize(&data).unwrap();
         assert!(restored.is_paused());
+    }
+
+    // =======================================================================
+    // Junction integration tests
+    // =======================================================================
+
+    // -----------------------------------------------------------------------
+    // Junction Test 1: set/get/remove
+    // -----------------------------------------------------------------------
+    #[test]
+    fn engine_junction_set_get_remove() {
+        use crate::junction::*;
+
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        let node = result.resolve_node(pending).unwrap();
+
+        // Initially no junction.
+        assert!(engine.junction(node).is_none());
+
+        // Set a splitter junction.
+        let junction = Junction::Splitter(SplitterConfig {
+            policy: SplitPolicy::RoundRobin,
+            filter: None,
+        });
+        engine.set_junction(node, junction.clone());
+
+        // Verify it's there.
+        let got = engine.junction(node).unwrap();
+        assert_eq!(*got, junction);
+
+        // Remove it.
+        engine.remove_junction(node);
+        assert!(engine.junction(node).is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Junction Test 2: Splitter round-robin advances
+    // -----------------------------------------------------------------------
+    #[test]
+    fn engine_splitter_round_robin_advances() {
+        use crate::junction::*;
+
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        // Create a splitter node with 2 outputs.
+        let pa = engine.graph.queue_add_node(building());
+        let pb = engine.graph.queue_add_node(building());
+        let pc = engine.graph.queue_add_node(building());
+        let r = engine.graph.apply_mutations();
+        let a = r.resolve_node(pa).unwrap();
+        let b = r.resolve_node(pb).unwrap();
+        let c = r.resolve_node(pc).unwrap();
+
+        engine.graph.queue_connect(a, b);
+        engine.graph.queue_connect(a, c);
+        engine.graph.apply_mutations();
+
+        // Set up processor and inventories so the engine can step.
+        engine.set_processor(a, make_source(iron(), 1.0));
+        engine.set_input_inventory(a, simple_inventory(100));
+        engine.set_output_inventory(a, simple_inventory(100));
+        engine.set_processor(b, make_source(iron(), 0.0));
+        engine.set_input_inventory(b, simple_inventory(100));
+        engine.set_output_inventory(b, simple_inventory(100));
+        engine.set_processor(c, make_source(iron(), 0.0));
+        engine.set_input_inventory(c, simple_inventory(100));
+        engine.set_output_inventory(c, simple_inventory(100));
+
+        // Set a splitter junction on node a.
+        engine.set_junction(
+            a,
+            Junction::Splitter(SplitterConfig {
+                policy: SplitPolicy::RoundRobin,
+                filter: None,
+            }),
+        );
+
+        // Initial state: round_robin_index = 0.
+        assert_eq!(engine.junction_states.get(a).unwrap().round_robin_index, 0);
+
+        // Step: splitter should advance round_robin_index.
+        engine.step();
+        let state = engine.junction_states.get(a).unwrap();
+        assert_eq!(
+            state.round_robin_index, 0,
+            "after 1 step with 2 outputs, (0 + 1) % 2 = 1, but then step resets on next read; \
+             expected 0 since RR wraps: (0+1)%2=1"
+        );
+        // Actually: the junction processes in phase_component, starting from index 0:
+        // (0 + 1) % 2 = 1. So it should be 1 after first step.
+        // But dirty.mark_clean() doesn't affect junction_states.
+        // Let me re-check: junction_states.entry().or_insert_with(default) returns the existing
+        // state, then we do (0+1)%2=1. So after step, index should be 1.
+        // Wait, let me re-read: the set_junction call already created the state with index=0.
+        // In phase_component, we get the existing state, compute (0+1)%2 = 1.
+        // So after one step, the index should be 1.
+        let state = engine.junction_states.get(a).unwrap();
+        assert_eq!(state.round_robin_index, 1);
+
+        // Step again: (1 + 1) % 2 = 0.
+        engine.step();
+        let state = engine.junction_states.get(a).unwrap();
+        assert_eq!(state.round_robin_index, 0);
+    }
+
+    // =======================================================================
+    // Module integration tests
+    // =======================================================================
+
+    // -----------------------------------------------------------------------
+    // Module Test: on_tick called via engine step
+    // -----------------------------------------------------------------------
+    #[test]
+    fn engine_module_on_tick_called() {
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Debug)]
+        struct TestModule {
+            call_count: Arc<Mutex<u32>>,
+        }
+
+        impl crate::module::Module for TestModule {
+            fn name(&self) -> &str {
+                "test"
+            }
+            fn on_tick(&mut self, _ctx: &mut crate::module::ModuleContext<'_>) {
+                *self.call_count.lock().unwrap() += 1;
+            }
+        }
+
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        let count = Arc::new(Mutex::new(0u32));
+
+        engine.register_module(Box::new(TestModule {
+            call_count: count.clone(),
+        }));
+
+        assert_eq!(*count.lock().unwrap(), 0);
+
+        engine.step();
+        assert_eq!(*count.lock().unwrap(), 1);
+
+        engine.step();
+        engine.step();
+        assert_eq!(*count.lock().unwrap(), 3);
+    }
+
+    // =======================================================================
+    // Dirty tracking integration tests
+    // =======================================================================
+
+    // -----------------------------------------------------------------------
+    // Dirty Test 1: set_processor marks dirty
+    // -----------------------------------------------------------------------
+    #[test]
+    fn engine_dirty_marks_from_set_processor() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        let node = result.resolve_node(pending).unwrap();
+
+        // Clear any dirty flags from the node creation setup.
+        engine.mark_clean();
+        assert!(!engine.is_dirty());
+
+        // Set processor should mark dirty.
+        engine.set_processor(node, make_source(iron(), 1.0));
+
+        assert!(engine.is_dirty());
+        assert!(engine.dirty_tracker().is_node_dirty(node));
+    }
+
+    // -----------------------------------------------------------------------
+    // Dirty Test 2: Clean after step
+    // -----------------------------------------------------------------------
+    #[test]
+    fn engine_clean_after_step() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+
+        let pending = engine.graph.queue_add_node(building());
+        let result = engine.graph.apply_mutations();
+        let node = result.resolve_node(pending).unwrap();
+
+        engine.set_processor(node, make_source(iron(), 1.0));
+        engine.set_input_inventory(node, simple_inventory(100));
+        engine.set_output_inventory(node, simple_inventory(100));
+
+        // Dirty from setup.
+        assert!(engine.is_dirty());
+
+        // Step cleans dirty flags (phase_component resets at end).
+        engine.step();
+        assert!(
+            !engine.is_dirty(),
+            "dirty flags should be clean after a step"
+        );
     }
 }

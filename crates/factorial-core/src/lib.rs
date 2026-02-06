@@ -8,6 +8,7 @@ pub mod fixed;
 pub mod graph;
 pub mod id;
 pub mod item;
+pub mod junction;
 pub mod migration;
 pub mod module;
 pub mod processor;

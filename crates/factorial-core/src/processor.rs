@@ -83,12 +83,25 @@ pub struct PropertyProcessor {
     pub transform: PropertyTransform,
 }
 
+/// Consumes items from input at a steady rate (sinks, consumers, research labs).
+/// Like Source in reverse — accumulates fractional demand, consumes from input
+/// when whole items are available.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DemandProcessor {
+    pub input_type: ItemTypeId,
+    /// Items consumed per tick at base speed (before modifiers).
+    pub base_rate: Fixed64,
+    /// Fractional consumption accumulator.
+    pub accumulated: Fixed64,
+}
+
 /// Top-level processor enum. Dispatches via enum match (no trait objects).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Processor {
     Source(SourceProcessor),
     Fixed(FixedRecipe),
     Property(PropertyProcessor),
+    Demand(DemandProcessor),
 }
 
 // ---------------------------------------------------------------------------
@@ -129,11 +142,27 @@ pub enum ModifierKind {
     Efficiency(Fixed64),
 }
 
+/// How a modifier combines with others of the same kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum StackingRule {
+    /// Each modifier multiplies the previous result. (default, existing behavior)
+    #[default]
+    Multiplicative,
+    /// Modifiers are summed, then applied as a single multiplier.
+    Additive,
+    /// Each additional modifier has diminishing effect (50%, 25%, 12.5%...).
+    Diminishing,
+    /// Only the strongest modifier of this kind applies.
+    Capped,
+}
+
 /// A modifier instance applied to a processor.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Modifier {
     pub id: ModifierId,
     pub kind: ModifierKind,
+    #[serde(default)]
+    pub stacking: StackingRule,
 }
 
 // ---------------------------------------------------------------------------
@@ -164,7 +193,7 @@ struct ResolvedModifiers {
 
 impl ResolvedModifiers {
     /// Sort modifiers by `ModifierId` (canonical order) then fold each
-    /// category multiplicatively.
+    /// category using the modifier's stacking rule.
     fn resolve(modifiers: &[Modifier]) -> Self {
         let one = Fixed64::from_num(1);
 
@@ -176,11 +205,33 @@ impl ResolvedModifiers {
         let mut productivity = one;
         let mut efficiency = one;
 
+        // Group modifiers by kind, then apply stacking rules
         for m in &sorted {
-            match &m.kind {
-                ModifierKind::Speed(v) => speed *= *v,
-                ModifierKind::Productivity(v) => productivity *= *v,
-                ModifierKind::Efficiency(v) => efficiency *= *v,
+            let (target, value) = match &m.kind {
+                ModifierKind::Speed(v) => (&mut speed, *v),
+                ModifierKind::Productivity(v) => (&mut productivity, *v),
+                ModifierKind::Efficiency(v) => (&mut efficiency, *v),
+            };
+
+            match m.stacking {
+                StackingRule::Multiplicative => {
+                    *target *= value;
+                }
+                StackingRule::Additive => {
+                    // Additive: accumulate the delta (value - 1.0)
+                    *target += value - one;
+                }
+                StackingRule::Diminishing => {
+                    // Each successive modifier's effect is halved
+                    let delta = value - one;
+                    *target *= one + delta / Fixed64::from_num(2);
+                }
+                StackingRule::Capped => {
+                    // Only keep the larger value
+                    if value > *target {
+                        *target = value;
+                    }
+                }
             }
         }
 
@@ -221,6 +272,9 @@ impl Processor {
             }
             Processor::Property(prop) => {
                 tick_property(prop, state, available_inputs, output_space)
+            }
+            Processor::Demand(demand) => {
+                tick_demand(demand, state, modifiers, available_inputs)
             }
         }
     }
@@ -488,6 +542,72 @@ fn tick_property(
     result
 }
 
+// ---------------------------------------------------------------------------
+// Demand processor tick
+// ---------------------------------------------------------------------------
+
+fn tick_demand(
+    demand: &mut DemandProcessor,
+    state: &mut ProcessorState,
+    modifiers: &[Modifier],
+    available_inputs: &[(ItemTypeId, u32)],
+) -> ProcessorResult {
+    let mut result = ProcessorResult::default();
+    let mods = ResolvedModifiers::resolve(modifiers);
+
+    // Effective rate = base_rate * speed_modifier
+    let effective_rate = demand.base_rate * mods.speed;
+
+    // Accumulate fractional demand
+    demand.accumulated += effective_rate;
+
+    // Determine whole items to consume this tick
+    let mut whole: u32 = demand.accumulated.to_num::<i64>().max(0) as u32;
+
+    // Check available inputs
+    let available = available_inputs
+        .iter()
+        .find(|(id, _)| *id == demand.input_type)
+        .map(|(_, q)| *q)
+        .unwrap_or(0);
+
+    if available == 0 && whole > 0 {
+        if *state
+            != (ProcessorState::Stalled {
+                reason: StallReason::MissingInputs,
+            })
+        {
+            *state = ProcessorState::Stalled {
+                reason: StallReason::MissingInputs,
+            };
+            result.state_changed = true;
+        }
+        return result;
+    }
+
+    // Clamp by available
+    whole = whole.min(available);
+
+    if whole > 0 {
+        demand.accumulated -= Fixed64::from_num(whole);
+        result.consumed.push((demand.input_type, whole));
+    }
+
+    // Update state
+    let new_state = if whole > 0 || effective_rate > Fixed64::from_num(0) {
+        ProcessorState::Working { progress: 0 }
+    } else {
+        ProcessorState::Idle
+    };
+
+    if *state != new_state {
+        *state = new_state;
+        result.state_changed = true;
+    }
+
+    result
+}
+
 // ===========================================================================
 // Tests
 // ===========================================================================
@@ -715,6 +835,7 @@ mod tests {
         let mods = vec![Modifier {
             id: ModifierId(0),
             kind: ModifierKind::Speed(fixed(2.0)),
+            stacking: StackingRule::default(),
         }];
 
         // Tick 1: consume inputs, start working.
@@ -748,20 +869,24 @@ mod tests {
             Modifier {
                 id: ModifierId(5),
                 kind: ModifierKind::Speed(fixed(1.5)),
+                stacking: StackingRule::default(),
             },
             Modifier {
                 id: ModifierId(1),
                 kind: ModifierKind::Speed(fixed(2.0)),
+                stacking: StackingRule::default(),
             },
         ];
         let mods_ordered = vec![
             Modifier {
                 id: ModifierId(1),
                 kind: ModifierKind::Speed(fixed(2.0)),
+                stacking: StackingRule::default(),
             },
             Modifier {
                 id: ModifierId(5),
                 kind: ModifierKind::Speed(fixed(1.5)),
+                stacking: StackingRule::default(),
             },
         ];
 
@@ -880,6 +1005,7 @@ mod tests {
         let mods = vec![Modifier {
             id: ModifierId(0),
             kind: ModifierKind::Efficiency(fixed(0.5)),
+            stacking: StackingRule::default(),
         }];
 
         let r = proc.tick(&mut state, &mods, &[(iron(), 5)], 10);
@@ -899,6 +1025,7 @@ mod tests {
         let mods = vec![Modifier {
             id: ModifierId(0),
             kind: ModifierKind::Productivity(fixed(2.0)),
+            stacking: StackingRule::default(),
         }];
 
         // Tick 1: consume.
@@ -920,5 +1047,216 @@ mod tests {
 
         let r = proc.tick(&mut state, &no_mods, &[], 3);
         assert_eq!(r.produced, vec![(iron(), 3)]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Helpers for Demand tests
+    // -----------------------------------------------------------------------
+
+    fn make_demand(input: ItemTypeId, rate: f64) -> Processor {
+        Processor::Demand(DemandProcessor {
+            input_type: input,
+            base_rate: fixed(rate),
+            accumulated: fixed(0.0),
+        })
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 16: DemandProcessor consumes at base rate
+    // -----------------------------------------------------------------------
+    #[test]
+    fn demand_consumes_at_base_rate() {
+        // 2 iron per tick demand.
+        let mut proc = make_demand(iron(), 2.0);
+        let mut state = ProcessorState::Idle;
+        let no_mods: Vec<Modifier> = vec![];
+
+        let r = proc.tick(&mut state, &no_mods, &[(iron(), 10)], 0);
+        assert_eq!(r.consumed, vec![(iron(), 2)]);
+        assert!(r.produced.is_empty());
+        assert!(matches!(state, ProcessorState::Working { .. }));
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 17: DemandProcessor stalls when no input available
+    // -----------------------------------------------------------------------
+    #[test]
+    fn demand_stalls_when_no_input() {
+        let mut proc = make_demand(iron(), 2.0);
+        let mut state = ProcessorState::Idle;
+        let no_mods: Vec<Modifier> = vec![];
+
+        let r = proc.tick(&mut state, &no_mods, &[], 0);
+        // With no inputs and whole > 0 after accumulation, should stall.
+        assert!(r.consumed.is_empty());
+        assert_eq!(
+            state,
+            ProcessorState::Stalled {
+                reason: StallReason::MissingInputs
+            }
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 18: DemandProcessor fractional rate accumulates
+    // -----------------------------------------------------------------------
+    #[test]
+    fn demand_fractional_rate_accumulates() {
+        // 0.5 iron per tick => should consume 1 every 2 ticks.
+        let mut proc = make_demand(iron(), 0.5);
+        let mut state = ProcessorState::Idle;
+        let no_mods: Vec<Modifier> = vec![];
+
+        // Tick 1: accumulates 0.5, no whole item yet.
+        let r = proc.tick(&mut state, &no_mods, &[(iron(), 10)], 0);
+        assert!(r.consumed.is_empty());
+
+        // Tick 2: accumulates to 1.0, consume 1.
+        let r = proc.tick(&mut state, &no_mods, &[(iron(), 10)], 0);
+        assert_eq!(r.consumed, vec![(iron(), 1)]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 19: DemandProcessor with speed modifier
+    // -----------------------------------------------------------------------
+    #[test]
+    fn demand_with_speed_modifier() {
+        // 1 iron per tick base, 2x speed => 2 iron per tick effective.
+        let mut proc = make_demand(iron(), 1.0);
+        let mut state = ProcessorState::Idle;
+        let mods = vec![Modifier {
+            id: ModifierId(0),
+            kind: ModifierKind::Speed(fixed(2.0)),
+            stacking: StackingRule::default(),
+        }];
+
+        let r = proc.tick(&mut state, &mods, &[(iron(), 10)], 0);
+        assert_eq!(r.consumed, vec![(iron(), 2)]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 20: StackingRule::Additive
+    // -----------------------------------------------------------------------
+    #[test]
+    fn stacking_additive() {
+        // Two speed mods of 1.5 with Additive stacking:
+        // speed = 1.0 + (1.5-1.0) + (1.5-1.0) = 2.0
+        let mods = vec![
+            Modifier {
+                id: ModifierId(0),
+                kind: ModifierKind::Speed(fixed(1.5)),
+                stacking: StackingRule::Additive,
+            },
+            Modifier {
+                id: ModifierId(1),
+                kind: ModifierKind::Speed(fixed(1.5)),
+                stacking: StackingRule::Additive,
+            },
+        ];
+        let resolved = ResolvedModifiers::resolve(&mods);
+        assert_eq!(resolved.speed, fixed(2.0));
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 21: StackingRule::Diminishing
+    // -----------------------------------------------------------------------
+    #[test]
+    fn stacking_diminishing() {
+        // Speed mod of 2.0 with Diminishing:
+        // speed = 1.0 * (1.0 + (2.0-1.0)/2) = 1.0 * 1.5 = 1.5
+        let mods = vec![Modifier {
+            id: ModifierId(0),
+            kind: ModifierKind::Speed(fixed(2.0)),
+            stacking: StackingRule::Diminishing,
+        }];
+        let resolved = ResolvedModifiers::resolve(&mods);
+        assert_eq!(resolved.speed, fixed(1.5));
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 22: StackingRule::Capped
+    // -----------------------------------------------------------------------
+    #[test]
+    fn stacking_capped() {
+        // Two speed mods: 1.5 and 2.0 with Capped => only the larger (2.0) applies.
+        let mods = vec![
+            Modifier {
+                id: ModifierId(0),
+                kind: ModifierKind::Speed(fixed(1.5)),
+                stacking: StackingRule::Capped,
+            },
+            Modifier {
+                id: ModifierId(1),
+                kind: ModifierKind::Speed(fixed(2.0)),
+                stacking: StackingRule::Capped,
+            },
+        ];
+        let resolved = ResolvedModifiers::resolve(&mods);
+        assert_eq!(resolved.speed, fixed(2.0));
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 23: StackingRule::Multiplicative (default, existing behavior)
+    // -----------------------------------------------------------------------
+    #[test]
+    fn stacking_multiplicative_default() {
+        // Two speed mods of 1.5 with Multiplicative (default):
+        // speed = 1.0 * 1.5 * 1.5 = 2.25
+        let mods = vec![
+            Modifier {
+                id: ModifierId(0),
+                kind: ModifierKind::Speed(fixed(1.5)),
+                stacking: StackingRule::Multiplicative,
+            },
+            Modifier {
+                id: ModifierId(1),
+                kind: ModifierKind::Speed(fixed(1.5)),
+                stacking: StackingRule::Multiplicative,
+            },
+        ];
+        let resolved = ResolvedModifiers::resolve(&mods);
+        assert_eq!(resolved.speed, fixed(2.25));
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 24: Default stacking rule is Multiplicative
+    // -----------------------------------------------------------------------
+    #[test]
+    fn default_stacking_rule_is_multiplicative() {
+        assert_eq!(StackingRule::default(), StackingRule::Multiplicative);
+
+        // Modifier with default stacking should be Multiplicative.
+        let m = Modifier {
+            id: ModifierId(0),
+            kind: ModifierKind::Speed(fixed(1.5)),
+            stacking: StackingRule::default(),
+        };
+        assert_eq!(m.stacking, StackingRule::Multiplicative);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 25: Modifier with stacking field serialization (serde default)
+    // -----------------------------------------------------------------------
+    #[test]
+    fn modifier_stacking_serde_default() {
+        // Serialize a modifier with explicit stacking.
+        let m = Modifier {
+            id: ModifierId(0),
+            kind: ModifierKind::Speed(fixed(2.0)),
+            stacking: StackingRule::Additive,
+        };
+        let bytes = bitcode::serialize(&m).expect("serialize");
+        let m2: Modifier = bitcode::deserialize(&bytes).expect("deserialize");
+        assert_eq!(m2.stacking, StackingRule::Additive);
+
+        // Serialize a modifier with default stacking (Multiplicative).
+        let m_default = Modifier {
+            id: ModifierId(0),
+            kind: ModifierKind::Speed(fixed(2.0)),
+            stacking: StackingRule::default(),
+        };
+        let bytes2 = bitcode::serialize(&m_default).expect("serialize default");
+        let m3: Modifier = bitcode::deserialize(&bytes2).expect("deserialize default");
+        assert_eq!(m3.stacking, StackingRule::Multiplicative);
     }
 }

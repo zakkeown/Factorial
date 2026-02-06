@@ -23,7 +23,7 @@ use slotmap::SecondaryMap;
 pub const SNAPSHOT_MAGIC: u32 = 0xFAC7_0001;
 
 /// Current format version. Increment when breaking the wire format.
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 
 // ---------------------------------------------------------------------------
 // Error types
@@ -128,6 +128,10 @@ struct EngineSnapshot {
     last_state_hash: u64,
     #[serde(default)]
     paused: bool,
+    #[serde(default)]
+    junctions: SecondaryMap<NodeId, crate::junction::Junction>,
+    #[serde(default)]
+    junction_states: SecondaryMap<NodeId, crate::junction::JunctionState>,
 }
 
 // ---------------------------------------------------------------------------
@@ -279,6 +283,8 @@ impl Engine {
             transport_states: self.transport_states.clone(),
             last_state_hash: self.last_state_hash,
             paused: self.paused,
+            junctions: self.junctions.clone(),
+            junction_states: self.junction_states.clone(),
         };
 
         bitcode::serialize(&snapshot).map_err(|e| SerializeError::Encode(e.to_string()))
@@ -316,6 +322,10 @@ impl Engine {
             last_state_hash: snapshot.last_state_hash,
             paused: snapshot.paused,
             event_bus: EventBus::default(),
+            modules: Vec::new(),
+            dirty: crate::dirty::DirtyTracker::new(),
+            junctions: snapshot.junctions,
+            junction_states: snapshot.junction_states,
             #[cfg(feature = "profiling")]
             last_profile: None,
         })
@@ -405,6 +415,12 @@ impl Engine {
                         h.write_u32(2);
                         h.write_u32(prop.input_type.0);
                         h.write_u32(prop.output_type.0);
+                    }
+                    Processor::Demand(demand) => {
+                        h.write_u32(3);
+                        h.write_u32(demand.input_type.0);
+                        h.write_fixed64(demand.base_rate);
+                        h.write_fixed64(demand.accumulated);
                     }
                 }
             }
