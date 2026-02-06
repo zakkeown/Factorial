@@ -389,6 +389,13 @@ impl Engine {
             h.write(&serde_json_key_bytes(edge_id));
             h.write(&serde_json_key_bytes(edge_data.from));
             h.write(&serde_json_key_bytes(edge_data.to));
+            match edge_data.item_filter {
+                Some(filter) => {
+                    h.write_u32(1);
+                    h.write_u32(filter.0);
+                }
+                None => h.write_u32(0),
+            }
         }
         h.finish()
     }
@@ -422,6 +429,15 @@ impl Engine {
                         h.write_u32(demand.input_type.0);
                         h.write_fixed64(demand.base_rate);
                         h.write_fixed64(demand.accumulated);
+                        h.write_u64(demand.consumed_total);
+                        if let Some(ref types) = demand.accepted_types {
+                            h.write_u32(types.len() as u32);
+                            for t in types {
+                                h.write_u32(t.0);
+                            }
+                        } else {
+                            h.write_u32(0);
+                        }
                     }
                     Processor::Passthrough => {
                         h.write_u32(4);

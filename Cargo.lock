@@ -345,6 +345,7 @@ name = "factorial-integration-tests"
 version = "0.1.0"
 dependencies = [
  "factorial-core",
+ "factorial-fluid",
  "factorial-power",
  "factorial-stats",
  "factorial-tech-tree",

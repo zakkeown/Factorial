@@ -46,6 +46,7 @@ pub struct EdgeData {
     /// Destination node.
     pub to: NodeId,
     /// Optional item type filter. When set, only this item type flows on this edge.
+    #[serde(default)]
     pub item_filter: Option<ItemTypeId>,
 }
 
