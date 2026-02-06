@@ -587,3 +587,36 @@ fn serialize_round_trip_full_factory() {
     );
 }
 
+#[test]
+fn determinism_full_factory() {
+    fn build_and_run() -> Vec<u64> {
+        let (mut engine, _) = build_builderment_factory();
+        let mut hashes = Vec::with_capacity(500);
+        for _ in 0..500 {
+            engine.step();
+            hashes.push(engine.state_hash());
+        }
+        hashes
+    }
+
+    let run1 = build_and_run();
+    let run2 = build_and_run();
+
+    assert_eq!(run1.len(), run2.len());
+
+    for (tick, (h1, h2)) in run1.iter().zip(run2.iter()).enumerate() {
+        assert_eq!(
+            h1, h2,
+            "state hashes diverged at tick {}: run1={h1}, run2={h2}",
+            tick + 1,
+        );
+    }
+
+    // Verify the simulation actually evolved (not all same hash).
+    let unique: std::collections::HashSet<u64> = run1.iter().copied().collect();
+    assert!(
+        unique.len() > 1,
+        "state hashes should change between ticks"
+    );
+}
+
