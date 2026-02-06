@@ -20,10 +20,10 @@ use slotmap::SecondaryMap;
 // ---------------------------------------------------------------------------
 
 /// Magic number identifying a Factorial engine snapshot.
-const SNAPSHOT_MAGIC: u32 = 0xFAC7_0001;
+pub const SNAPSHOT_MAGIC: u32 = 0xFAC7_0001;
 
 /// Current format version. Increment when breaking the wire format.
-const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 1;
 
 // ---------------------------------------------------------------------------
 // Error types
@@ -90,6 +90,20 @@ impl SnapshotHeader {
         }
         Ok(())
     }
+}
+
+/// Try to read just the snapshot header from serialized data.
+///
+/// This decodes the full snapshot but only returns the header, enabling
+/// version detection before deciding whether to migrate.
+pub fn read_snapshot_header(data: &[u8]) -> Result<SnapshotHeader, DeserializeError> {
+    // Try to decode as an EngineSnapshot to extract the header.
+    // If the version doesn't match, the decode might still work for
+    // header extraction. We decode the whole thing because bitcode
+    // doesn't support partial deserialization.
+    let snapshot: EngineSnapshot =
+        bitcode::deserialize(data).map_err(|e| DeserializeError::Decode(e.to_string()))?;
+    Ok(snapshot.header)
 }
 
 // ---------------------------------------------------------------------------
@@ -298,7 +312,36 @@ impl Engine {
             transport_states: snapshot.transport_states,
             last_state_hash: snapshot.last_state_hash,
             event_bus: EventBus::default(),
+            #[cfg(feature = "profiling")]
+            last_profile: None,
         })
+    }
+
+    /// Deserialize an engine from a binary blob, applying migrations if needed.
+    ///
+    /// If the data is at the current format version, behaves like `deserialize()`.
+    /// If the data is from an older version, applies registered migrations to
+    /// bring it up to the current version before deserializing.
+    /// If the data is from a future version, returns `FutureVersion` error.
+    pub fn deserialize_with_migrations(
+        data: &[u8],
+        migrations: &crate::migration::MigrationRegistry,
+    ) -> Result<Self, DeserializeError> {
+        // Try normal deserialization first.
+        match Self::deserialize(data) {
+            Ok(engine) => Ok(engine),
+            Err(DeserializeError::FutureVersion(v)) => {
+                Err(DeserializeError::FutureVersion(v))
+            }
+            Err(DeserializeError::UnsupportedVersion(old_version)) => {
+                // Try to migrate.
+                let migrated_data = migrations
+                    .migrate(data, old_version, FORMAT_VERSION)
+                    .map_err(|e| DeserializeError::Decode(format!("migration failed: {e}")))?;
+                Self::deserialize(&migrated_data)
+            }
+            Err(other) => Err(other),
+        }
     }
 
     /// Compute per-subsystem state hashes for desync debugging.

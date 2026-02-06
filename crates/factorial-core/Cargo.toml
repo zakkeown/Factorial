@@ -12,6 +12,7 @@ thiserror = { workspace = true }
 
 [features]
 test-utils = []
+profiling = []
 
 [dev-dependencies]
 criterion = "0.5"

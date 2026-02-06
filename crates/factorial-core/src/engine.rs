@@ -77,6 +77,10 @@ pub struct Engine {
 
     /// Typed event bus for simulation events.
     pub event_bus: EventBus,
+
+    /// Timing profile for the most recent tick (profiling feature only).
+    #[cfg(feature = "profiling")]
+    pub(crate) last_profile: Option<crate::profiling::TickProfile>,
 }
 
 impl Engine {
@@ -95,6 +99,8 @@ impl Engine {
             transport_states: SecondaryMap::new(),
             last_state_hash: 0,
             event_bus: EventBus::default(),
+            #[cfg(feature = "profiling")]
+            last_profile: None,
         }
     }
 
@@ -233,25 +239,66 @@ impl Engine {
     // -----------------------------------------------------------------------
 
     fn step_internal(&mut self, result: &mut AdvanceResult) {
+        #[cfg(feature = "profiling")]
+        let step_start = std::time::Instant::now();
+
         // Phase 1: Pre-tick -- apply queued mutations.
+        #[cfg(feature = "profiling")]
+        let phase_start = std::time::Instant::now();
         self.phase_pre_tick(result);
+        #[cfg(feature = "profiling")]
+        let pre_tick_dur = phase_start.elapsed();
 
         // Phase 2: Transport -- move items along edges.
+        #[cfg(feature = "profiling")]
+        let phase_start = std::time::Instant::now();
         self.phase_transport();
+        #[cfg(feature = "profiling")]
+        let transport_dur = phase_start.elapsed();
 
         // Phase 3: Process -- buildings consume inputs, produce outputs.
+        #[cfg(feature = "profiling")]
+        let phase_start = std::time::Instant::now();
         self.phase_process();
+        #[cfg(feature = "profiling")]
+        let process_dur = phase_start.elapsed();
 
         // Phase 4: Component -- placeholder for module-registered systems.
+        #[cfg(feature = "profiling")]
+        let phase_start = std::time::Instant::now();
         self.phase_component();
+        #[cfg(feature = "profiling")]
+        let component_dur = phase_start.elapsed();
 
         // Phase 5: Post-tick -- placeholder for event delivery.
+        #[cfg(feature = "profiling")]
+        let phase_start = std::time::Instant::now();
         self.phase_post_tick();
+        #[cfg(feature = "profiling")]
+        let post_tick_dur = phase_start.elapsed();
 
         // Phase 6: Bookkeeping -- update tick counter, compute state hash.
+        #[cfg(feature = "profiling")]
+        let phase_start = std::time::Instant::now();
         self.phase_bookkeeping();
+        #[cfg(feature = "profiling")]
+        let bookkeeping_dur = phase_start.elapsed();
 
         result.steps_run += 1;
+
+        #[cfg(feature = "profiling")]
+        {
+            self.last_profile = Some(crate::profiling::TickProfile {
+                pre_tick: pre_tick_dur,
+                transport: transport_dur,
+                process: process_dur,
+                component: component_dur,
+                post_tick: post_tick_dur,
+                bookkeeping: bookkeeping_dur,
+                total: step_start.elapsed(),
+                tick: self.sim_state.tick,
+            });
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -793,6 +840,90 @@ impl Engine {
     /// Get the edge IDs leaving a node.
     pub fn get_outputs(&self, node: NodeId) -> &[EdgeId] {
         self.graph.get_outputs(node)
+    }
+
+    // -----------------------------------------------------------------------
+    // Profiling / Diagnostics
+    // -----------------------------------------------------------------------
+
+    /// Get the timing profile from the most recent tick.
+    /// Only available with the `profiling` feature.
+    #[cfg(feature = "profiling")]
+    pub fn last_tick_profile(&self) -> Option<&crate::profiling::TickProfile> {
+        self.last_profile.as_ref()
+    }
+
+    /// Diagnose why a node is in its current state.
+    /// Always available (not feature-gated).
+    pub fn diagnose_node(&self, node: NodeId) -> Option<crate::profiling::DiagnosticInfo> {
+        // Check node exists in the graph.
+        let _node_data = self.graph.get_node(node)?;
+
+        let processor_state = self
+            .processor_states
+            .get(node)
+            .cloned()
+            .unwrap_or_default();
+
+        let stall_reason = match &processor_state {
+            ProcessorState::Stalled { reason } => Some(*reason),
+            _ => None,
+        };
+
+        // Build input summary: for FixedRecipe, compare available vs required.
+        let input_summary = self.build_input_summary(node);
+
+        // Output space and capacity.
+        let (output_space, output_capacity) = self.output_space_and_capacity(node);
+
+        let incoming_edges = self.graph.get_inputs(node).len();
+        let outgoing_edges = self.graph.get_outputs(node).len();
+
+        Some(crate::profiling::DiagnosticInfo {
+            node,
+            processor_state,
+            stall_reason,
+            input_summary,
+            output_space,
+            output_capacity,
+            incoming_edges,
+            outgoing_edges,
+        })
+    }
+
+    /// Build input summary for diagnostics. For FixedRecipe processors,
+    /// shows (item_type, have, need) for each required input.
+    fn build_input_summary(&self, node: NodeId) -> Vec<(ItemTypeId, u32, u32)> {
+        let available = self.gather_available_inputs(node);
+
+        if let Some(Processor::Fixed(recipe)) = self.processors.get(node) {
+            recipe
+                .inputs
+                .iter()
+                .map(|req| {
+                    let have = available
+                        .iter()
+                        .find(|(id, _)| *id == req.item_type)
+                        .map(|(_, q)| *q)
+                        .unwrap_or(0);
+                    (req.item_type, have, req.quantity)
+                })
+                .collect()
+        } else {
+            // For Source/Property, just list what's available with need=0.
+            available.iter().map(|(id, qty)| (*id, *qty, 0)).collect()
+        }
+    }
+
+    /// Get (free_space, total_capacity) for a node's output inventory.
+    fn output_space_and_capacity(&self, node: NodeId) -> (u32, u32) {
+        if let Some(inv) = self.outputs.get(node) {
+            let capacity: u32 = inv.output_slots.iter().map(|s| s.capacity).sum();
+            let used: u32 = inv.output_slots.iter().map(|s| s.total()).sum();
+            (capacity.saturating_sub(used), capacity)
+        } else {
+            (0, 0)
+        }
     }
 
     // -----------------------------------------------------------------------

@@ -1,0 +1,10 @@
+[package]
+name = "factorial-spatial"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+factorial-core = { path = "../factorial-core" }
+serde = { workspace = true }
+slotmap = { workspace = true }
+thiserror = { workspace = true }
