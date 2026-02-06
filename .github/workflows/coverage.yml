@@ -1,0 +1,42 @@
+name: Coverage Gate
+
+on:
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  coverage:
+    name: Coverage Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Generate coverage report
+        run: |
+          cargo llvm-cov --package factorial-core --package factorial-ffi \
+            --fail-under-lines 80 \
+            --text 2>&1 | tee coverage-report.txt
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage-report.txt
+      - name: Post coverage summary to PR
+        if: github.event_name == 'pull_request' && always()
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: coverage
+          message: |
+            ## Coverage Report
+            ```
+            $(cat coverage-report.txt | tail -20)
+            ```
