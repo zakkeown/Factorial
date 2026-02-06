@@ -8,10 +8,12 @@
 //! Reference: docs/plans/2026-02-05-builderment-headless-test-design.md
 
 use factorial_core::engine::Engine;
+use factorial_core::fixed::Fixed64;
 use factorial_core::id::*;
 use factorial_core::sim::SimulationStrategy;
 use factorial_core::test_utils::*;
 use factorial_core::transport::*;
+use factorial_power::{PowerConsumer, PowerEvent, PowerModule, PowerProducer};
 
 /// Inventory capacity for single-input buildings (Furnaces, single-recipe Workshops).
 const STD_INPUT_CAP: u32 = 50;
@@ -470,4 +472,106 @@ fn cross_crate_smoke_test() {
     let (engine, _nodes) = build_builderment_factory();
     assert_eq!(engine.node_count(), 127);
     assert_eq!(engine.edge_count(), 123);
+}
+
+#[test]
+fn power_brownout_and_recovery() {
+    let (mut engine, nodes) = build_builderment_factory();
+
+    // Set up power module.
+    let mut power = PowerModule::new();
+    let network_id = power.create_network();
+
+    // Add a power producer (Coal Power Plant).
+    let producer_node = nodes.coal_src; // Reuse coal source as the power node.
+    power.add_producer(
+        network_id,
+        producer_node,
+        PowerProducer {
+            capacity: Fixed64::from_num(100),
+        },
+    );
+
+    // Register all production buildings as consumers.
+    for &node in &nodes.all_production {
+        power.add_consumer(
+            network_id,
+            node,
+            PowerConsumer {
+                demand: Fixed64::from_num(5),
+            },
+        );
+    }
+
+    // Phase 1: Normal operation (200 ticks).
+    for tick in 1..=200u64 {
+        engine.step();
+        let events = power.tick(tick);
+        // Should have no brownout events during normal operation.
+        for event in &events {
+            assert!(
+                !matches!(event, PowerEvent::PowerGridBrownout { .. }),
+                "unexpected brownout at tick {tick}"
+            );
+        }
+    }
+
+    // Verify power satisfaction is 1.0.
+    let satisfaction = power.satisfaction(network_id).unwrap();
+    assert_eq!(
+        satisfaction,
+        Fixed64::from_num(1),
+        "power should be fully satisfied before brownout"
+    );
+
+    // Phase 2: Remove the producer — trigger brownout.
+    power.remove_node(producer_node);
+
+    let mut saw_brownout = false;
+    for tick in 201..=250u64 {
+        engine.step();
+        let events = power.tick(tick);
+        for event in &events {
+            if matches!(event, PowerEvent::PowerGridBrownout { .. }) {
+                saw_brownout = true;
+            }
+        }
+    }
+    assert!(saw_brownout, "should have seen a brownout event after removing producer");
+
+    // Verify satisfaction dropped to 0.
+    let satisfaction = power.satisfaction(network_id).unwrap();
+    assert_eq!(
+        satisfaction,
+        Fixed64::from_num(0),
+        "power satisfaction should be 0 during brownout"
+    );
+
+    // Phase 3: Restore the producer.
+    power.add_producer(
+        network_id,
+        producer_node,
+        PowerProducer {
+            capacity: Fixed64::from_num(100),
+        },
+    );
+
+    let mut saw_restored = false;
+    for tick in 251..=300u64 {
+        engine.step();
+        let events = power.tick(tick);
+        for event in &events {
+            if matches!(event, PowerEvent::PowerGridRestored { .. }) {
+                saw_restored = true;
+            }
+        }
+    }
+    assert!(saw_restored, "should have seen a restored event after re-adding producer");
+
+    let satisfaction = power.satisfaction(network_id).unwrap();
+    assert_eq!(
+        satisfaction,
+        Fixed64::from_num(1),
+        "power should be fully satisfied after recovery"
+    );
 }
