@@ -368,6 +368,7 @@ version = "0.1.0"
 dependencies = [
  "factorial-core",
  "serde",
+ "serde_json",
  "slotmap",
  "thiserror",
 ]

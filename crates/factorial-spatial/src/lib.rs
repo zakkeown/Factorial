@@ -9,6 +9,12 @@ use serde::{Deserialize, Serialize};
 use slotmap::{Key, SecondaryMap};
 use std::collections::BTreeMap;
 
+pub mod blueprint;
+pub use blueprint::{
+    Blueprint, BlueprintCommitResult, BlueprintConnection, BlueprintEntry, BlueprintEntryId,
+    BlueprintError, BlueprintNodeRef,
+};
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
