@@ -93,6 +93,9 @@ pub struct DemandProcessor {
     pub base_rate: Fixed64,
     /// Fractional consumption accumulator.
     pub accumulated: Fixed64,
+    /// Total whole items consumed over the processor's lifetime.
+    #[serde(default)]
+    pub consumed_total: u64,
 }
 
 /// Top-level processor enum. Dispatches via enum match (no trait objects).
@@ -596,6 +599,7 @@ fn tick_demand(
 
     if whole > 0 {
         demand.accumulated -= Fixed64::from_num(whole);
+        demand.consumed_total += whole as u64;
         result.consumed.push((demand.input_type, whole));
     }
 
@@ -1108,6 +1112,7 @@ mod tests {
             input_type: input,
             base_rate: fixed(rate),
             accumulated: fixed(0.0),
+            consumed_total: 0,
         })
     }
 

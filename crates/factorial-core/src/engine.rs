@@ -1348,6 +1348,25 @@ impl Engine {
     // -----------------------------------------------------------------------
     // Cleanup helpers
     // -----------------------------------------------------------------------
+    // Demand rate query
+    // -----------------------------------------------------------------------
+
+    /// Query the sustained consumption rate for a DemandProcessor node.
+    ///
+    /// Returns the average items consumed per tick (`consumed_total / current_tick`)
+    /// or `None` if the node is not a `Processor::Demand` variant.
+    pub fn get_demand_rate(&self, node: NodeId) -> Option<Fixed64> {
+        if let Some(Processor::Demand(demand)) = self.processors.get(node) {
+            if self.sim_state.tick == 0 {
+                return Some(Fixed64::ZERO);
+            }
+            Some(Fixed64::from_num(demand.consumed_total) / Fixed64::from_num(self.sim_state.tick))
+        } else {
+            None
+        }
+    }
+
+    // -----------------------------------------------------------------------
 
     /// Remove all per-node state for a node. Call this when a node is removed
     /// from the graph to clean up associated data.
@@ -3599,5 +3618,45 @@ mod tests {
         // Non-existent property should return None.
         let missing = engine.get_item_property(node, iron, crate::id::PropertyId(99));
         assert_eq!(missing, None);
+    }
+
+    #[test]
+    fn demand_processor_tracks_sustained_rate() {
+        use crate::test_utils;
+
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        let iron = test_utils::iron();
+
+        let source = test_utils::add_node(
+            &mut engine,
+            test_utils::make_source(iron, 5.0),
+            100,
+            100,
+        );
+        let sink = test_utils::add_node(
+            &mut engine,
+            Processor::Demand(DemandProcessor {
+                input_type: iron,
+                base_rate: Fixed64::from_num(3),
+                accumulated: Fixed64::ZERO,
+                consumed_total: 0,
+            }),
+            100,
+            100,
+        );
+
+        test_utils::connect(&mut engine, source, sink, test_utils::make_flow_transport(10.0));
+
+        for _ in 0..60 {
+            engine.step();
+        }
+
+        // Query sustained consumption rate over the run.
+        let rate = engine.get_demand_rate(sink);
+        assert!(rate.is_some(), "Should be able to query demand rate");
+        assert!(
+            rate.unwrap() >= Fixed64::from_num(2),
+            "Sustained rate should be near 3/tick, got {:?}", rate
+        );
     }
 }
