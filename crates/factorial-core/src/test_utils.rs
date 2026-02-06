@@ -199,6 +199,21 @@ pub fn connect(engine: &mut Engine, from: NodeId, to: NodeId, transport: Transpo
     edge
 }
 
+/// Connect two nodes with an item type filter on the edge.
+pub fn connect_filtered(
+    engine: &mut Engine,
+    from: NodeId,
+    to: NodeId,
+    transport: Transport,
+    item_filter: Option<ItemTypeId>,
+) -> EdgeId {
+    let pending = engine.graph.queue_connect_filtered(from, to, item_filter);
+    let result = engine.graph.apply_mutations();
+    let edge = result.resolve_edge(pending).unwrap();
+    engine.set_transport(edge, transport);
+    edge
+}
+
 // ===========================================================================
 // Query helpers
 // ===========================================================================

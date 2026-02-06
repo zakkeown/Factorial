@@ -45,6 +45,8 @@ pub struct EdgeData {
     pub from: NodeId,
     /// Destination node.
     pub to: NodeId,
+    /// Optional item type filter. When set, only this item type flows on this edge.
+    pub item_filter: Option<ItemTypeId>,
 }
 
 // ---------------------------------------------------------------------------
@@ -65,6 +67,12 @@ enum Mutation {
         from: NodeId,
         to: NodeId,
         pending_id: PendingEdgeId,
+    },
+    ConnectFiltered {
+        from: NodeId,
+        to: NodeId,
+        pending_id: PendingEdgeId,
+        item_filter: Option<ItemTypeId>,
     },
     Disconnect {
         edge: EdgeId,
@@ -209,7 +217,12 @@ impl ProductionGraph {
 
     /// Connect two nodes immediately. Returns the assigned `EdgeId`.
     fn connect_immediate(&mut self, from: NodeId, to: NodeId) -> EdgeId {
-        let edge_id = self.edges.insert(EdgeData { from, to });
+        self.connect_immediate_filtered(from, to, None)
+    }
+
+    /// Connect two nodes immediately with an optional item filter. Returns the assigned `EdgeId`.
+    fn connect_immediate_filtered(&mut self, from: NodeId, to: NodeId, item_filter: Option<ItemTypeId>) -> EdgeId {
+        let edge_id = self.edges.insert(EdgeData { from, to, item_filter });
 
         if let Some(adj) = self.adjacency.get_mut(from) {
             adj.outputs.push(edge_id);
@@ -270,6 +283,25 @@ impl ProductionGraph {
         pending
     }
 
+    /// Queue an edge connecting two existing nodes with an optional item type
+    /// filter. Returns a `PendingEdgeId`.
+    pub fn queue_connect_filtered(
+        &mut self,
+        from: NodeId,
+        to: NodeId,
+        item_filter: Option<ItemTypeId>,
+    ) -> PendingEdgeId {
+        let pending = PendingEdgeId(self.next_pending_edge);
+        self.next_pending_edge += 1;
+        self.mutations.push(Mutation::ConnectFiltered {
+            from,
+            to,
+            pending_id: pending,
+            item_filter,
+        });
+        pending
+    }
+
     /// Queue an edge for removal.
     pub fn queue_disconnect(&mut self, edge: EdgeId) {
         self.mutations.push(Mutation::Disconnect { edge });
@@ -299,6 +331,15 @@ impl ProductionGraph {
                     pending_id,
                 } => {
                     let edge_id = self.connect_immediate(from, to);
+                    result.added_edges.push((pending_id, edge_id));
+                }
+                Mutation::ConnectFiltered {
+                    from,
+                    to,
+                    pending_id,
+                    item_filter,
+                } => {
+                    let edge_id = self.connect_immediate_filtered(from, to, item_filter);
                     result.added_edges.push((pending_id, edge_id));
                 }
                 Mutation::Disconnect { edge } => {

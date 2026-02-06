@@ -501,9 +501,14 @@ impl Engine {
             };
             let source_node = edge_data.from;
             let dest_node = edge_data.to;
+            let item_filter = edge_data.item_filter;
 
             // Determine available items at the source's output inventory.
-            let available = self.output_total(source_node);
+            // If the edge has a filter, only count the filtered item type.
+            let available = match item_filter {
+                Some(item_type) => self.output_quantity_of(source_node, item_type),
+                None => self.output_total(source_node),
+            };
 
             // Advance the transport.
             let transport_result = {
@@ -535,7 +540,7 @@ impl Engine {
             }
 
             // Apply transport results to inventories.
-            self.apply_transport_result(source_node, dest_node, &transport_result);
+            self.apply_transport_result(source_node, dest_node, edge_id, &transport_result);
         }
     }
 
@@ -547,17 +552,28 @@ impl Engine {
             .unwrap_or(0)
     }
 
+    /// Get total quantity of a specific item type in a node's output inventory.
+    fn output_quantity_of(&self, node: NodeId, item_type: ItemTypeId) -> u32 {
+        self.outputs
+            .get(node)
+            .map(|inv| inv.output_slots.iter().map(|s| s.quantity(item_type)).sum())
+            .unwrap_or(0)
+    }
+
     /// Apply transport results: remove items from source output, add to dest input.
     fn apply_transport_result(
         &mut self,
         source: NodeId,
         dest: NodeId,
+        edge_id: EdgeId,
         result: &TransportResult,
     ) {
-        // Determine item type before any mutable borrows.
-        let item_type = self.determine_item_type_for_edge(source);
+        // Use edge filter if present, otherwise fall back to processor-based detection.
+        let item_type = self.graph.get_edge(edge_id)
+            .and_then(|e| e.item_filter)
+            .unwrap_or_else(|| self.determine_item_type_for_edge(source));
 
-        // Remove moved items from source output.
+        // Remove moved items from source output (type-filtered).
         if result.items_moved > 0
             && let Some(output_inv) = self.outputs.get_mut(source)
         {
@@ -566,16 +582,8 @@ impl Engine {
                 if remaining == 0 {
                     break;
                 }
-                // Remove from each stack in the slot until we've removed enough.
-                for stack in &mut slot.stacks {
-                    if remaining == 0 {
-                        break;
-                    }
-                    let to_remove = remaining.min(stack.quantity);
-                    stack.quantity -= to_remove;
-                    remaining -= to_remove;
-                }
-                slot.stacks.retain(|s| s.quantity > 0);
+                let removed = slot.remove(item_type, remaining);
+                remaining -= removed;
             }
         }
 
@@ -3170,5 +3178,64 @@ mod tests {
             !engine.is_dirty(),
             "dirty flags should be clean after a step"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Edge Filter: Per-output-type edge routing
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn edge_filter_routes_specific_item_type() {
+        use crate::test_utils;
+
+        // Multi-output recipe: 1 water -> 1 oxygen + 1 hydrogen (1 tick).
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        let water = ItemTypeId(3);
+        let oxygen = ItemTypeId(4);
+        let hydrogen = ItemTypeId(5);
+
+        let electrolyzer = test_utils::add_node(
+            &mut engine,
+            test_utils::make_recipe(
+                vec![(water, 1)],
+                vec![(oxygen, 1), (hydrogen, 1)],
+                1,
+            ),
+            100,
+            100,
+        );
+
+        // Seed input.
+        engine.inputs.get_mut(electrolyzer).unwrap().input_slots[0].add(water, 20);
+
+        let o2_sink = test_utils::add_node(
+            &mut engine,
+            test_utils::make_source(oxygen, 0.0), // dummy
+            100,
+            100,
+        );
+        let h2_sink = test_utils::add_node(
+            &mut engine,
+            test_utils::make_source(hydrogen, 0.0),
+            100,
+            100,
+        );
+
+        // Connect with item_type filters on edges.
+        test_utils::connect_filtered(&mut engine, electrolyzer, o2_sink, test_utils::make_flow_transport(10.0), Some(oxygen));
+        test_utils::connect_filtered(&mut engine, electrolyzer, h2_sink, test_utils::make_flow_transport(10.0), Some(hydrogen));
+
+        for _ in 0..10 {
+            engine.step();
+        }
+
+        let o2_at_sink = test_utils::input_quantity(&engine, o2_sink, oxygen);
+        let h2_at_sink = test_utils::input_quantity(&engine, h2_sink, hydrogen);
+
+        assert!(o2_at_sink > 0, "O2 sink should receive oxygen, got {o2_at_sink}");
+        assert!(h2_at_sink > 0, "H2 sink should receive hydrogen, got {h2_at_sink}");
+        // Ensure no cross-contamination.
+        assert_eq!(test_utils::input_quantity(&engine, o2_sink, hydrogen), 0, "O2 sink should not have hydrogen");
+        assert_eq!(test_utils::input_quantity(&engine, h2_sink, oxygen), 0, "H2 sink should not have oxygen");
     }
 }
