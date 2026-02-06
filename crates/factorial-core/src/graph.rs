@@ -430,6 +430,99 @@ impl ProductionGraph {
         Ok(&self.topo_cache)
     }
 
+    /// Returns a processing order even when cycles exist.
+    ///
+    /// Runs Kahn's algorithm. If some nodes remain (they form cycles), they are
+    /// appended to the order (sorted by `NodeId` for determinism). Back-edges
+    /// -- edges where `to` appears before `from` in the final order -- are
+    /// returned separately.  Callers can use the back-edge set to understand
+    /// which connections carry a one-tick delay.
+    pub fn topological_order_with_feedback(&self) -> (Vec<NodeId>, Vec<EdgeId>) {
+        let node_count = self.nodes.len();
+
+        // Compute in-degree for each node.
+        let mut in_degree: SecondaryMap<NodeId, usize> = SecondaryMap::new();
+        for (nid, _) in &self.nodes {
+            in_degree.insert(nid, 0);
+        }
+        for (_, edge) in &self.edges {
+            if let Some(deg) = in_degree.get_mut(edge.to) {
+                *deg += 1;
+            }
+        }
+
+        // Seed the queue with all zero-in-degree nodes.
+        let mut queue: VecDeque<NodeId> = VecDeque::new();
+        for (nid, &deg) in &in_degree {
+            if deg == 0 {
+                queue.push_back(nid);
+            }
+        }
+
+        let mut order: Vec<NodeId> = Vec::with_capacity(node_count);
+
+        while let Some(node) = queue.pop_front() {
+            order.push(node);
+
+            // For each outgoing edge, decrement the destination's in-degree.
+            let destinations: Vec<NodeId> = self
+                .adjacency
+                .get(node)
+                .map(|adj| {
+                    adj.outputs
+                        .iter()
+                        .filter_map(|&eid| self.edges.get(eid).map(|e| e.to))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            for dest in destinations {
+                if let Some(deg) = in_degree.get_mut(dest) {
+                    *deg -= 1;
+                    if *deg == 0 {
+                        queue.push_back(dest);
+                    }
+                }
+            }
+        }
+
+        // If there are remaining nodes, they are in cycles. Append them in
+        // deterministic order (by NodeId slot-map key).
+        if order.len() < node_count {
+            let in_order: std::collections::HashSet<NodeId> = order.iter().copied().collect();
+            let mut cycle_nodes: Vec<NodeId> = self
+                .nodes
+                .keys()
+                .filter(|nid| !in_order.contains(nid))
+                .collect();
+            cycle_nodes.sort();
+            order.extend(cycle_nodes);
+        }
+
+        // Build a position map: node -> index in `order`.
+        let mut position: SecondaryMap<NodeId, usize> = SecondaryMap::new();
+        for (idx, &nid) in order.iter().enumerate() {
+            position.insert(nid, idx);
+        }
+
+        // Back-edges: any edge where `to` appears before `from` in the order.
+        let back_edges: Vec<EdgeId> = self
+            .edges
+            .iter()
+            .filter_map(|(eid, edge)| {
+                let from_pos = position.get(edge.from).copied().unwrap_or(0);
+                let to_pos = position.get(edge.to).copied().unwrap_or(0);
+                if to_pos <= from_pos {
+                    Some(eid)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        (order, back_edges)
+    }
+
     /// Recompute the topological order using Kahn's algorithm.
     ///
     /// Uses a `SecondaryMap<NodeId, usize>` for in-degree tracking, giving

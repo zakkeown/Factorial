@@ -638,13 +638,13 @@ impl Engine {
     // -----------------------------------------------------------------------
 
     fn phase_process(&mut self) {
-        // Get topological order. If the graph has a cycle, skip processing.
-        let topo_order = match self.graph.topological_order() {
-            Ok(order) => order.to_vec(),
-            Err(_) => return,
-        };
+        // Use feedback-aware ordering so cycles don't skip processing.
+        // Back-edges naturally introduce a one-tick delay: items placed in
+        // output on tick N are transported on tick N+1, so cycle nodes see
+        // last-tick's output as this-tick's input.
+        let (order, _back_edges) = self.graph.topological_order_with_feedback();
 
-        for node_id in topo_order {
+        for node_id in order {
             self.process_node(node_id);
         }
     }
@@ -3237,5 +3237,49 @@ mod tests {
         // Ensure no cross-contamination.
         assert_eq!(test_utils::input_quantity(&engine, o2_sink, hydrogen), 0, "O2 sink should not have hydrogen");
         assert_eq!(test_utils::input_quantity(&engine, h2_sink, oxygen), 0, "H2 sink should not have oxygen");
+    }
+
+    // -----------------------------------------------------------------------
+    // Feedback Loop: cycles should not prevent processing
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn feedback_loop_processes_with_one_tick_delay() {
+        use crate::test_utils;
+
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        let iron = test_utils::iron();
+
+        // A -> B -> A (cycle). A produces iron, B passes it through.
+        let a = test_utils::add_node(
+            &mut engine,
+            test_utils::make_source(iron, 2.0),
+            100,
+            100,
+        );
+        let b = test_utils::add_node(
+            &mut engine,
+            test_utils::make_recipe(vec![(iron, 1)], vec![(iron, 1)], 1),
+            100,
+            100,
+        );
+
+        test_utils::connect(&mut engine, a, b, test_utils::make_flow_transport(10.0));
+        test_utils::connect(&mut engine, b, a, test_utils::make_flow_transport(10.0));
+
+        // Step 10 ticks. Should NOT skip processing due to cycle.
+        for _ in 0..10 {
+            engine.step();
+        }
+
+        // A should have produced items (not stalled by cycle detection).
+        let total_a_output = test_utils::output_total(&engine, a);
+        let total_b_input = test_utils::input_quantity(&engine, b, iron);
+        let total_b_output = test_utils::output_total(&engine, b);
+        // At minimum, some items should have moved through the system.
+        assert!(
+            total_a_output + total_b_input + total_b_output > 0,
+            "Cycle should not prevent processing. a_out={total_a_output}, b_in={total_b_input}, b_out={total_b_output}"
+        );
     }
 }
