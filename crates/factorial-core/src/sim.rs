@@ -180,4 +180,61 @@ mod tests {
 
         assert_ne!(h1.finish(), h2.finish());
     }
+
+    #[test]
+    fn sim_state_default_is_zero() {
+        let state = SimState::default();
+        assert_eq!(state.tick, 0);
+        assert_eq!(state.accumulator, 0);
+    }
+
+    #[test]
+    fn simulation_strategy_tick_debug() {
+        let strategy = SimulationStrategy::Tick;
+        let debug = format!("{strategy:?}");
+        assert!(debug.contains("Tick"));
+    }
+
+    #[test]
+    fn simulation_strategy_delta_stores_timestep() {
+        let strategy = SimulationStrategy::Delta { fixed_timestep: 2 };
+        match strategy {
+            SimulationStrategy::Delta { fixed_timestep } => assert_eq!(fixed_timestep, 2),
+            _ => panic!("expected Delta"),
+        }
+    }
+
+    #[test]
+    fn state_hash_empty_is_fnv_offset() {
+        let h = StateHash::new();
+        assert_eq!(h.0, 0xcbf29ce484222325);
+    }
+
+    #[test]
+    fn state_hash_default_equals_new() {
+        assert_eq!(StateHash::default().0, StateHash::new().0);
+    }
+
+    #[test]
+    fn state_hash_write_fixed64() {
+        use crate::fixed::Fixed64;
+        let mut h1 = StateHash::new();
+        h1.write_fixed64(Fixed64::from_num(42));
+
+        let mut h2 = StateHash::new();
+        h2.write_fixed64(Fixed64::from_num(42));
+
+        assert_eq!(h1.finish(), h2.finish());
+
+        let mut h3 = StateHash::new();
+        h3.write_fixed64(Fixed64::from_num(43));
+        assert_ne!(h1.finish(), h3.finish());
+    }
+
+    #[test]
+    fn advance_result_default() {
+        let result = AdvanceResult::default();
+        assert_eq!(result.steps_run, 0);
+        assert!(result.mutation_results.is_empty());
+    }
 }

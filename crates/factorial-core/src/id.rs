@@ -68,4 +68,78 @@ mod tests {
         map.insert(ItemTypeId(1), "iron_plate");
         assert_eq!(map[&ItemTypeId(0)], "iron_ore");
     }
+
+    #[test]
+    fn recipe_id_equality_and_copy() {
+        let a = RecipeId(0);
+        let b = RecipeId(0);
+        let c = RecipeId(1);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        let d = a; // Copy
+        assert_eq!(a, d);
+    }
+
+    #[test]
+    fn property_id_ordering() {
+        let a = PropertyId(1);
+        let b = PropertyId(2);
+        assert!(a < b);
+        assert!(b > a);
+    }
+
+    #[test]
+    fn modifier_id_equality() {
+        let a = ModifierId(10);
+        let b = ModifierId(10);
+        let c = ModifierId(20);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn pending_node_id_equality() {
+        let a = PendingNodeId(0);
+        let b = PendingNodeId(0);
+        let c = PendingNodeId(1);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn pending_edge_id_equality() {
+        let a = PendingEdgeId(0);
+        let b = PendingEdgeId(0);
+        let c = PendingEdgeId(1);
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn ids_debug_format() {
+        let item = ItemTypeId(42);
+        let debug = format!("{item:?}");
+        assert!(debug.contains("42"), "got: {debug}");
+
+        let building = BuildingTypeId(7);
+        let debug = format!("{building:?}");
+        assert!(debug.contains("7"), "got: {debug}");
+    }
+
+    #[test]
+    fn item_type_id_ordering() {
+        let a = ItemTypeId(1);
+        let b = ItemTypeId(2);
+        assert!(a < b);
+    }
+
+    #[test]
+    fn building_type_id_hashable() {
+        use std::collections::HashMap;
+        let mut map = HashMap::new();
+        map.insert(BuildingTypeId(0), "furnace");
+        map.insert(BuildingTypeId(1), "assembler");
+        assert_eq!(map[&BuildingTypeId(0)], "furnace");
+        assert_eq!(map.len(), 2);
+    }
 }
