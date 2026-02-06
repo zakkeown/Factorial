@@ -16,6 +16,32 @@
 
 ---
 
+## Known Engine Limitations
+
+These were identified during design review and affect test implementation:
+
+### 1. No Fair-Share Distribution Across Fan-Out Edges (engine.rs:291-338)
+
+When one node has multiple outgoing edges (e.g., Wire Workshop → 4 downstream nodes), edges are processed sequentially. The first edge in iteration order gets priority. With `ItemTransport` at speed=1, each edge takes at most 1 item/tick, so at low production rates this works acceptably — but distribution may be uneven.
+
+**Mitigation:** Production rates in Builderment recipes are slow enough (1 item every 2-6 ticks) that fan-out nodes won't starve downstream edges. Monitor with assertions.
+
+### 2. Single Input Slot Capacity Shared Across All Types (item.rs / test_utils.rs)
+
+`simple_inventory(N)` creates 1 input slot with capacity N **total** across all item types. A Computer Manufacturer receiving 4 different item types competes for that shared capacity.
+
+**Mitigation:** Use larger capacities (200) for high-fan-in nodes (Industrial Factories, Manufacturers, Sinks). The existing `STD_INPUT_CAP = 50` is fine for 1-2 input recipes.
+
+### 3. determine_item_type_for_edge Returns Only First Output Type (engine.rs:396-424)
+
+All edges from a node deliver the same item type (the first output of the recipe). This is not a problem for Builderment since every recipe has exactly 1 output type.
+
+### 4. ItemTransport Belt Slots Use Placeholder ItemTypeId(0) (transport.rs:326-328)
+
+Belt slots internally track occupancy with `ItemTypeId(0)`, but the correct item type is resolved at delivery time via `determine_item_type_for_edge()`. Not a functional issue.
+
+---
+
 ## Task 1: Add Builderment Item Type Constants to test_utils
 
 **Files:**
@@ -105,9 +131,13 @@ use factorial_core::sim::SimulationStrategy;
 use factorial_core::test_utils::*;
 use factorial_core::transport::*;
 
-/// Inventory capacity for standard buildings.
+/// Inventory capacity for 1-2 input buildings (Furnaces, Workshops, Forges).
 const STD_INPUT_CAP: u32 = 50;
 const STD_OUTPUT_CAP: u32 = 50;
+/// Larger capacity for 3-4 input buildings (Industrial Factories, Manufacturers).
+/// Needed because simple_inventory uses a single slot shared across all item types.
+/// See: Known Engine Limitations #2 in the implementation plan.
+const MULTI_INPUT_CAP: u32 = 200;
 /// Larger capacity for sinks that accumulate items.
 const SINK_INPUT_CAP: u32 = 5000;
 
@@ -217,6 +247,7 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
     // Layer 3: Industrial Factories
     // =====================================================================
 
+    // Industrial Factories use MULTI_INPUT_CAP (3 different item types sharing one slot).
     let electric_motor_factory = add_node(
         &mut engine,
         make_recipe(
@@ -224,7 +255,7 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
             vec![(electric_motor(), 1)],
             6,
         ),
-        STD_INPUT_CAP, STD_OUTPUT_CAP,
+        MULTI_INPUT_CAP, STD_OUTPUT_CAP,
     );
     let circuit_board_factory = add_node(
         &mut engine,
@@ -233,7 +264,7 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
             vec![(circuit_board(), 1)],
             6,
         ),
-        STD_INPUT_CAP, STD_OUTPUT_CAP,
+        MULTI_INPUT_CAP, STD_OUTPUT_CAP,
     );
     let basic_robot_factory = add_node(
         &mut engine,
@@ -242,13 +273,14 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
             vec![(basic_robot(), 1)],
             6,
         ),
-        STD_INPUT_CAP, STD_OUTPUT_CAP,
+        MULTI_INPUT_CAP, STD_OUTPUT_CAP,
     );
 
     // =====================================================================
     // Layer 4: Manufacturers
     // =====================================================================
 
+    // Manufacturers use MULTI_INPUT_CAP (4 different item types sharing one slot).
     let computer_mfr = add_node(
         &mut engine,
         make_recipe(
@@ -256,7 +288,7 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
             vec![(computer(), 1)],
             8,
         ),
-        STD_INPUT_CAP, STD_OUTPUT_CAP,
+        MULTI_INPUT_CAP, STD_OUTPUT_CAP,
     );
     let super_computer_mfr = add_node(
         &mut engine,
@@ -265,7 +297,7 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
             vec![(super_computer(), 1)],
             10,
         ),
-        STD_INPUT_CAP, STD_OUTPUT_CAP,
+        MULTI_INPUT_CAP, STD_OUTPUT_CAP,
     );
 
     // =====================================================================
