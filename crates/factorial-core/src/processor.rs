@@ -102,6 +102,9 @@ pub enum Processor {
     Fixed(FixedRecipe),
     Property(PropertyProcessor),
     Demand(DemandProcessor),
+    /// Passes all items from input to output unchanged.
+    /// Used for junction nodes (splitters, mergers, balancers).
+    Passthrough,
 }
 
 // ---------------------------------------------------------------------------
@@ -275,6 +278,9 @@ impl Processor {
             }
             Processor::Demand(demand) => {
                 tick_demand(demand, state, modifiers, available_inputs)
+            }
+            Processor::Passthrough => {
+                tick_passthrough(state, available_inputs, output_space)
             }
         }
     }
@@ -605,6 +611,50 @@ fn tick_demand(
         result.state_changed = true;
     }
 
+    result
+}
+
+// ---------------------------------------------------------------------------
+// Passthrough processor tick
+// ---------------------------------------------------------------------------
+
+fn tick_passthrough(
+    state: &mut ProcessorState,
+    available_inputs: &[(ItemTypeId, u32)],
+    output_space: u32,
+) -> ProcessorResult {
+    if available_inputs.is_empty() {
+        *state = ProcessorState::Idle;
+        return ProcessorResult {
+            state_changed: true,
+            ..Default::default()
+        };
+    }
+
+    let mut result = ProcessorResult::default();
+    let mut space_remaining = output_space;
+
+    for &(item_type, qty) in available_inputs {
+        if space_remaining == 0 {
+            break;
+        }
+        let to_move = qty.min(space_remaining);
+        if to_move > 0 {
+            result.consumed.push((item_type, to_move));
+            result.produced.push((item_type, to_move));
+            space_remaining -= to_move;
+        }
+    }
+
+    if result.consumed.is_empty() {
+        *state = ProcessorState::Stalled {
+            reason: StallReason::OutputFull,
+        };
+    } else {
+        *state = ProcessorState::Working { progress: 0 };
+    }
+
+    result.state_changed = true;
     result
 }
 
@@ -1258,5 +1308,75 @@ mod tests {
         let bytes2 = bitcode::serialize(&m_default).expect("serialize default");
         let m3: Modifier = bitcode::deserialize(&bytes2).expect("deserialize default");
         assert_eq!(m3.stacking, StackingRule::Multiplicative);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 26: Passthrough processor moves items from input to output
+    // -----------------------------------------------------------------------
+    #[test]
+    fn passthrough_moves_items_from_input_to_output() {
+        let mut proc = Processor::Passthrough;
+        let mut state = ProcessorState::Idle;
+        let no_mods: Vec<Modifier> = vec![];
+
+        // Provide 5 iron and 3 copper as inputs with 100 output space.
+        let r = proc.tick(&mut state, &no_mods, &[(iron(), 5), (copper(), 3)], 100);
+        assert_eq!(r.consumed, vec![(iron(), 5), (copper(), 3)]);
+        assert_eq!(r.produced, vec![(iron(), 5), (copper(), 3)]);
+        assert!(r.state_changed);
+        assert!(matches!(state, ProcessorState::Working { progress: 0 }));
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 27: Passthrough respects output_space
+    // -----------------------------------------------------------------------
+    #[test]
+    fn passthrough_respects_output_space() {
+        let mut proc = Processor::Passthrough;
+        let mut state = ProcessorState::Idle;
+        let no_mods: Vec<Modifier> = vec![];
+
+        // 10 iron available but only 3 output slots.
+        let r = proc.tick(&mut state, &no_mods, &[(iron(), 10)], 3);
+        assert_eq!(r.consumed, vec![(iron(), 3)]);
+        assert_eq!(r.produced, vec![(iron(), 3)]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 28: Passthrough idles when no inputs
+    // -----------------------------------------------------------------------
+    #[test]
+    fn passthrough_idles_when_no_inputs() {
+        let mut proc = Processor::Passthrough;
+        let mut state = ProcessorState::Working { progress: 0 };
+        let no_mods: Vec<Modifier> = vec![];
+
+        let r = proc.tick(&mut state, &no_mods, &[], 100);
+        assert!(r.consumed.is_empty());
+        assert!(r.produced.is_empty());
+        assert!(r.state_changed);
+        assert_eq!(state, ProcessorState::Idle);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 29: Passthrough stalls when output full
+    // -----------------------------------------------------------------------
+    #[test]
+    fn passthrough_stalls_when_output_full() {
+        let mut proc = Processor::Passthrough;
+        let mut state = ProcessorState::Idle;
+        let no_mods: Vec<Modifier> = vec![];
+
+        // Items available but zero output space.
+        let r = proc.tick(&mut state, &no_mods, &[(iron(), 5)], 0);
+        assert!(r.consumed.is_empty());
+        assert!(r.produced.is_empty());
+        assert!(r.state_changed);
+        assert_eq!(
+            state,
+            ProcessorState::Stalled {
+                reason: StallReason::OutputFull
+            }
+        );
     }
 }

@@ -422,6 +422,9 @@ impl Engine {
                         h.write_fixed64(demand.base_rate);
                         h.write_fixed64(demand.accumulated);
                     }
+                    Processor::Passthrough => {
+                        h.write_u32(4);
+                    }
                 }
             }
         }

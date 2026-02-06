@@ -616,6 +616,9 @@ impl Engine {
                 }
                 Processor::Property(prop) => return prop.output_type,
                 Processor::Demand(demand) => return demand.input_type,
+                Processor::Passthrough => {
+                    // No inherent type -- fall through to inventory check below.
+                }
             }
         }
 
