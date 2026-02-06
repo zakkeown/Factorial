@@ -9,6 +9,7 @@ members = [
     "crates/factorial-spatial",
     "crates/factorial-integration-tests",
     "crates/factorial-fluid",
+    "crates/factorial-examples",
 ]
 
 [workspace.dependencies]

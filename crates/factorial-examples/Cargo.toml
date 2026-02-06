@@ -1,0 +1,13 @@
+[package]
+name = "factorial-examples"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+factorial-core = { path = "../factorial-core" }
+factorial-power = { path = "../factorial-power" }
+factorial-stats = { path = "../factorial-stats" }
+factorial-tech-tree = { path = "../factorial-tech-tree" }
+factorial-spatial = { path = "../factorial-spatial" }
+factorial-fluid = { path = "../factorial-fluid" }

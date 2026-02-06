@@ -322,6 +322,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "factorial-examples"
+version = "0.1.0"
+dependencies = [
+ "factorial-core",
+ "factorial-fluid",
+ "factorial-power",
+ "factorial-spatial",
+ "factorial-stats",
+ "factorial-tech-tree",
+]
+
+[[package]]
 name = "factorial-ffi"
 version = "0.1.0"
 dependencies = [
