@@ -1505,4 +1505,126 @@ mod tests {
             .collect();
         assert!(pressure_events.is_empty());
     }
+
+    // -----------------------------------------------------------------------
+    // Test 34: Fluid consumer keyed by network (and thus by fluid type)
+    // -----------------------------------------------------------------------
+    #[test]
+    fn fluid_consumer_keyed_by_network() {
+        let mut module = FluidModule::new();
+        let water_net = module.create_network(water());
+        let steam_net = module.create_network(ItemTypeId(100)); // steam
+
+        let consumer = make_node_id();
+
+        // Consumer wants water from the water network.
+        module.add_consumer(
+            water_net,
+            consumer,
+            FluidConsumer {
+                rate: fixed(10.0),
+            },
+        );
+
+        // Verify consumer is on the water network, not the steam network.
+        assert!(module
+            .network(water_net)
+            .unwrap()
+            .consumers
+            .contains(&consumer));
+        assert!(!module
+            .network(steam_net)
+            .unwrap()
+            .consumers
+            .contains(&consumer));
+
+        // Verify the water network carries water type.
+        assert_eq!(module.network(water_net).unwrap().fluid_type, water());
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 35: A single node on multiple fluid networks with different roles
+    // -----------------------------------------------------------------------
+    #[test]
+    fn node_on_multiple_fluid_networks() {
+        let mut module = FluidModule::new();
+        let water_net = module.create_network(water());
+        let steam_net = module.create_network(ItemTypeId(100)); // steam
+
+        let node = make_node_id();
+
+        // Node produces steam and consumes water.
+        module.add_producer(
+            steam_net,
+            node,
+            FluidProducer {
+                rate: fixed(5.0),
+            },
+        );
+        module.add_consumer(
+            water_net,
+            node,
+            FluidConsumer {
+                rate: fixed(10.0),
+            },
+        );
+
+        // Node should be on both networks with correct roles.
+        assert!(module
+            .network(steam_net)
+            .unwrap()
+            .producers
+            .contains(&node));
+        assert!(!module
+            .network(steam_net)
+            .unwrap()
+            .consumers
+            .contains(&node));
+        assert!(module
+            .network(water_net)
+            .unwrap()
+            .consumers
+            .contains(&node));
+        assert!(!module
+            .network(water_net)
+            .unwrap()
+            .producers
+            .contains(&node));
+
+        // Tick to verify both networks work independently with the shared node.
+        // Add a consumer for steam and a producer for water so networks are balanced.
+        let other_nodes = make_node_ids(2);
+        module.add_consumer(
+            steam_net,
+            other_nodes[0],
+            FluidConsumer {
+                rate: fixed(5.0),
+            },
+        );
+        module.add_producer(
+            water_net,
+            other_nodes[1],
+            FluidProducer {
+                rate: fixed(10.0),
+            },
+        );
+
+        let events = module.tick(1);
+
+        // Both networks should be balanced.
+        assert_eq!(module.pressure(steam_net), Some(Fixed64::from_num(1)));
+        assert_eq!(module.pressure(water_net), Some(Fixed64::from_num(1)));
+
+        // No pressure events.
+        let pressure_events: Vec<_> = events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    FluidEvent::PressureLow { .. } | FluidEvent::PressureRestored { .. }
+                )
+            })
+            .collect();
+        assert!(pressure_events.is_empty());
+    }
 }
