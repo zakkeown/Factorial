@@ -25,7 +25,7 @@ pub struct BuildingTypeId(pub u32);
 pub struct RecipeId(pub u32);
 
 /// Identifies a property on an item type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct PropertyId(pub u16);
 
 /// Identifies a modifier applied to a building.

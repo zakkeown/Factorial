@@ -411,10 +411,7 @@ fn advance_vehicle(
             // At source — load up.
             let to_load = available.min(vehicle.capacity);
             if to_load > 0 {
-                state.cargo.push(ItemStack {
-                    item_type: ItemTypeId(0),
-                    quantity: to_load,
-                });
+                state.cargo.push(ItemStack::new(ItemTypeId(0), to_load));
                 items_moved = to_load;
             }
             // Depart (even with partial load, to keep things moving).

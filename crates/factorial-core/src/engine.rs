@@ -24,7 +24,7 @@
 use crate::event::{Event, EventBus, EventKind, EventMutation};
 use crate::fixed::{Fixed64, Ticks};
 use crate::graph::ProductionGraph;
-use crate::id::{EdgeId, ItemTypeId, NodeId};
+use crate::id::{EdgeId, ItemTypeId, NodeId, PropertyId};
 use crate::item::{Inventory, ItemStack};
 use crate::processor::{Modifier, Processor, ProcessorResult, ProcessorState};
 use crate::query::{NodeSnapshot, TransportSnapshot};
@@ -191,6 +191,29 @@ impl Engine {
     /// Get the output inventory for a node (mutable).
     pub fn get_output_inventory_mut(&mut self, node: NodeId) -> Option<&mut Inventory> {
         self.outputs.get_mut(node)
+    }
+
+    // -----------------------------------------------------------------------
+    // Item property queries
+    // -----------------------------------------------------------------------
+
+    /// Get the property value for items of a given type in a node's output inventory.
+    pub fn get_item_property(
+        &self,
+        node: NodeId,
+        item_type: ItemTypeId,
+        property: PropertyId,
+    ) -> Option<Fixed64> {
+        self.outputs.get(node).and_then(|inv| {
+            for slot in &inv.output_slots {
+                for stack in &slot.stacks {
+                    if stack.item_type == item_type {
+                        return stack.get_property(property);
+                    }
+                }
+            }
+            None
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -3546,5 +3569,35 @@ mod tests {
             Some(&ProcessorState::Idle),
             "swap_processor should reset state to Idle"
         );
+    }
+
+    #[test]
+    fn get_item_property_from_output() {
+        use crate::test_utils;
+
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        let iron = test_utils::iron();
+        let temp = crate::id::PropertyId(0);
+
+        let node = test_utils::add_node(
+            &mut engine,
+            test_utils::make_source(iron, 1.0),
+            100,
+            100,
+        );
+
+        // Manually add an item with a property to the output inventory.
+        if let Some(inv) = engine.outputs.get_mut(node) {
+            let mut stack = ItemStack::new(iron, 5);
+            stack.set_property(temp, Fixed64::from_num(100));
+            inv.output_slots[0].stacks.push(stack);
+        }
+
+        let prop = engine.get_item_property(node, iron, temp);
+        assert_eq!(prop, Some(Fixed64::from_num(100)));
+
+        // Non-existent property should return None.
+        let missing = engine.get_item_property(node, iron, crate::id::PropertyId(99));
+        assert_eq!(missing, None);
     }
 }

@@ -1,16 +1,40 @@
 use crate::id::*;
+use crate::fixed::Fixed64;
 use serde::{Serialize, Deserialize};
+use std::collections::BTreeMap;
 
 slotmap::new_key_type! {
     /// Identifies a specific item instance (for stateful items).
     pub struct InstanceId;
 }
 
-/// A stack of fungible items (no properties). Just a counter.
+/// A stack of fungible items with optional per-instance properties.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ItemStack {
     pub item_type: ItemTypeId,
     pub quantity: u32,
+    /// Per-instance properties (e.g., temperature, quality).
+    /// Empty by default. Game code sets properties via processors or modules.
+    #[serde(default)]
+    pub properties: BTreeMap<PropertyId, Fixed64>,
+}
+
+impl ItemStack {
+    pub fn new(item_type: ItemTypeId, quantity: u32) -> Self {
+        Self {
+            item_type,
+            quantity,
+            properties: BTreeMap::new(),
+        }
+    }
+
+    pub fn set_property(&mut self, id: PropertyId, value: Fixed64) {
+        self.properties.insert(id, value);
+    }
+
+    pub fn get_property(&self, id: PropertyId) -> Option<Fixed64> {
+        self.properties.get(&id).copied()
+    }
 }
 
 /// Inventory slot that holds either fungible counts or instance references.
@@ -40,7 +64,7 @@ impl InventorySlot {
             if let Some(stack) = self.stacks.iter_mut().find(|s| s.item_type == item_type) {
                 stack.quantity += to_add;
             } else {
-                self.stacks.push(ItemStack { item_type, quantity: to_add });
+                self.stacks.push(ItemStack::new(item_type, to_add));
             }
         }
 
@@ -162,5 +186,22 @@ mod tests {
         let inv = Inventory::new(2, 1, 50);
         assert_eq!(inv.input_slots.len(), 2);
         assert_eq!(inv.output_slots.len(), 1);
+    }
+
+    #[test]
+    fn item_stack_with_properties() {
+        use crate::id::PropertyId;
+        use crate::fixed::Fixed64;
+
+        let mut stack = ItemStack {
+            item_type: ItemTypeId(0),
+            quantity: 10,
+            properties: Default::default(),
+        };
+
+        let temp = PropertyId(0);
+        stack.set_property(temp, Fixed64::from_num(95));
+        assert_eq!(stack.get_property(temp), Some(Fixed64::from_num(95)));
+        assert_eq!(stack.get_property(PropertyId(1)), None);
     }
 }
