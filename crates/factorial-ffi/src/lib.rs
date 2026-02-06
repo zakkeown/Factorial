@@ -2765,4 +2765,261 @@ mod tests {
 
         unsafe { factorial_destroy(engine) };
     }
+
+    // -----------------------------------------------------------------------
+    // Test 28: Deserialize with null out_engine pointer
+    // -----------------------------------------------------------------------
+    #[test]
+    fn deserialize_null_out_engine() {
+        let data = [1u8; 10];
+        let result = unsafe { factorial_deserialize(data.as_ptr(), data.len(), ptr::null_mut()) };
+        assert_eq!(result, FactorialResult::NullPointer);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 29: Serialize null output pointer
+    // -----------------------------------------------------------------------
+    #[test]
+    fn serialize_null_output() {
+        let engine = factorial_create();
+        let result = unsafe { factorial_serialize(engine, ptr::null_mut()) };
+        assert_eq!(result, FactorialResult::NullPointer);
+        unsafe { factorial_destroy(engine) };
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 30: Deserialize zero-length data
+    // -----------------------------------------------------------------------
+    #[test]
+    fn deserialize_zero_length_data() {
+        let data = [0u8; 0];
+        let mut engine_ptr: *mut FactorialEngine = ptr::null_mut();
+        let result = unsafe { factorial_deserialize(data.as_ptr(), 0, &mut engine_ptr) };
+        assert_eq!(result, FactorialResult::DeserializeError);
+        assert!(engine_ptr.is_null());
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 31: Operations on poisoned engine all return Poisoned
+    // -----------------------------------------------------------------------
+    #[test]
+    fn poisoned_engine_rejects_all_operations() {
+        let engine = factorial_create();
+        let engine_ref = unsafe { &mut *engine };
+        engine_ref.poisoned = true;
+
+        // Mutation operations
+        let mut pending: FfiPendingNodeId = 0;
+        assert_eq!(
+            unsafe { factorial_add_node(engine, 0, &mut pending) },
+            FactorialResult::Poisoned
+        );
+        assert_eq!(
+            unsafe { factorial_remove_node(engine, 0) },
+            FactorialResult::Poisoned
+        );
+        assert_eq!(
+            unsafe { factorial_connect(engine, 0, 0, &mut 0u64) },
+            FactorialResult::Poisoned
+        );
+        assert_eq!(
+            unsafe { factorial_disconnect(engine, 0) },
+            FactorialResult::Poisoned
+        );
+
+        let mut mr = FfiMutationResult {
+            added_nodes: ptr::null(),
+            added_node_count: 0,
+            added_edges: ptr::null(),
+            added_edge_count: 0,
+        };
+        assert_eq!(
+            unsafe { factorial_apply_mutations(engine, &mut mr) },
+            FactorialResult::Poisoned
+        );
+
+        // Advance
+        assert_eq!(
+            unsafe { factorial_advance(engine, 10) },
+            FactorialResult::Poisoned
+        );
+
+        // Queries
+        let mut count: u32 = 0;
+        assert_eq!(
+            unsafe { factorial_node_count(engine, &mut count) },
+            FactorialResult::Poisoned
+        );
+        assert_eq!(
+            unsafe { factorial_edge_count(engine, &mut count) },
+            FactorialResult::Poisoned
+        );
+        let mut hash: u64 = 0;
+        assert_eq!(
+            unsafe { factorial_get_state_hash(engine, &mut hash) },
+            FactorialResult::Poisoned
+        );
+
+        // Serialization
+        let mut buf = FfiByteBuffer {
+            data: ptr::null_mut(),
+            len: 0,
+        };
+        assert_eq!(
+            unsafe { factorial_serialize(engine, &mut buf) },
+            FactorialResult::Poisoned
+        );
+
+        // Events
+        let mut eb = FfiEventBuffer {
+            events: ptr::null(),
+            count: 0,
+        };
+        assert_eq!(
+            unsafe { factorial_poll_events(engine, &mut eb) },
+            FactorialResult::Poisoned
+        );
+
+        // Configuration
+        let rate_bits = Fixed64::from_num(1).to_bits();
+        assert_eq!(
+            unsafe { factorial_set_source(engine, 0, 0, rate_bits) },
+            FactorialResult::Poisoned
+        );
+        let inputs = [FfiItemStack { item_type: 0, quantity: 1 }];
+        let outputs = [FfiItemStack { item_type: 1, quantity: 1 }];
+        let recipe = FfiRecipe {
+            input_count: 1,
+            inputs: inputs.as_ptr(),
+            output_count: 1,
+            outputs: outputs.as_ptr(),
+            duration: 5,
+        };
+        assert_eq!(
+            unsafe { factorial_set_fixed_processor(engine, 0, &recipe) },
+            FactorialResult::Poisoned
+        );
+        assert_eq!(
+            unsafe { factorial_set_flow_transport(engine, 0, rate_bits) },
+            FactorialResult::Poisoned
+        );
+
+        unsafe { factorial_destroy(engine) };
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 32: Set transport null pointer checks
+    // -----------------------------------------------------------------------
+    #[test]
+    fn transport_null_pointer_checks() {
+        let rate_bits = Fixed64::from_num(1).to_bits();
+        assert_eq!(
+            unsafe { factorial_set_flow_transport(ptr::null_mut(), 0, rate_bits) },
+            FactorialResult::NullPointer
+        );
+        assert_eq!(
+            unsafe { factorial_set_item_transport(ptr::null_mut(), 0, rate_bits, 10, 1) },
+            FactorialResult::NullPointer
+        );
+        assert_eq!(
+            unsafe { factorial_set_batch_transport(ptr::null_mut(), 0, 10, 5) },
+            FactorialResult::NullPointer
+        );
+        assert_eq!(
+            unsafe { factorial_set_vehicle_transport(ptr::null_mut(), 0, 50, 10) },
+            FactorialResult::NullPointer
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 33: Set capacity null pointer checks
+    // -----------------------------------------------------------------------
+    #[test]
+    fn capacity_null_pointer_checks() {
+        assert_eq!(
+            unsafe { factorial_set_input_capacity(ptr::null_mut(), 0, 100) },
+            FactorialResult::NullPointer
+        );
+        assert_eq!(
+            unsafe { factorial_set_output_capacity(ptr::null_mut(), 0, 100) },
+            FactorialResult::NullPointer
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 34: Source null pointer check
+    // -----------------------------------------------------------------------
+    #[test]
+    fn source_null_pointer_check() {
+        let rate_bits = Fixed64::from_num(1).to_bits();
+        assert_eq!(
+            unsafe { factorial_set_source(ptr::null_mut(), 0, 0, rate_bits) },
+            FactorialResult::NullPointer
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 35: Multiple engines interleaved
+    // -----------------------------------------------------------------------
+    #[test]
+    fn multiple_engines_interleaved() {
+        let engine_a = factorial_create();
+        let engine_b = factorial_create();
+
+        for _ in 0..5 {
+            unsafe { factorial_step(engine_a) };
+        }
+        for _ in 0..3 {
+            unsafe { factorial_step(engine_b) };
+        }
+
+        let mut tick_a: u64 = 0;
+        let mut tick_b: u64 = 0;
+        unsafe { factorial_get_tick(engine_a, &mut tick_a) };
+        unsafe { factorial_get_tick(engine_b, &mut tick_b) };
+        assert_eq!(tick_a, 5);
+        assert_eq!(tick_b, 3);
+
+        unsafe { factorial_destroy(engine_a) };
+        unsafe { factorial_destroy(engine_b) };
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 36: Serialize then deserialize large engine
+    // -----------------------------------------------------------------------
+    #[test]
+    fn serialize_large_engine() {
+        let engine_ptr = factorial_create();
+
+        // Add many nodes
+        for _ in 0..50 {
+            ffi_add_node_and_apply(engine_ptr, 0);
+        }
+
+        let mut count: u32 = 0;
+        unsafe { factorial_node_count(engine_ptr, &mut count) };
+        assert_eq!(count, 50);
+
+        // Serialize
+        let mut buf = FfiByteBuffer {
+            data: ptr::null_mut(),
+            len: 0,
+        };
+        let result = unsafe { factorial_serialize(engine_ptr, &mut buf) };
+        assert_eq!(result, FactorialResult::Ok);
+        assert!(buf.len > 0);
+
+        // Deserialize
+        let mut restored: *mut FactorialEngine = ptr::null_mut();
+        let result = unsafe { factorial_deserialize(buf.data, buf.len, &mut restored) };
+        assert_eq!(result, FactorialResult::Ok);
+
+        let mut restored_count: u32 = 0;
+        unsafe { factorial_node_count(restored, &mut restored_count) };
+        assert_eq!(restored_count, 50);
+
+        unsafe { factorial_free_buffer(buf) };
+        unsafe { factorial_destroy(restored) };
+        unsafe { factorial_destroy(engine_ptr) };
+    }
 }
