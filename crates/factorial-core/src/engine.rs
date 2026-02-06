@@ -573,6 +573,41 @@ impl Engine {
                 _ => {} // Inserter and Merger don't need budgets.
             }
         }
+
+        // Default fair distribution for non-junction nodes with multiple outputs.
+        let all_node_ids: Vec<NodeId> = self.graph.nodes().map(|(id, _)| id).collect();
+        for node_id in all_node_ids {
+            if self.junctions.contains_key(node_id) {
+                continue; // Junction already handled above.
+            }
+            let outputs = self.graph.get_outputs(node_id);
+            if outputs.len() <= 1 {
+                continue; // No fan-out needed.
+            }
+
+            // Check if any edge from this node already has an item_filter.
+            // If ALL edges have filters, they handle their own routing.
+            let has_unfiltered = outputs.iter().any(|&eid| {
+                self.graph.get_edge(eid).map_or(true, |e| e.item_filter.is_none())
+            });
+            if !has_unfiltered { continue; }
+
+            let total = self.output_total(node_id);
+            if total == 0 { continue; }
+
+            let num = outputs.len() as u32;
+            let share = total / num;
+            let remainder = total % num;
+            let outputs_vec: Vec<EdgeId> = outputs.to_vec();
+            for (i, &edge_id) in outputs_vec.iter().enumerate() {
+                // Only set budget for unfiltered edges (filtered edges handle themselves).
+                if self.graph.get_edge(edge_id).map_or(false, |e| e.item_filter.is_some()) {
+                    continue;
+                }
+                let budget = share + if i == 0 { remainder } else { 0 };
+                self.edge_budgets.insert(edge_id, budget);
+            }
+        }
     }
 
     fn phase_transport(&mut self) {
@@ -3434,5 +3469,37 @@ mod tests {
         // Round-robin should give roughly equal distribution.
         let diff = (at_a as i64 - at_b as i64).unsigned_abs();
         assert!(diff <= at_a.max(at_b) as u64 / 2, "Distribution should be roughly even: A={at_a}, B={at_b}");
+    }
+
+    #[test]
+    fn fan_out_distributes_fairly_without_junction() {
+        use crate::test_utils;
+
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        let iron = test_utils::iron();
+
+        let source = test_utils::add_node(
+            &mut engine,
+            test_utils::make_source(iron, 10.0),
+            100,
+            100,
+        );
+
+        let sink_a = test_utils::add_node(&mut engine, test_utils::make_source(iron, 0.0), 100, 100);
+        let sink_b = test_utils::add_node(&mut engine, test_utils::make_source(iron, 0.0), 100, 100);
+
+        test_utils::connect(&mut engine, source, sink_a, test_utils::make_flow_transport(20.0));
+        test_utils::connect(&mut engine, source, sink_b, test_utils::make_flow_transport(20.0));
+
+        for _ in 0..20 {
+            engine.step();
+        }
+
+        let at_a = test_utils::input_quantity(&engine, sink_a, iron);
+        let at_b = test_utils::input_quantity(&engine, sink_b, iron);
+
+        // Both sinks should receive items (not just the first edge).
+        assert!(at_a > 0, "Sink A should receive items, got {at_a}");
+        assert!(at_b > 0, "Sink B should receive items, got {at_b}");
     }
 }
