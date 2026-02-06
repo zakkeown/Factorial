@@ -15,6 +15,9 @@
 //! - Pressure ratio affects building performance (applied externally).
 //! - Events fire only on *transitions*, not every tick.
 
+pub mod bridge;
+pub use bridge::FluidBridge;
+
 use std::collections::BTreeMap;
 
 use factorial_core::fixed::{Fixed64, Ticks};
@@ -222,6 +225,10 @@ pub struct FluidModule {
     pub pipes: BTreeMap<NodeId, FluidPipe>,
     /// Next network ID to assign.
     next_network_id: u32,
+    /// Per-consumer fluid consumption this tick, keyed by (network, node).
+    /// Updated each tick during fluid distribution.
+    #[serde(default)]
+    pub consumer_consumption: BTreeMap<(FluidNetworkId, NodeId), Fixed64>,
 }
 
 impl Default for FluidModule {
@@ -240,6 +247,7 @@ impl FluidModule {
             storage: BTreeMap::new(),
             pipes: BTreeMap::new(),
             next_network_id: 0,
+            consumer_consumption: BTreeMap::new(),
         }
     }
 
@@ -335,6 +343,14 @@ impl FluidModule {
         self.networks.get(&network_id).map(|n| n.pressure)
     }
 
+    /// Get how much fluid a consumer received this tick.
+    pub fn get_consumed_this_tick(&self, network: FluidNetworkId, node: NodeId) -> Fixed64 {
+        self.consumer_consumption
+            .get(&(network, node))
+            .copied()
+            .unwrap_or(Fixed64::ZERO)
+    }
+
     /// Advance all fluid networks by one tick.
     ///
     /// For each network:
@@ -355,6 +371,9 @@ impl FluidModule {
         let mut events = Vec::new();
         let zero = Fixed64::from_num(0);
         let one = Fixed64::from_num(1);
+
+        // Clear per-consumer consumption tracking from last tick.
+        self.consumer_consumption.clear();
 
         // Collect network IDs to iterate, then process each.
         let network_ids: Vec<FluidNetworkId> = self.networks.keys().copied().collect();
@@ -453,6 +472,24 @@ impl FluidModule {
                     } else {
                         one
                     };
+                }
+            }
+
+            // Record per-consumer consumption for this tick.
+            let consumer_nodes: Vec<NodeId> = self
+                .networks
+                .get(&net_id)
+                .unwrap()
+                .consumers
+                .clone();
+            for &node_id in &consumer_nodes {
+                if let Some(consumer) = self.consumers.get(&node_id) {
+                    let consumed = if pressure >= one {
+                        consumer.rate
+                    } else {
+                        consumer.rate * pressure
+                    };
+                    self.consumer_consumption.insert((net_id, node_id), consumed);
                 }
             }
 

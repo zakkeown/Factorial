@@ -10,3 +10,4 @@ serde = { workspace = true }
 
 [dev-dependencies]
 slotmap = { workspace = true }
+factorial-core = { path = "../factorial-core", features = ["test-utils"] }
