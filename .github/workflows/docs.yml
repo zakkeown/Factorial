@@ -1,0 +1,42 @@
+name: Documentation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/book/**'
+      - 'crates/*/examples/**'
+      - 'crates/factorial-examples/**'
+  pull_request:
+    paths:
+      - 'docs/book/**'
+      - 'crates/*/examples/**'
+      - 'crates/factorial-examples/**'
+
+jobs:
+  build-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build examples
+        run: cargo build --workspace --examples
+
+      - name: Run doc tests
+        run: cargo test --doc --workspace
+
+      - name: Install mdBook
+        run: cargo install mdbook
+
+      - name: Build book
+        run: mdbook build docs/book
+
+      - name: Deploy to GitHub Pages
+        if: github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./target/book
