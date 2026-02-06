@@ -527,3 +527,21 @@ fn full_chain_produces_super_computers() {
     );
 }
 
+#[test]
+fn parallel_chain_produces_basic_robots() {
+    let (mut engine, nodes) = build_builderment_factory();
+
+    for _ in 0..500 {
+        engine.step();
+    }
+
+    // Basic Robot requires: Wood Frame + Motor + Light Bulb
+    // This tests the parallel chain that shares Motor and Copper Wire with the
+    // Computer chain.
+    let robots_produced = output_quantity(&engine, nodes.basic_robot_factory, basic_robot());
+    assert!(
+        robots_produced > 0,
+        "basic robot factory should have produced robots after 500 ticks, got {robots_produced}"
+    );
+}
+
