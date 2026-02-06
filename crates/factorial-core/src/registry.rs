@@ -367,4 +367,86 @@ mod tests {
         let _ = reg.get_recipe(RecipeId(0));
         let _ = reg.get_building(BuildingTypeId(0));
     }
+
+    // -----------------------------------------------------------------------
+    // Error path tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn invalid_item_ref_error_variant() {
+        let mut b = RegistryBuilder::new();
+        b.register_recipe(
+            "bad_output",
+            vec![],
+            vec![RecipeEntry {
+                item: ItemTypeId(999),
+                quantity: 1,
+            }],
+            60,
+        );
+        let result = b.build();
+        assert!(result.is_err());
+        match result {
+            Err(RegistryError::InvalidItemRef(id)) => {
+                assert_eq!(id, ItemTypeId(999));
+                let msg = format!("{}", RegistryError::InvalidItemRef(id));
+                assert!(msg.contains("invalid item reference"), "got: {msg}");
+            }
+            other => panic!("expected InvalidItemRef, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mutate_nonexistent_building_fails() {
+        let mut builder = setup_builder();
+        let result = builder.mutate_building("nonexistent", |_| {});
+        assert!(result.is_err());
+        match result {
+            Err(RegistryError::NotFound(name)) => {
+                assert_eq!(name, "nonexistent");
+            }
+            other => panic!("expected NotFound, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mutate_building_succeeds() {
+        let mut builder = setup_builder();
+        builder
+            .mutate_building("smelter", |b| {
+                b.recipe = None;
+            })
+            .unwrap();
+        let reg = builder.build().unwrap();
+        let smelter_id = reg.building_id("smelter").unwrap();
+        let smelter = reg.get_building(smelter_id).unwrap();
+        assert!(smelter.recipe.is_none());
+    }
+
+    #[test]
+    fn registry_get_nonexistent_returns_none() {
+        let builder = setup_builder();
+        let reg = builder.build().unwrap();
+        assert!(reg.get_item(ItemTypeId(999)).is_none());
+        assert!(reg.get_recipe(RecipeId(999)).is_none());
+        assert!(reg.get_building(BuildingTypeId(999)).is_none());
+        assert!(reg.building_id("nonexistent").is_none());
+        assert!(reg.recipe_id("nonexistent").is_none());
+    }
+
+    #[test]
+    fn registry_item_has_properties_nonexistent_returns_false() {
+        let builder = setup_builder();
+        let reg = builder.build().unwrap();
+        assert!(!reg.item_has_properties(ItemTypeId(999)));
+    }
+
+    #[test]
+    fn empty_registry_builds_successfully() {
+        let b = RegistryBuilder::new();
+        let reg = b.build().unwrap();
+        assert_eq!(reg.item_count(), 0);
+        assert_eq!(reg.recipe_count(), 0);
+        assert_eq!(reg.building_count(), 0);
+    }
 }

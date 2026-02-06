@@ -401,4 +401,31 @@ mod tests {
         assert!(bad_result.is_err());
         assert!(matches!(bad_result, Err(ModuleError::DeserializeFailed(_))));
     }
+
+    // -----------------------------------------------------------------------
+    // Error path tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn module_error_display_messages() {
+        let err = ModuleError::DeserializeFailed("bad data".to_string());
+        let msg = format!("{err}");
+        assert!(msg.contains("deserialize failed"), "got: {msg}");
+        assert!(msg.contains("bad data"), "got: {msg}");
+
+        let err = ModuleError::NotFound("power".to_string());
+        let msg = format!("{err}");
+        assert!(msg.contains("module not found"), "got: {msg}");
+        assert!(msg.contains("power"), "got: {msg}");
+    }
+
+    #[test]
+    fn module_context_has_correct_tick() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        engine.step();
+        engine.step();
+        engine.step();
+        let ctx = make_context(&mut engine);
+        assert_eq!(ctx.tick, 3);
+    }
 }

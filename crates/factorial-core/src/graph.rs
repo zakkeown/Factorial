@@ -998,4 +998,84 @@ mod tests {
         assert_eq!(order, &[a, b]);
         assert_eq!(graph.node_count(), 2);
     }
+
+    // -----------------------------------------------------------------------
+    // Error path tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn graph_error_display_messages() {
+        let (_graph, nodes) = make_graph_with_nodes(1);
+        let node = nodes[0];
+        let err = GraphError::NodeNotFound(node);
+        let msg = format!("{err}");
+        assert!(msg.contains("node not found"), "got: {msg}");
+
+        let mut sm: slotmap::SlotMap<EdgeId, ()> = slotmap::SlotMap::with_key();
+        let edge = sm.insert(());
+        let err = GraphError::EdgeNotFound(edge);
+        let msg = format!("{err}");
+        assert!(msg.contains("edge not found"), "got: {msg}");
+
+        let err = GraphError::CycleDetected;
+        let msg = format!("{err}");
+        assert!(msg.contains("cycle"), "got: {msg}");
+    }
+
+    #[test]
+    fn empty_graph_topological_order() {
+        let mut graph = ProductionGraph::new();
+        let order = graph.topological_order().unwrap();
+        assert!(order.is_empty());
+    }
+
+    #[test]
+    fn topological_order_with_feedback_acyclic() {
+        let (mut graph, nodes) = make_graph_with_nodes(3);
+        let [a, b, c] = [nodes[0], nodes[1], nodes[2]];
+        graph.queue_connect(a, b);
+        graph.queue_connect(b, c);
+        graph.apply_mutations();
+
+        let (order, back_edges) = graph.topological_order_with_feedback();
+        assert_eq!(order.len(), 3);
+        assert!(back_edges.is_empty(), "acyclic graph should have no back edges");
+    }
+
+    #[test]
+    fn topological_order_with_feedback_cyclic() {
+        let (mut graph, nodes) = make_graph_with_nodes(3);
+        let [a, b, c] = [nodes[0], nodes[1], nodes[2]];
+        graph.queue_connect(a, b);
+        graph.queue_connect(b, c);
+        graph.queue_connect(c, a);
+        graph.apply_mutations();
+
+        let (order, back_edges) = graph.topological_order_with_feedback();
+        assert_eq!(order.len(), 3, "all nodes should appear in order even with cycle");
+        assert!(!back_edges.is_empty(), "cyclic graph should have back edges");
+    }
+
+    #[test]
+    fn connect_filtered_edge_preserves_filter() {
+        let (mut graph, nodes) = make_graph_with_nodes(2);
+        let [a, b] = [nodes[0], nodes[1]];
+        let iron = ItemTypeId(0);
+        let pe = graph.queue_connect_filtered(a, b, Some(iron));
+        let result = graph.apply_mutations();
+        let edge = result.resolve_edge(pe).unwrap();
+        let edge_data = graph.get_edge(edge).unwrap();
+        assert_eq!(edge_data.item_filter, Some(iron));
+    }
+
+    #[test]
+    fn connect_filtered_edge_none_filter() {
+        let (mut graph, nodes) = make_graph_with_nodes(2);
+        let [a, b] = [nodes[0], nodes[1]];
+        let pe = graph.queue_connect_filtered(a, b, None);
+        let result = graph.apply_mutations();
+        let edge = result.resolve_edge(pe).unwrap();
+        let edge_data = graph.get_edge(edge).unwrap();
+        assert_eq!(edge_data.item_filter, None);
+    }
 }
