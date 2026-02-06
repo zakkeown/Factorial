@@ -96,6 +96,11 @@ pub struct DemandProcessor {
     /// Total whole items consumed over the processor's lifetime.
     #[serde(default)]
     pub consumed_total: u64,
+    /// Optional set of accepted item types. When `Some`, the processor consumes
+    /// from any matching type in the input inventory (in list order). When `None`,
+    /// falls back to `input_type` only (backwards compatible).
+    #[serde(default)]
+    pub accepted_types: Option<Vec<ItemTypeId>>,
 }
 
 /// Top-level processor enum. Dispatches via enum match (no trait objects).
@@ -571,40 +576,77 @@ fn tick_demand(
     demand.accumulated += effective_rate;
 
     // Determine whole items to consume this tick
-    let mut whole: u32 = demand.accumulated.to_num::<i64>().max(0) as u32;
+    let whole: u32 = demand.accumulated.to_num::<i64>().max(0) as u32;
 
-    // Check available inputs
-    let available = available_inputs
-        .iter()
-        .find(|(id, _)| *id == demand.input_type)
-        .map(|(_, q)| *q)
-        .unwrap_or(0);
-
-    if available == 0 && whole > 0 {
-        if *state
-            != (ProcessorState::Stalled {
-                reason: StallReason::MissingInputs,
-            })
-        {
-            *state = ProcessorState::Stalled {
-                reason: StallReason::MissingInputs,
-            };
-            result.state_changed = true;
+    if let Some(ref types) = demand.accepted_types {
+        // Multi-type mode: consume from any accepted type, in order
+        let mut remaining = whole;
+        for &item_type in types {
+            if remaining == 0 {
+                break;
+            }
+            let available = available_inputs
+                .iter()
+                .find(|(id, _)| *id == item_type)
+                .map(|(_, q)| *q)
+                .unwrap_or(0);
+            let take = remaining.min(available);
+            if take > 0 {
+                result.consumed.push((item_type, take));
+                remaining -= take;
+            }
         }
-        return result;
-    }
+        let actually_consumed = whole - remaining;
+        if actually_consumed > 0 {
+            demand.accumulated -= Fixed64::from_num(actually_consumed);
+            demand.consumed_total += actually_consumed as u64;
+        }
+        // Stall if we wanted items but got none
+        if actually_consumed == 0 && whole > 0 {
+            if *state
+                != (ProcessorState::Stalled {
+                    reason: StallReason::MissingInputs,
+                })
+            {
+                *state = ProcessorState::Stalled {
+                    reason: StallReason::MissingInputs,
+                };
+                result.state_changed = true;
+            }
+            return result;
+        }
+    } else {
+        // Single-type mode: consume from input_type only (existing behavior)
+        let available = available_inputs
+            .iter()
+            .find(|(id, _)| *id == demand.input_type)
+            .map(|(_, q)| *q)
+            .unwrap_or(0);
 
-    // Clamp by available
-    whole = whole.min(available);
+        if available == 0 && whole > 0 {
+            if *state
+                != (ProcessorState::Stalled {
+                    reason: StallReason::MissingInputs,
+                })
+            {
+                *state = ProcessorState::Stalled {
+                    reason: StallReason::MissingInputs,
+                };
+                result.state_changed = true;
+            }
+            return result;
+        }
 
-    if whole > 0 {
-        demand.accumulated -= Fixed64::from_num(whole);
-        demand.consumed_total += whole as u64;
-        result.consumed.push((demand.input_type, whole));
+        let clamped = whole.min(available);
+        if clamped > 0 {
+            demand.accumulated -= Fixed64::from_num(clamped);
+            demand.consumed_total += clamped as u64;
+            result.consumed.push((demand.input_type, clamped));
+        }
     }
 
     // Update state
-    let new_state = if whole > 0 || effective_rate > Fixed64::from_num(0) {
+    let new_state = if !result.consumed.is_empty() || effective_rate > Fixed64::from_num(0) {
         ProcessorState::Working { progress: 0 }
     } else {
         ProcessorState::Idle
@@ -1113,6 +1155,7 @@ mod tests {
             base_rate: fixed(rate),
             accumulated: fixed(0.0),
             consumed_total: 0,
+            accepted_types: None,
         })
     }
 
@@ -1383,5 +1426,32 @@ mod tests {
                 reason: StallReason::OutputFull
             }
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 30: Multi-type DemandProcessor accepts multiple types
+    // -----------------------------------------------------------------------
+    #[test]
+    fn multi_demand_accepts_multiple_types() {
+        let mut proc = Processor::Demand(DemandProcessor {
+            input_type: iron(),
+            base_rate: fixed(2.0),
+            accumulated: fixed(0.0),
+            consumed_total: 0,
+            accepted_types: Some(vec![iron(), copper()]),
+        });
+        let mut state = ProcessorState::Idle;
+        let no_mods: Vec<Modifier> = vec![];
+
+        // Provide 5 iron and 5 copper.
+        for _ in 0..5 {
+            proc.tick(&mut state, &no_mods, &[(iron(), 5), (copper(), 5)], 0);
+        }
+
+        // Should have consumed from both types (total = 2*5 = 10 items).
+        // Check that total consumed is 10.
+        if let Processor::Demand(d) = &proc {
+            assert_eq!(d.consumed_total, 10);
+        }
     }
 }

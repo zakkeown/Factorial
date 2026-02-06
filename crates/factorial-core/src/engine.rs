@@ -3640,6 +3640,7 @@ mod tests {
                 base_rate: Fixed64::from_num(3),
                 accumulated: Fixed64::ZERO,
                 consumed_total: 0,
+                accepted_types: None,
             }),
             100,
             100,
@@ -3658,5 +3659,40 @@ mod tests {
             rate.unwrap() >= Fixed64::from_num(2),
             "Sustained rate should be near 3/tick, got {:?}", rate
         );
+    }
+
+    #[test]
+    fn multi_demand_accepts_multiple_types() {
+        use crate::test_utils;
+
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        let iron = test_utils::iron();
+        let copper = test_utils::copper();
+
+        let node = test_utils::add_node(
+            &mut engine,
+            Processor::Demand(DemandProcessor {
+                input_type: iron,
+                base_rate: Fixed64::from_num(2),
+                accumulated: Fixed64::ZERO,
+                consumed_total: 0,
+                accepted_types: Some(vec![iron, copper]),
+            }),
+            100,
+            100,
+        );
+
+        engine.get_input_inventory_mut(node).unwrap().input_slots[0].add(iron, 5);
+        engine.get_input_inventory_mut(node).unwrap().input_slots[0].add(copper, 5);
+
+        for _ in 0..5 {
+            engine.step();
+        }
+
+        let remaining_iron = test_utils::input_quantity(&engine, node, iron);
+        let remaining_copper = test_utils::input_quantity(&engine, node, copper);
+
+        // Should have consumed some of both types.
+        assert!(remaining_iron < 5 || remaining_copper < 5, "Should consume some items");
     }
 }

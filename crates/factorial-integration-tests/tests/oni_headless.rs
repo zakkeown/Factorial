@@ -107,6 +107,7 @@ fn make_demand(input: ItemTypeId, rate: f64) -> Processor {
         base_rate: Fixed64::from_num(rate),
         accumulated: Fixed64::from_num(0.0),
         consumed_total: 0,
+        accepted_types: None,
     })
 }
 
