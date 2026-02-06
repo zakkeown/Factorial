@@ -503,3 +503,27 @@ fn full_chain_produces_computers() {
     );
 }
 
+#[test]
+fn full_chain_produces_super_computers() {
+    let (mut engine, nodes) = build_builderment_factory();
+
+    // Super Computers have the deepest chain — run longer.
+    for _ in 0..1000 {
+        engine.step();
+    }
+
+    let super_computers_at_sink = input_quantity(&engine, nodes.super_computer_sink, super_computer());
+    assert!(
+        super_computers_at_sink > 0,
+        "super computer sink should have received super computers after 1000 ticks, got {super_computers_at_sink}"
+    );
+
+    // Verify tungsten carbide is being produced (the unique Super Computer input).
+    let tc_produced = output_total(&engine, nodes.tc_forge);
+    let tc_consumed = input_quantity(&engine, nodes.super_computer_mfr, tungsten_carbide());
+    assert!(
+        tc_produced + tc_consumed > 0,
+        "tungsten carbide should be flowing into super computer production"
+    );
+}
+
