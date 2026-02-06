@@ -3943,4 +3943,93 @@ mod tests {
             "source output should have temperature=70"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Snapshot query tests (coverage for query.rs structs)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn snapshot_node_returns_correct_data() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        let iron = test_utils::iron();
+        let node = test_utils::add_node(
+            &mut engine,
+            test_utils::make_source(iron, 2.0),
+            100,
+            100,
+        );
+
+        // Step to produce items
+        engine.step();
+
+        let snap = engine.snapshot_node(node).expect("node should exist");
+        assert_eq!(snap.id, node);
+        assert_eq!(snap.processor_state, ProcessorState::Working { progress: 0 });
+        assert!(!snap.output_contents.is_empty(), "source should have produced items");
+    }
+
+    #[test]
+    fn snapshot_node_nonexistent_returns_none() {
+        let engine = Engine::new(SimulationStrategy::Tick);
+        let fake_id = {
+            // Create a throwaway slotmap just to get a valid-shaped but wrong NodeId
+            let mut sm: slotmap::SlotMap<NodeId, ()> = slotmap::SlotMap::with_key();
+            let id = sm.insert(());
+            sm.remove(id);
+            id
+        };
+        assert!(engine.snapshot_node(fake_id).is_none());
+    }
+
+    #[test]
+    fn snapshot_all_nodes_empty_engine() {
+        let engine = Engine::new(SimulationStrategy::Tick);
+        let snaps = engine.snapshot_all_nodes();
+        assert!(snaps.is_empty());
+    }
+
+    #[test]
+    fn snapshot_all_nodes_returns_all() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        let iron = test_utils::iron();
+        test_utils::add_node(&mut engine, test_utils::make_source(iron, 1.0), 50, 50);
+        test_utils::add_node(&mut engine, test_utils::make_source(iron, 1.0), 50, 50);
+        test_utils::add_node(&mut engine, test_utils::make_source(iron, 1.0), 50, 50);
+
+        let snaps = engine.snapshot_all_nodes();
+        assert_eq!(snaps.len(), 3);
+    }
+
+    #[test]
+    fn snapshot_transport_returns_correct_data() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        let iron = test_utils::iron();
+        let src = test_utils::add_node(&mut engine, test_utils::make_source(iron, 5.0), 100, 100);
+        let sink = test_utils::add_node(
+            &mut engine,
+            test_utils::make_recipe(vec![(iron, 1)], vec![(test_utils::gear(), 1)], 10),
+            100,
+            100,
+        );
+        let edge = test_utils::connect(&mut engine, src, sink, test_utils::make_flow_transport(3.0));
+
+        engine.step();
+
+        let snap = engine.snapshot_transport(edge).expect("edge should exist");
+        assert_eq!(snap.id, edge);
+        assert_eq!(snap.from, src);
+        assert_eq!(snap.to, sink);
+    }
+
+    #[test]
+    fn snapshot_transport_nonexistent_returns_none() {
+        let engine = Engine::new(SimulationStrategy::Tick);
+        let fake_id = {
+            let mut sm: slotmap::SlotMap<EdgeId, ()> = slotmap::SlotMap::with_key();
+            let id = sm.insert(());
+            sm.remove(id);
+            id
+        };
+        assert!(engine.snapshot_transport(fake_id).is_none());
+    }
 }
