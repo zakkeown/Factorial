@@ -143,6 +143,13 @@ impl Engine {
         self.dirty.mark_node(node);
     }
 
+    /// Replace a node's processor and reset its processing state to Idle.
+    /// Use this for dynamic recipe selection at runtime.
+    pub fn swap_processor(&mut self, node: NodeId, processor: Processor) {
+        self.processors.insert(node, processor);
+        self.processor_states.insert(node, ProcessorState::Idle);
+    }
+
     /// Set the input inventory for a node.
     pub fn set_input_inventory(&mut self, node: NodeId, inventory: Inventory) {
         self.inputs.insert(node, inventory);
@@ -3501,5 +3508,43 @@ mod tests {
         // Both sinks should receive items (not just the first edge).
         assert!(at_a > 0, "Sink A should receive items, got {at_a}");
         assert!(at_b > 0, "Sink B should receive items, got {at_b}");
+    }
+
+    #[test]
+    fn dynamic_recipe_swap_resets_state() {
+        use crate::test_utils;
+
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        let iron = test_utils::iron();
+        let copper = test_utils::copper();
+        let gear = test_utils::gear();
+
+        // Start as iron -> gear recipe.
+        let node = test_utils::add_node(
+            &mut engine,
+            test_utils::make_recipe(vec![(iron, 1)], vec![(gear, 1)], 2),
+            100,
+            100,
+        );
+
+        engine.inputs.get_mut(node).unwrap().input_slots[0].add(iron, 10);
+
+        for _ in 0..5 {
+            engine.step();
+        }
+        assert!(test_utils::output_quantity(&engine, node, gear) > 0);
+
+        // Swap recipe to copper -> gear.
+        engine.swap_processor(
+            node,
+            test_utils::make_recipe(vec![(copper, 1)], vec![(gear, 1)], 2),
+        );
+
+        // Processor state should be reset to Idle.
+        assert_eq!(
+            engine.get_processor_state(node),
+            Some(&ProcessorState::Idle),
+            "swap_processor should reset state to Idle"
+        );
     }
 }
