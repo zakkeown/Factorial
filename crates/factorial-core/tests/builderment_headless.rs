@@ -29,7 +29,6 @@ fn belt() -> Transport {
     make_item_transport(8)
 }
 
-
 /// Build a complete Builderment factory from raw resources through Super Computer.
 ///
 /// To work around the engine's first-edge-wins transport scheduling (where the
@@ -45,16 +44,41 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
     // Helper: build a complete sub-chain from source through furnace.
     // Returns the furnace NodeId.
     let make_iron_chain = |e: &mut Engine| -> NodeId {
-        let src = add_node(e, make_source(iron_ore(), 5.0), STD_INPUT_CAP, STD_OUTPUT_CAP);
-        let furnace = add_node(e, make_recipe(vec![(iron_ore(), 1)], vec![(iron_ingot(), 1)], 2), STD_INPUT_CAP, STD_OUTPUT_CAP);
+        let src = add_node(
+            e,
+            make_source(iron_ore(), 5.0),
+            STD_INPUT_CAP,
+            STD_OUTPUT_CAP,
+        );
+        let furnace = add_node(
+            e,
+            make_recipe(vec![(iron_ore(), 1)], vec![(iron_ingot(), 1)], 2),
+            STD_INPUT_CAP,
+            STD_OUTPUT_CAP,
+        );
         connect(e, src, furnace, belt());
         furnace
     };
 
     let make_copper_wire_chain = |e: &mut Engine| -> NodeId {
-        let src = add_node(e, make_source(copper_ore(), 5.0), STD_INPUT_CAP, STD_OUTPUT_CAP);
-        let furnace = add_node(e, make_recipe(vec![(copper_ore(), 1)], vec![(copper_ingot(), 1)], 2), STD_INPUT_CAP, STD_OUTPUT_CAP);
-        let workshop = add_node(e, make_recipe(vec![(copper_ingot(), 3)], vec![(copper_wire(), 1)], 3), STD_INPUT_CAP, STD_OUTPUT_CAP);
+        let src = add_node(
+            e,
+            make_source(copper_ore(), 5.0),
+            STD_INPUT_CAP,
+            STD_OUTPUT_CAP,
+        );
+        let furnace = add_node(
+            e,
+            make_recipe(vec![(copper_ore(), 1)], vec![(copper_ingot(), 1)], 2),
+            STD_INPUT_CAP,
+            STD_OUTPUT_CAP,
+        );
+        let workshop = add_node(
+            e,
+            make_recipe(vec![(copper_ingot(), 3)], vec![(copper_wire(), 1)], 3),
+            STD_INPUT_CAP,
+            STD_OUTPUT_CAP,
+        );
         connect(e, src, furnace, belt());
         connect(e, furnace, workshop, belt());
         workshop
@@ -66,8 +90,18 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
 
     let make_glass_chain = |e: &mut Engine| -> NodeId {
         let src = add_node(e, make_source(stone(), 3.0), STD_INPUT_CAP, STD_OUTPUT_CAP);
-        let stone_f = add_node(e, make_recipe(vec![(stone(), 1)], vec![(sand(), 1)], 2), STD_INPUT_CAP, STD_OUTPUT_CAP);
-        let glass_f = add_node(e, make_recipe(vec![(sand(), 1)], vec![(glass(), 1)], 3), STD_INPUT_CAP, STD_OUTPUT_CAP);
+        let stone_f = add_node(
+            e,
+            make_recipe(vec![(stone(), 1)], vec![(sand(), 1)], 2),
+            STD_INPUT_CAP,
+            STD_OUTPUT_CAP,
+        );
+        let glass_f = add_node(
+            e,
+            make_recipe(vec![(sand(), 1)], vec![(glass(), 1)], 3),
+            STD_INPUT_CAP,
+            STD_OUTPUT_CAP,
+        );
         connect(e, src, stone_f, belt());
         connect(e, stone_f, glass_f, belt());
         glass_f
@@ -76,7 +110,12 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
     let make_steel_chain = |e: &mut Engine| -> NodeId {
         let iron_f = make_iron_chain(e);
         let coal_s = make_coal_source(e);
-        let forge = add_node(e, make_recipe(vec![(iron_ingot(), 1), (coal(), 1)], vec![(steel(), 1)], 3), MULTI_INPUT_CAP, STD_OUTPUT_CAP);
+        let forge = add_node(
+            e,
+            make_recipe(vec![(iron_ingot(), 1), (coal(), 1)], vec![(steel(), 1)], 3),
+            MULTI_INPUT_CAP,
+            STD_OUTPUT_CAP,
+        );
         connect(e, iron_f, forge, belt());
         connect(e, coal_s, forge, belt());
         forge
@@ -88,58 +127,94 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
     // =====================================================================
 
     // --- Primary iron chain (feeds gear_workshop) ---
-    let iron_ore_src = add_node(&mut engine, make_source(iron_ore(), 5.0), STD_INPUT_CAP, STD_OUTPUT_CAP);
+    let iron_ore_src = add_node(
+        &mut engine,
+        make_source(iron_ore(), 5.0),
+        STD_INPUT_CAP,
+        STD_OUTPUT_CAP,
+    );
     let iron_furnace = add_node(
         &mut engine,
         make_recipe(vec![(iron_ore(), 1)], vec![(iron_ingot(), 1)], 2),
-        STD_INPUT_CAP, STD_OUTPUT_CAP,
+        STD_INPUT_CAP,
+        STD_OUTPUT_CAP,
     );
     connect(&mut engine, iron_ore_src, iron_furnace, belt());
 
     // --- Primary copper chain (feeds wire_workshop → motor_shop) ---
-    let copper_ore_src = add_node(&mut engine, make_source(copper_ore(), 5.0), STD_INPUT_CAP, STD_OUTPUT_CAP);
+    let copper_ore_src = add_node(
+        &mut engine,
+        make_source(copper_ore(), 5.0),
+        STD_INPUT_CAP,
+        STD_OUTPUT_CAP,
+    );
     let copper_furnace = add_node(
         &mut engine,
         make_recipe(vec![(copper_ore(), 1)], vec![(copper_ingot(), 1)], 2),
-        STD_INPUT_CAP, STD_OUTPUT_CAP,
+        STD_INPUT_CAP,
+        STD_OUTPUT_CAP,
     );
     let wire_workshop = add_node(
         &mut engine,
         make_recipe(vec![(copper_ingot(), 3)], vec![(copper_wire(), 1)], 3),
-        STD_INPUT_CAP, STD_OUTPUT_CAP,
+        STD_INPUT_CAP,
+        STD_OUTPUT_CAP,
     );
     connect(&mut engine, copper_ore_src, copper_furnace, belt());
     connect(&mut engine, copper_furnace, wire_workshop, belt());
 
     // --- Primary coal source (feeds steel_forge) ---
-    let coal_src = add_node(&mut engine, make_source(coal(), 5.0), STD_INPUT_CAP, STD_OUTPUT_CAP);
+    let coal_src = add_node(
+        &mut engine,
+        make_source(coal(), 5.0),
+        STD_INPUT_CAP,
+        STD_OUTPUT_CAP,
+    );
 
     // --- Primary stone/glass chain (feeds light_bulb_shop) ---
-    let stone_src = add_node(&mut engine, make_source(stone(), 3.0), STD_INPUT_CAP, STD_OUTPUT_CAP);
+    let stone_src = add_node(
+        &mut engine,
+        make_source(stone(), 3.0),
+        STD_INPUT_CAP,
+        STD_OUTPUT_CAP,
+    );
     let stone_furnace = add_node(
         &mut engine,
         make_recipe(vec![(stone(), 1)], vec![(sand(), 1)], 2),
-        STD_INPUT_CAP, STD_OUTPUT_CAP,
+        STD_INPUT_CAP,
+        STD_OUTPUT_CAP,
     );
     let glass_furnace = add_node(
         &mut engine,
         make_recipe(vec![(sand(), 1)], vec![(glass(), 1)], 3),
-        STD_INPUT_CAP, STD_OUTPUT_CAP,
+        STD_INPUT_CAP,
+        STD_OUTPUT_CAP,
     );
     connect(&mut engine, stone_src, stone_furnace, belt());
     connect(&mut engine, stone_furnace, glass_furnace, belt());
 
     // --- Wood chain (feeds plank → wood_frame_shop) ---
-    let wood_src = add_node(&mut engine, make_source(wood(), 2.0), STD_INPUT_CAP, STD_OUTPUT_CAP);
+    let wood_src = add_node(
+        &mut engine,
+        make_source(wood(), 2.0),
+        STD_INPUT_CAP,
+        STD_OUTPUT_CAP,
+    );
     let plank_workshop = add_node(
         &mut engine,
         make_recipe(vec![(wood(), 1)], vec![(wood_plank(), 1)], 2),
-        STD_INPUT_CAP, STD_OUTPUT_CAP,
+        STD_INPUT_CAP,
+        STD_OUTPUT_CAP,
     );
     connect(&mut engine, wood_src, plank_workshop, belt());
 
     // --- Tungsten chain ---
-    let tungsten_ore_src = add_node(&mut engine, make_source(tungsten_ore(), 3.0), STD_INPUT_CAP, STD_OUTPUT_CAP);
+    let tungsten_ore_src = add_node(
+        &mut engine,
+        make_source(tungsten_ore(), 3.0),
+        STD_INPUT_CAP,
+        STD_OUTPUT_CAP,
+    );
 
     // =====================================================================
     // Layer 1: Gear Workshop (iron_furnace → gear_workshop, 1:1)
@@ -147,7 +222,8 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
     let gear_workshop = add_node(
         &mut engine,
         make_recipe(vec![(iron_ingot(), 1)], vec![(iron_gear_b(), 1)], 2),
-        STD_INPUT_CAP, STD_OUTPUT_CAP,
+        STD_INPUT_CAP,
+        STD_OUTPUT_CAP,
     );
     connect(&mut engine, iron_furnace, gear_workshop, belt());
 
@@ -158,8 +234,13 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
     // Motor Shop: gear + wire → motor (each from dedicated chain)
     let motor_shop = add_node(
         &mut engine,
-        make_recipe(vec![(iron_gear_b(), 1), (copper_wire(), 1)], vec![(motor(), 1)], 4),
-        MULTI_INPUT_CAP, STD_OUTPUT_CAP,
+        make_recipe(
+            vec![(iron_gear_b(), 1), (copper_wire(), 1)],
+            vec![(motor(), 1)],
+            4,
+        ),
+        MULTI_INPUT_CAP,
+        STD_OUTPUT_CAP,
     );
     connect(&mut engine, gear_workshop, motor_shop, belt());
     connect(&mut engine, wire_workshop, motor_shop, belt());
@@ -169,8 +250,13 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
     let iron_for_frame = make_iron_chain(&mut engine);
     let wood_frame_shop = add_node(
         &mut engine,
-        make_recipe(vec![(wood_plank(), 1), (iron_ingot(), 1)], vec![(wood_frame(), 1)], 3),
-        MULTI_INPUT_CAP, STD_OUTPUT_CAP,
+        make_recipe(
+            vec![(wood_plank(), 1), (iron_ingot(), 1)],
+            vec![(wood_frame(), 1)],
+            3,
+        ),
+        MULTI_INPUT_CAP,
+        STD_OUTPUT_CAP,
     );
     connect(&mut engine, plank_workshop, wood_frame_shop, belt());
     connect(&mut engine, iron_for_frame, wood_frame_shop, belt());
@@ -180,8 +266,13 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
     let wire_for_bulb = make_copper_wire_chain(&mut engine);
     let light_bulb_shop = add_node(
         &mut engine,
-        make_recipe(vec![(glass(), 1), (copper_wire(), 1)], vec![(light_bulb(), 1)], 3),
-        MULTI_INPUT_CAP, STD_OUTPUT_CAP,
+        make_recipe(
+            vec![(glass(), 1), (copper_wire(), 1)],
+            vec![(light_bulb(), 1)],
+            3,
+        ),
+        MULTI_INPUT_CAP,
+        STD_OUTPUT_CAP,
     );
     connect(&mut engine, glass_furnace, light_bulb_shop, belt());
     connect(&mut engine, wire_for_bulb, light_bulb_shop, belt());
@@ -189,16 +280,32 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
     // Graphite Shop: sand + coal → graphite
     // Needs its own sand chain and coal source.
     let sand_for_graphite = {
-        let src = add_node(&mut engine, make_source(stone(), 3.0), STD_INPUT_CAP, STD_OUTPUT_CAP);
-        let sf = add_node(&mut engine, make_recipe(vec![(stone(), 1)], vec![(sand(), 1)], 2), STD_INPUT_CAP, STD_OUTPUT_CAP);
+        let src = add_node(
+            &mut engine,
+            make_source(stone(), 3.0),
+            STD_INPUT_CAP,
+            STD_OUTPUT_CAP,
+        );
+        let sf = add_node(
+            &mut engine,
+            make_recipe(vec![(stone(), 1)], vec![(sand(), 1)], 2),
+            STD_INPUT_CAP,
+            STD_OUTPUT_CAP,
+        );
         connect(&mut engine, src, sf, belt());
         sf
     };
-    let coal_for_graphite = add_node(&mut engine, make_source(coal(), 5.0), STD_INPUT_CAP, STD_OUTPUT_CAP);
+    let coal_for_graphite = add_node(
+        &mut engine,
+        make_source(coal(), 5.0),
+        STD_INPUT_CAP,
+        STD_OUTPUT_CAP,
+    );
     let graphite_shop = add_node(
         &mut engine,
         make_recipe(vec![(sand(), 1), (coal(), 1)], vec![(graphite(), 1)], 3),
-        MULTI_INPUT_CAP, STD_OUTPUT_CAP,
+        MULTI_INPUT_CAP,
+        STD_OUTPUT_CAP,
     );
     connect(&mut engine, sand_for_graphite, graphite_shop, belt());
     connect(&mut engine, coal_for_graphite, graphite_shop, belt());
@@ -208,7 +315,8 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
     let steel_forge = add_node(
         &mut engine,
         make_recipe(vec![(iron_ingot(), 1), (coal(), 1)], vec![(steel(), 1)], 3),
-        MULTI_INPUT_CAP, STD_OUTPUT_CAP,
+        MULTI_INPUT_CAP,
+        STD_OUTPUT_CAP,
     );
     connect(&mut engine, iron_for_steel, steel_forge, belt());
     connect(&mut engine, coal_src, steel_forge, belt());
@@ -216,8 +324,13 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
     // Tungsten Carbide Forge: tungsten_ore + graphite → tungsten_carbide
     let tc_forge = add_node(
         &mut engine,
-        make_recipe(vec![(tungsten_ore(), 10), (graphite(), 1)], vec![(tungsten_carbide(), 1)], 6),
-        MULTI_INPUT_CAP, STD_OUTPUT_CAP,
+        make_recipe(
+            vec![(tungsten_ore(), 10), (graphite(), 1)],
+            vec![(tungsten_carbide(), 1)],
+            6,
+        ),
+        MULTI_INPUT_CAP,
+        STD_OUTPUT_CAP,
     );
     connect(&mut engine, tungsten_ore_src, tc_forge, belt());
     connect(&mut engine, graphite_shop, tc_forge, belt());
@@ -237,10 +350,16 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
             vec![(electric_motor(), 1)],
             6,
         ),
-        MULTI_INPUT_CAP, STD_OUTPUT_CAP,
+        MULTI_INPUT_CAP,
+        STD_OUTPUT_CAP,
     );
     connect(&mut engine, motor_shop, electric_motor_factory, belt());
-    connect(&mut engine, steel_for_emotor, electric_motor_factory, belt());
+    connect(
+        &mut engine,
+        steel_for_emotor,
+        electric_motor_factory,
+        belt(),
+    );
     connect(&mut engine, wire_for_emotor, electric_motor_factory, belt());
 
     // Circuit Board Factory: glass + wire + steel → circuit_board
@@ -255,20 +374,45 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
             vec![(circuit_board(), 1)],
             6,
         ),
-        MULTI_INPUT_CAP, STD_OUTPUT_CAP,
+        MULTI_INPUT_CAP,
+        STD_OUTPUT_CAP,
     );
-    connect(&mut engine, glass_for_circuit, circuit_board_factory, belt());
+    connect(
+        &mut engine,
+        glass_for_circuit,
+        circuit_board_factory,
+        belt(),
+    );
     connect(&mut engine, wire_for_circuit, circuit_board_factory, belt());
-    connect(&mut engine, steel_for_circuit, circuit_board_factory, belt());
+    connect(
+        &mut engine,
+        steel_for_circuit,
+        circuit_board_factory,
+        belt(),
+    );
 
     // Basic Robot Factory: wood_frame + motor + light_bulb → basic_robot
     // Motor needs its own chain (shared with electric_motor_factory above).
     // We build a dedicated motor sub-chain.
     let motor_for_robot = {
         let iron_f = make_iron_chain(&mut engine);
-        let gear = add_node(&mut engine, make_recipe(vec![(iron_ingot(), 1)], vec![(iron_gear_b(), 1)], 2), STD_INPUT_CAP, STD_OUTPUT_CAP);
+        let gear = add_node(
+            &mut engine,
+            make_recipe(vec![(iron_ingot(), 1)], vec![(iron_gear_b(), 1)], 2),
+            STD_INPUT_CAP,
+            STD_OUTPUT_CAP,
+        );
         let wire = make_copper_wire_chain(&mut engine);
-        let motor = add_node(&mut engine, make_recipe(vec![(iron_gear_b(), 1), (copper_wire(), 1)], vec![(motor(), 1)], 4), MULTI_INPUT_CAP, STD_OUTPUT_CAP);
+        let motor = add_node(
+            &mut engine,
+            make_recipe(
+                vec![(iron_gear_b(), 1), (copper_wire(), 1)],
+                vec![(motor(), 1)],
+                4,
+            ),
+            MULTI_INPUT_CAP,
+            STD_OUTPUT_CAP,
+        );
         connect(&mut engine, iron_f, gear, belt());
         connect(&mut engine, gear, motor, belt());
         connect(&mut engine, wire, motor, belt());
@@ -281,7 +425,8 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
             vec![(basic_robot(), 1)],
             6,
         ),
-        MULTI_INPUT_CAP, STD_OUTPUT_CAP,
+        MULTI_INPUT_CAP,
+        STD_OUTPUT_CAP,
     );
     connect(&mut engine, wood_frame_shop, basic_robot_factory, belt());
     connect(&mut engine, motor_for_robot, basic_robot_factory, belt());
@@ -298,11 +443,17 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
     let computer_mfr = add_node(
         &mut engine,
         make_recipe(
-            vec![(circuit_board(), 1), (electric_motor(), 1), (steel(), 1), (glass(), 1)],
+            vec![
+                (circuit_board(), 1),
+                (electric_motor(), 1),
+                (steel(), 1),
+                (glass(), 1),
+            ],
             vec![(computer(), 1)],
             8,
         ),
-        MULTI_INPUT_CAP, STD_OUTPUT_CAP,
+        MULTI_INPUT_CAP,
+        STD_OUTPUT_CAP,
     );
     connect(&mut engine, circuit_board_factory, computer_mfr, belt());
     connect(&mut engine, electric_motor_factory, computer_mfr, belt());
@@ -314,19 +465,39 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
     let make_emotor_chain = |e: &mut Engine| -> NodeId {
         // motor sub-chain: iron -> gear + wire -> motor
         let iron_f = make_iron_chain(e);
-        let gear_n = add_node(e, make_recipe(vec![(iron_ingot(), 1)], vec![(iron_gear_b(), 1)], 2), STD_INPUT_CAP, STD_OUTPUT_CAP);
+        let gear_n = add_node(
+            e,
+            make_recipe(vec![(iron_ingot(), 1)], vec![(iron_gear_b(), 1)], 2),
+            STD_INPUT_CAP,
+            STD_OUTPUT_CAP,
+        );
         let wire_n = make_copper_wire_chain(e);
-        let motor_n = add_node(e, make_recipe(vec![(iron_gear_b(), 1), (copper_wire(), 1)], vec![(motor(), 1)], 4), MULTI_INPUT_CAP, STD_OUTPUT_CAP);
+        let motor_n = add_node(
+            e,
+            make_recipe(
+                vec![(iron_gear_b(), 1), (copper_wire(), 1)],
+                vec![(motor(), 1)],
+                4,
+            ),
+            MULTI_INPUT_CAP,
+            STD_OUTPUT_CAP,
+        );
         connect(e, iron_f, gear_n, belt());
         connect(e, gear_n, motor_n, belt());
         connect(e, wire_n, motor_n, belt());
         // electric motor: motor + steel + wire -> electric_motor
         let steel_n = make_steel_chain(e);
         let wire2_n = make_copper_wire_chain(e);
-        let emotor = add_node(e, make_recipe(
-            vec![(motor(), 1), (steel(), 1), (copper_wire(), 1)],
-            vec![(electric_motor(), 1)], 6,
-        ), MULTI_INPUT_CAP, STD_OUTPUT_CAP);
+        let emotor = add_node(
+            e,
+            make_recipe(
+                vec![(motor(), 1), (steel(), 1), (copper_wire(), 1)],
+                vec![(electric_motor(), 1)],
+                6,
+            ),
+            MULTI_INPUT_CAP,
+            STD_OUTPUT_CAP,
+        );
         connect(e, motor_n, emotor, belt());
         connect(e, steel_n, emotor, belt());
         connect(e, wire2_n, emotor, belt());
@@ -336,10 +507,16 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
         let glass_n = make_glass_chain(e);
         let wire_n = make_copper_wire_chain(e);
         let steel_n = make_steel_chain(e);
-        let circuit = add_node(e, make_recipe(
-            vec![(glass(), 1), (copper_wire(), 1), (steel(), 1)],
-            vec![(circuit_board(), 1)], 6,
-        ), MULTI_INPUT_CAP, STD_OUTPUT_CAP);
+        let circuit = add_node(
+            e,
+            make_recipe(
+                vec![(glass(), 1), (copper_wire(), 1), (steel(), 1)],
+                vec![(circuit_board(), 1)],
+                6,
+            ),
+            MULTI_INPUT_CAP,
+            STD_OUTPUT_CAP,
+        );
         connect(e, glass_n, circuit, belt());
         connect(e, wire_n, circuit, belt());
         connect(e, steel_n, circuit, belt());
@@ -350,10 +527,21 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
         let circuit = make_circuit_chain(e);
         let steel_n = make_steel_chain(e);
         let glass_n = make_glass_chain(e);
-        let comp = add_node(e, make_recipe(
-            vec![(circuit_board(), 1), (electric_motor(), 1), (steel(), 1), (glass(), 1)],
-            vec![(computer(), 1)], 8,
-        ), MULTI_INPUT_CAP, STD_OUTPUT_CAP);
+        let comp = add_node(
+            e,
+            make_recipe(
+                vec![
+                    (circuit_board(), 1),
+                    (electric_motor(), 1),
+                    (steel(), 1),
+                    (glass(), 1),
+                ],
+                vec![(computer(), 1)],
+                8,
+            ),
+            MULTI_INPUT_CAP,
+            STD_OUTPUT_CAP,
+        );
         connect(e, circuit, comp, belt());
         connect(e, emotor, comp, belt());
         connect(e, steel_n, comp, belt());
@@ -369,11 +557,17 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
     let super_computer_mfr = add_node(
         &mut engine,
         make_recipe(
-            vec![(computer(), 1), (tungsten_carbide(), 1), (electric_motor(), 1), (circuit_board(), 1)],
+            vec![
+                (computer(), 1),
+                (tungsten_carbide(), 1),
+                (electric_motor(), 1),
+                (circuit_board(), 1),
+            ],
             vec![(super_computer(), 1)],
             10,
         ),
-        MULTI_INPUT_CAP, STD_OUTPUT_CAP,
+        MULTI_INPUT_CAP,
+        STD_OUTPUT_CAP,
     );
     connect(&mut engine, computer_for_super, super_computer_mfr, belt());
     connect(&mut engine, tc_forge, super_computer_mfr, belt());
@@ -387,32 +581,52 @@ fn build_builderment_factory() -> (Engine, FactoryNodes) {
     let computer_sink = add_node(
         &mut engine,
         make_recipe(vec![(computer(), 9999)], vec![(iron_ore(), 1)], 99999),
-        SINK_INPUT_CAP, STD_OUTPUT_CAP,
+        SINK_INPUT_CAP,
+        STD_OUTPUT_CAP,
     );
     connect(&mut engine, computer_mfr, computer_sink, belt());
 
     let super_computer_sink = add_node(
         &mut engine,
         make_recipe(vec![(super_computer(), 9999)], vec![(iron_ore(), 1)], 99999),
-        SINK_INPUT_CAP, STD_OUTPUT_CAP,
+        SINK_INPUT_CAP,
+        STD_OUTPUT_CAP,
     );
     connect(&mut engine, super_computer_mfr, super_computer_sink, belt());
 
     let nodes = FactoryNodes {
         // Sources (representative nodes for test assertions)
-        iron_ore_src, copper_ore_src, coal_src, stone_src, wood_src, tungsten_ore_src,
+        iron_ore_src,
+        copper_ore_src,
+        coal_src,
+        stone_src,
+        wood_src,
+        tungsten_ore_src,
         // Tier 1
-        iron_furnace, copper_furnace, stone_furnace, glass_furnace,
-        plank_workshop, gear_workshop, wire_workshop,
+        iron_furnace,
+        copper_furnace,
+        stone_furnace,
+        glass_furnace,
+        plank_workshop,
+        gear_workshop,
+        wire_workshop,
         // Tier 2
-        motor_shop, wood_frame_shop, light_bulb_shop, graphite_shop,
-        steel_forge, tc_forge,
+        motor_shop,
+        wood_frame_shop,
+        light_bulb_shop,
+        graphite_shop,
+        steel_forge,
+        tc_forge,
         // Tier 3
-        electric_motor_factory, circuit_board_factory, basic_robot_factory,
+        electric_motor_factory,
+        circuit_board_factory,
+        basic_robot_factory,
         // Tier 4
-        computer_mfr, super_computer_mfr,
+        computer_mfr,
+        super_computer_mfr,
         // Sinks
-        computer_sink, super_computer_sink,
+        computer_sink,
+        super_computer_sink,
     };
 
     (engine, nodes)
@@ -462,7 +676,12 @@ fn factory_builds_successfully() {
     // the engine's first-edge-wins transport scheduling. This results in many
     // duplicated sub-chains.
     assert_eq!(engine.node_count(), 127, "factory should have 127 nodes");
-    assert_eq!(engine.edge_count(), 123, "factory should have 123 edges, got {}", engine.edge_count());
+    assert_eq!(
+        engine.edge_count(),
+        123,
+        "factory should have 123 edges, got {}",
+        engine.edge_count()
+    );
 }
 
 #[test]
@@ -512,7 +731,8 @@ fn full_chain_produces_super_computers() {
         engine.step();
     }
 
-    let super_computers_at_sink = input_quantity(&engine, nodes.super_computer_sink, super_computer());
+    let super_computers_at_sink =
+        input_quantity(&engine, nodes.super_computer_sink, super_computer());
     assert!(
         super_computers_at_sink > 0,
         "super computer sink should have received super computers after 1000 ticks, got {super_computers_at_sink}"
@@ -581,8 +801,7 @@ fn serialize_round_trip_full_factory() {
     );
 
     assert_eq!(
-        engine_restored.sim_state.tick,
-        engine_straight.sim_state.tick,
+        engine_restored.sim_state.tick, engine_straight.sim_state.tick,
         "tick counts should match"
     );
 }
@@ -606,7 +825,8 @@ fn determinism_full_factory() {
 
     for (tick, (h1, h2)) in run1.iter().zip(run2.iter()).enumerate() {
         assert_eq!(
-            h1, h2,
+            h1,
+            h2,
             "state hashes diverged at tick {}: run1={h1}, run2={h2}",
             tick + 1,
         );
@@ -614,9 +834,5 @@ fn determinism_full_factory() {
 
     // Verify the simulation actually evolved (not all same hash).
     let unique: std::collections::HashSet<u64> = run1.iter().copied().collect();
-    assert!(
-        unique.len() > 1,
-        "state hashes should change between ticks"
-    );
+    assert!(unique.len() > 1, "state hashes should change between ticks");
 }
-

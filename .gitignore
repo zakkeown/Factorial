@@ -17,6 +17,10 @@ Thumbs.db
 .worktrees
 .worktrees/
 
+# Mutation testing output
+mutants.out/
+mutants.out.old/
+
 # Environment
 .env
 .env.local

@@ -29,11 +29,7 @@ fn dual_role_node_recipe_plus_power() {
     );
 
     // Seed the turbine's input inventory with steam so it can run recipes.
-    let _ = engine
-        .get_input_inventory_mut(turbine)
-        .unwrap()
-        .input_slots[0]
-        .add(steam, 50);
+    let _ = engine.get_input_inventory_mut(turbine).unwrap().input_slots[0].add(steam, 50);
 
     // Power module registers the SAME node as a power producer.
     // This is the "dual role" -- the engine sees a recipe processor,
@@ -81,7 +77,10 @@ fn dual_role_node_recipe_plus_power() {
     );
 
     // Verify the producer's capacity was actually updated to a non-zero value.
-    let producer = power.producers.get(&turbine).expect("turbine should be registered as producer");
+    let producer = power
+        .producers
+        .get(&turbine)
+        .expect("turbine should be registered as producer");
     assert!(
         producer.capacity > Fixed64::from_num(0),
         "producer capacity should have been dynamically updated based on recipe output, got {}",

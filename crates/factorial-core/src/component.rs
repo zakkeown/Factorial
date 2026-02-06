@@ -67,9 +67,12 @@ mod tests {
         let mut nodes: SlotMap<NodeId, ()> = SlotMap::with_key();
         let node = nodes.insert(());
         storage.inventories.insert(node, Inventory::new(1, 1, 50));
-        storage
-            .power_consumers
-            .insert(node, PowerConsumer { demand: Fixed64::from_num(90) });
+        storage.power_consumers.insert(
+            node,
+            PowerConsumer {
+                demand: Fixed64::from_num(90),
+            },
+        );
         storage.remove_node(node);
         assert!(!storage.inventories.contains_key(node));
         assert!(!storage.power_consumers.contains_key(node));
@@ -94,5 +97,51 @@ mod tests {
             .map(|pc| pc.demand)
             .fold(Fixed64::from_num(0), |acc, d| acc + d);
         assert_eq!(total_demand, Fixed64::from_num(500));
+    }
+
+    #[test]
+    fn component_storage_default() {
+        let storage = ComponentStorage::default();
+        assert!(storage.inventories.is_empty());
+        assert!(storage.power_consumers.is_empty());
+        assert!(storage.power_producers.is_empty());
+    }
+
+    #[test]
+    fn remove_node_nonexistent_is_noop() {
+        let mut storage = ComponentStorage::new();
+        let mut nodes: SlotMap<NodeId, ()> = SlotMap::with_key();
+        let node = nodes.insert(());
+        nodes.remove(node); // Remove from slotmap but keep the key
+        // Should not panic
+        storage.remove_node(node);
+    }
+
+    #[test]
+    fn power_producer_stored_and_retrieved() {
+        let mut storage = ComponentStorage::new();
+        let mut nodes: SlotMap<NodeId, ()> = SlotMap::with_key();
+        let node = nodes.insert(());
+        storage.power_producers.insert(
+            node,
+            PowerProducer {
+                output: Fixed64::from_num(500),
+            },
+        );
+        assert!(storage.power_producers.contains_key(node));
+        assert_eq!(storage.power_producers[node].output, Fixed64::from_num(500));
+    }
+
+    #[test]
+    fn remove_node_only_affects_target() {
+        let mut storage = ComponentStorage::new();
+        let mut nodes: SlotMap<NodeId, ()> = SlotMap::with_key();
+        let node_a = nodes.insert(());
+        let node_b = nodes.insert(());
+        storage.inventories.insert(node_a, Inventory::new(1, 1, 50));
+        storage.inventories.insert(node_b, Inventory::new(1, 1, 50));
+        storage.remove_node(node_a);
+        assert!(!storage.inventories.contains_key(node_a));
+        assert!(storage.inventories.contains_key(node_b));
     }
 }

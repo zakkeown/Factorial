@@ -132,9 +132,7 @@ mod tests {
 
     impl GraphInspectorModule {
         fn new() -> Self {
-            Self {
-                last_node_count: 0,
-            }
+            Self { last_node_count: 0 }
         }
     }
 
@@ -315,12 +313,7 @@ mod tests {
         let mut engine = Engine::new(SimulationStrategy::Tick);
         let iron = test_utils::iron();
 
-        let node = test_utils::add_node(
-            &mut engine,
-            test_utils::make_source(iron, 1.0),
-            100,
-            100,
-        );
+        let node = test_utils::add_node(&mut engine, test_utils::make_source(iron, 1.0), 100, 100);
 
         // Verify input inventory starts empty.
         assert_eq!(test_utils::input_quantity(&engine, node, iron), 0);
@@ -400,5 +393,32 @@ mod tests {
         let bad_result = restored.load_state(&[1, 2, 3]);
         assert!(bad_result.is_err());
         assert!(matches!(bad_result, Err(ModuleError::DeserializeFailed(_))));
+    }
+
+    // -----------------------------------------------------------------------
+    // Error path tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn module_error_display_messages() {
+        let err = ModuleError::DeserializeFailed("bad data".to_string());
+        let msg = format!("{err}");
+        assert!(msg.contains("deserialize failed"), "got: {msg}");
+        assert!(msg.contains("bad data"), "got: {msg}");
+
+        let err = ModuleError::NotFound("power".to_string());
+        let msg = format!("{err}");
+        assert!(msg.contains("module not found"), "got: {msg}");
+        assert!(msg.contains("power"), "got: {msg}");
+    }
+
+    #[test]
+    fn module_context_has_correct_tick() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        engine.step();
+        engine.step();
+        engine.step();
+        let ctx = make_context(&mut engine);
+        assert_eq!(ctx.tick, 3);
     }
 }

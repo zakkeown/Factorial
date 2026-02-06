@@ -484,7 +484,7 @@ mod tests {
     // -----------------------------------------------------------------------
     #[test]
     fn read_snapshot_header_current_version() {
-        use crate::serialize::{read_snapshot_header, FORMAT_VERSION, SNAPSHOT_MAGIC};
+        use crate::serialize::{FORMAT_VERSION, SNAPSHOT_MAGIC, read_snapshot_header};
 
         let engine = Engine::new(SimulationStrategy::Tick);
         let data = engine.serialize().unwrap();

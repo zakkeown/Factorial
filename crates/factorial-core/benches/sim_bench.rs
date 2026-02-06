@@ -5,7 +5,7 @@
 //! - `medium_factory`: 5000 nodes, 10000 edges, mixed transport -- target <5ms/tick
 //! - `belt_heavy`: 1000 ItemTransport belts with 50 slots each -- measure belt throughput
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use factorial_core::engine::Engine;
 use factorial_core::id::*;
 use factorial_core::sim::SimulationStrategy;
@@ -63,12 +63,7 @@ fn build_small_factory() -> Engine {
     // Connect each chain's output to the next chain's last assembler.
     for pair in chains.windows(2) {
         for (&src, &dst) in pair[0][1..].iter().zip(pair[1][1..].iter()) {
-            connect(
-                &mut engine,
-                src,
-                dst,
-                make_flow_transport(5.0),
-            );
+            connect(&mut engine, src, dst, make_flow_transport(5.0));
         }
     }
 
@@ -165,12 +160,7 @@ fn build_belt_heavy_factory() -> Engine {
         );
 
         // Primary belt: 50 slots.
-        connect(
-            &mut engine,
-            source,
-            sink,
-            make_item_transport(50),
-        );
+        connect(&mut engine, source, sink, make_item_transport(50));
 
         sources.push(source);
         sinks.push(sink);

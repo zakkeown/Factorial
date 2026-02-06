@@ -203,11 +203,7 @@ fn build_copper_cable_chain(engine: &mut Engine) -> NodeId {
     // Factorio: 1 copper plate -> 2 copper cables, duration 0.5s (1 tick).
     let cable_assembler = add_node(
         engine,
-        make_recipe(
-            vec![(f_copper_plate(), 1)],
-            vec![(f_copper_cable(), 2)],
-            1,
-        ),
+        make_recipe(vec![(f_copper_plate(), 1)], vec![(f_copper_cable(), 2)], 1),
         STD_INPUT_CAP,
         STD_OUTPUT_CAP,
     );
@@ -247,11 +243,7 @@ fn test_iron_smelting_line() {
     // and stall the furnace.
     let sink = add_node(
         &mut engine,
-        make_recipe(
-            vec![(f_iron_plate(), 9999)],
-            vec![(f_iron_ore(), 1)],
-            99999,
-        ),
+        make_recipe(vec![(f_iron_plate(), 9999)], vec![(f_iron_ore(), 1)], 99999),
         SINK_INPUT_CAP,
         STD_OUTPUT_CAP,
     );
@@ -390,11 +382,7 @@ fn test_oil_refinery_multi_output() {
         &mut engine,
         make_recipe(
             vec![(f_crude_oil(), 10)],
-            vec![
-                (f_petroleum(), 4),
-                (f_light_oil(), 3),
-                (f_heavy_oil(), 3),
-            ],
+            vec![(f_petroleum(), 4), (f_light_oil(), 3), (f_heavy_oil(), 3)],
             5,
         ),
         STD_INPUT_CAP,
@@ -413,31 +401,19 @@ fn test_oil_refinery_multi_output() {
 
     let petro_sink = add_node(
         &mut engine,
-        make_recipe(
-            vec![(f_petroleum(), 9999)],
-            vec![(f_iron_ore(), 1)],
-            99999,
-        ),
+        make_recipe(vec![(f_petroleum(), 9999)], vec![(f_iron_ore(), 1)], 99999),
         SINK_INPUT_CAP,
         STD_OUTPUT_CAP,
     );
     let light_oil_sink = add_node(
         &mut engine,
-        make_recipe(
-            vec![(f_light_oil(), 9999)],
-            vec![(f_iron_ore(), 1)],
-            99999,
-        ),
+        make_recipe(vec![(f_light_oil(), 9999)], vec![(f_iron_ore(), 1)], 99999),
         SINK_INPUT_CAP,
         STD_OUTPUT_CAP,
     );
     let heavy_oil_sink = add_node(
         &mut engine,
-        make_recipe(
-            vec![(f_heavy_oil(), 9999)],
-            vec![(f_iron_ore(), 1)],
-            99999,
-        ),
+        make_recipe(vec![(f_heavy_oil(), 9999)], vec![(f_iron_ore(), 1)], 99999),
         SINK_INPUT_CAP,
         STD_OUTPUT_CAP,
     );
@@ -506,11 +482,7 @@ fn test_train_delivery_remote_iron() {
     // Sink for plates.
     let sink = add_node(
         &mut engine,
-        make_recipe(
-            vec![(f_iron_plate(), 9999)],
-            vec![(f_iron_ore(), 1)],
-            99999,
-        ),
+        make_recipe(vec![(f_iron_plate(), 9999)], vec![(f_iron_ore(), 1)], 99999),
         SINK_INPUT_CAP,
         STD_OUTPUT_CAP,
     );
@@ -616,11 +588,7 @@ fn test_inserter_belt_to_building() {
     // Sink for gears.
     let sink = add_node(
         &mut engine,
-        make_recipe(
-            vec![(f_iron_gear(), 9999)],
-            vec![(f_iron_ore(), 1)],
-            99999,
-        ),
+        make_recipe(vec![(f_iron_gear(), 9999)], vec![(f_iron_ore(), 1)], 99999),
         SINK_INPUT_CAP,
         STD_OUTPUT_CAP,
     );
@@ -697,11 +665,7 @@ fn test_dual_lane_belt() {
         // ENGINE GAP: There is no passthrough processor type. We use a recipe
         // with 1-in-1-out for iron plates as a stand-in. In practice, a merger
         // node would need to handle multiple item types.
-        make_recipe(
-            vec![(f_iron_plate(), 1)],
-            vec![(f_iron_plate(), 1)],
-            1,
-        ),
+        make_recipe(vec![(f_iron_plate(), 1)], vec![(f_iron_plate(), 1)], 1),
         MULTI_INPUT_CAP,
         STD_OUTPUT_CAP,
     );
@@ -737,7 +701,11 @@ fn test_dual_lane_belt() {
 
     // Verify that the dual-lane belt was created with the correct slot count.
     // With 8 slots per lane and 2 lanes, the belt should have 16 total slots.
-    assert_eq!(engine.edge_count(), 3, "should have 3 edges (2 input + 1 output)");
+    assert_eq!(
+        engine.edge_count(),
+        3,
+        "should have 3 edges (2 input + 1 output)"
+    );
 
     // Verify items flowed through the system.
     let items_at_consumer = input_total(&engine, consumer);
@@ -904,10 +872,7 @@ fn test_science_pack_to_tech_tree() {
             id: logistics_id,
             name: "Logistics".to_string(),
             prerequisites: vec![automation_id],
-            cost: ResearchCost::Items(vec![
-                (f_red_science(), 10),
-                (f_green_science(), 10),
-            ]),
+            cost: ResearchCost::Items(vec![(f_red_science(), 10), (f_green_science(), 10)]),
             unlocks: vec![Unlock::Building(BuildingTypeId(11))],
             repeatable: false,
             cost_scaling: None,
@@ -925,17 +890,17 @@ fn test_science_pack_to_tech_tree() {
         engine.step();
 
         // Every 20 ticks, contribute science packs to current research.
-        if tick % 20 == 0 {
-            if let Some(tech_id) = current_research {
-                let contributions = match tech_id {
-                    t if t == automation_id => vec![(f_red_science(), 3)],
-                    t if t == logistics_id => {
-                        vec![(f_red_science(), 3), (f_green_science(), 3)]
-                    }
-                    _ => vec![],
-                };
-                let _ = tech_tree.contribute_items(tech_id, &contributions, tick);
-            }
+        if tick % 20 == 0
+            && let Some(tech_id) = current_research
+        {
+            let contributions = match tech_id {
+                t if t == automation_id => vec![(f_red_science(), 3)],
+                t if t == logistics_id => {
+                    vec![(f_red_science(), 3), (f_green_science(), 3)]
+                }
+                _ => vec![],
+            };
+            let _ = tech_tree.contribute_items(tech_id, &contributions, tick);
         }
 
         // Check for completed research.
@@ -1360,11 +1325,7 @@ fn test_plastic_production_chain() {
     // Simplified recipe: 5 crude oil -> 3 petroleum, duration 3 ticks.
     let refinery = add_node(
         &mut engine,
-        make_recipe(
-            vec![(f_crude_oil(), 5)],
-            vec![(f_petroleum(), 3)],
-            3,
-        ),
+        make_recipe(vec![(f_crude_oil(), 5)], vec![(f_petroleum(), 3)], 3),
         STD_INPUT_CAP,
         STD_OUTPUT_CAP,
     );

@@ -349,9 +349,7 @@ impl Engine {
         // Try normal deserialization first.
         match Self::deserialize(data) {
             Ok(engine) => Ok(engine),
-            Err(DeserializeError::FutureVersion(v)) => {
-                Err(DeserializeError::FutureVersion(v))
-            }
+            Err(DeserializeError::FutureVersion(v)) => Err(DeserializeError::FutureVersion(v)),
             Err(DeserializeError::UnsupportedVersion(old_version)) => {
                 // Try to migrate.
                 let migrated_data = migrations
@@ -661,16 +659,16 @@ impl Engine {
     /// Detect whether serialized data is legacy or partitioned format.
     pub fn detect_snapshot_format(data: &[u8]) -> SnapshotFormat {
         // Try to decode as PartitionedSnapshot first (it has a distinct magic).
-        if let Ok(snap) = bitcode::deserialize::<PartitionedSnapshot>(data) {
-            if snap.header.magic == PARTITIONED_SNAPSHOT_MAGIC {
-                return SnapshotFormat::Partitioned;
-            }
+        if let Ok(snap) = bitcode::deserialize::<PartitionedSnapshot>(data)
+            && snap.header.magic == PARTITIONED_SNAPSHOT_MAGIC
+        {
+            return SnapshotFormat::Partitioned;
         }
         // Try legacy.
-        if let Ok(snap) = bitcode::deserialize::<EngineSnapshot>(data) {
-            if snap.header.magic == SNAPSHOT_MAGIC {
-                return SnapshotFormat::Legacy;
-            }
+        if let Ok(snap) = bitcode::deserialize::<EngineSnapshot>(data)
+            && snap.header.magic == SNAPSHOT_MAGIC
+        {
+            return SnapshotFormat::Legacy;
         }
         SnapshotFormat::Unknown
     }
@@ -684,24 +682,29 @@ impl Engine {
                 strategy: self.strategy.clone(),
                 last_state_hash: self.last_state_hash,
                 paused: self.paused,
-            }).map_err(|e| SerializeError::Encode(e.to_string()))?,
+            })
+            .map_err(|e| SerializeError::Encode(e.to_string()))?,
             bitcode::serialize(&ProcessorPartition {
                 processors: self.processors.clone(),
                 processor_states: self.processor_states.clone(),
                 modifiers: self.modifiers.clone(),
-            }).map_err(|e| SerializeError::Encode(e.to_string()))?,
+            })
+            .map_err(|e| SerializeError::Encode(e.to_string()))?,
             bitcode::serialize(&InventoryPartition {
                 inputs: self.inputs.clone(),
                 outputs: self.outputs.clone(),
-            }).map_err(|e| SerializeError::Encode(e.to_string()))?,
+            })
+            .map_err(|e| SerializeError::Encode(e.to_string()))?,
             bitcode::serialize(&TransportPartition {
                 transports: self.transports.clone(),
                 transport_states: self.transport_states.clone(),
-            }).map_err(|e| SerializeError::Encode(e.to_string()))?,
+            })
+            .map_err(|e| SerializeError::Encode(e.to_string()))?,
             bitcode::serialize(&JunctionPartition {
                 junctions: self.junctions.clone(),
                 junction_states: self.junction_states.clone(),
-            }).map_err(|e| SerializeError::Encode(e.to_string()))?,
+            })
+            .map_err(|e| SerializeError::Encode(e.to_string()))?,
         ];
 
         let snapshot = PartitionedSnapshot {
@@ -726,9 +729,8 @@ impl Engine {
         let dirty = *self.dirty.dirty_partitions();
 
         // Decode baseline if provided.
-        let baseline_snap: Option<PartitionedSnapshot> = baseline.and_then(|data| {
-            bitcode::deserialize::<PartitionedSnapshot>(data).ok()
-        });
+        let baseline_snap: Option<PartitionedSnapshot> =
+            baseline.and_then(|data| bitcode::deserialize::<PartitionedSnapshot>(data).ok());
 
         // Build fresh partition blobs for dirty ones.
         let fresh = [
@@ -738,32 +740,39 @@ impl Engine {
                 strategy: self.strategy.clone(),
                 last_state_hash: self.last_state_hash,
                 paused: self.paused,
-            }).map_err(|e| SerializeError::Encode(e.to_string()))?,
+            })
+            .map_err(|e| SerializeError::Encode(e.to_string()))?,
             bitcode::serialize(&ProcessorPartition {
                 processors: self.processors.clone(),
                 processor_states: self.processor_states.clone(),
                 modifiers: self.modifiers.clone(),
-            }).map_err(|e| SerializeError::Encode(e.to_string()))?,
+            })
+            .map_err(|e| SerializeError::Encode(e.to_string()))?,
             bitcode::serialize(&InventoryPartition {
                 inputs: self.inputs.clone(),
                 outputs: self.outputs.clone(),
-            }).map_err(|e| SerializeError::Encode(e.to_string()))?,
+            })
+            .map_err(|e| SerializeError::Encode(e.to_string()))?,
             bitcode::serialize(&TransportPartition {
                 transports: self.transports.clone(),
                 transport_states: self.transport_states.clone(),
-            }).map_err(|e| SerializeError::Encode(e.to_string()))?,
+            })
+            .map_err(|e| SerializeError::Encode(e.to_string()))?,
             bitcode::serialize(&JunctionPartition {
                 junctions: self.junctions.clone(),
                 junction_states: self.junction_states.clone(),
-            }).map_err(|e| SerializeError::Encode(e.to_string()))?,
+            })
+            .map_err(|e| SerializeError::Encode(e.to_string()))?,
         ];
 
         let mut partitions: [Vec<u8>; 5] = Default::default();
         for i in 0..5 {
-            if dirty[i] || baseline_snap.is_none() {
+            if dirty[i] {
                 partitions[i] = fresh[i].clone();
+            } else if let Some(ref baseline) = baseline_snap {
+                partitions[i] = baseline.partitions[i].clone();
             } else {
-                partitions[i] = baseline_snap.as_ref().unwrap().partitions[i].clone();
+                partitions[i] = fresh[i].clone();
             }
         }
 
@@ -793,19 +802,46 @@ impl Engine {
             return Err(DeserializeError::FutureVersion(snapshot.header.version));
         }
         if snapshot.header.version < FORMAT_VERSION {
-            return Err(DeserializeError::UnsupportedVersion(snapshot.header.version));
+            return Err(DeserializeError::UnsupportedVersion(
+                snapshot.header.version,
+            ));
         }
 
-        let graph_p: GraphPartition = bitcode::deserialize(&snapshot.partitions[0])
-            .map_err(|e| DeserializeError::PartitionDecode { index: 0, reason: e.to_string() })?;
-        let proc_p: ProcessorPartition = bitcode::deserialize(&snapshot.partitions[1])
-            .map_err(|e| DeserializeError::PartitionDecode { index: 1, reason: e.to_string() })?;
-        let inv_p: InventoryPartition = bitcode::deserialize(&snapshot.partitions[2])
-            .map_err(|e| DeserializeError::PartitionDecode { index: 2, reason: e.to_string() })?;
-        let trans_p: TransportPartition = bitcode::deserialize(&snapshot.partitions[3])
-            .map_err(|e| DeserializeError::PartitionDecode { index: 3, reason: e.to_string() })?;
-        let junc_p: JunctionPartition = bitcode::deserialize(&snapshot.partitions[4])
-            .map_err(|e| DeserializeError::PartitionDecode { index: 4, reason: e.to_string() })?;
+        let graph_p: GraphPartition =
+            bitcode::deserialize(&snapshot.partitions[0]).map_err(|e| {
+                DeserializeError::PartitionDecode {
+                    index: 0,
+                    reason: e.to_string(),
+                }
+            })?;
+        let proc_p: ProcessorPartition =
+            bitcode::deserialize(&snapshot.partitions[1]).map_err(|e| {
+                DeserializeError::PartitionDecode {
+                    index: 1,
+                    reason: e.to_string(),
+                }
+            })?;
+        let inv_p: InventoryPartition =
+            bitcode::deserialize(&snapshot.partitions[2]).map_err(|e| {
+                DeserializeError::PartitionDecode {
+                    index: 2,
+                    reason: e.to_string(),
+                }
+            })?;
+        let trans_p: TransportPartition =
+            bitcode::deserialize(&snapshot.partitions[3]).map_err(|e| {
+                DeserializeError::PartitionDecode {
+                    index: 3,
+                    reason: e.to_string(),
+                }
+            })?;
+        let junc_p: JunctionPartition =
+            bitcode::deserialize(&snapshot.partitions[4]).map_err(|e| {
+                DeserializeError::PartitionDecode {
+                    index: 4,
+                    reason: e.to_string(),
+                }
+            })?;
 
         Ok(Engine {
             graph: graph_p.graph,
@@ -980,19 +1016,15 @@ mod tests {
         let engine = make_test_engine();
 
         // Collect all node IDs.
-        let original_node_ids: Vec<NodeId> =
-            engine.graph.nodes().map(|(id, _)| id).collect();
-        let original_edge_ids: Vec<EdgeId> =
-            engine.graph.edges().map(|(id, _)| id).collect();
+        let original_node_ids: Vec<NodeId> = engine.graph.nodes().map(|(id, _)| id).collect();
+        let original_edge_ids: Vec<EdgeId> = engine.graph.edges().map(|(id, _)| id).collect();
 
         let data = engine.serialize().unwrap();
         let restored = Engine::deserialize(&data).unwrap();
 
         // Verify all node IDs are present and accessible.
-        let restored_node_ids: Vec<NodeId> =
-            restored.graph.nodes().map(|(id, _)| id).collect();
-        let restored_edge_ids: Vec<EdgeId> =
-            restored.graph.edges().map(|(id, _)| id).collect();
+        let restored_node_ids: Vec<NodeId> = restored.graph.nodes().map(|(id, _)| id).collect();
+        let restored_edge_ids: Vec<EdgeId> = restored.graph.edges().map(|(id, _)| id).collect();
 
         assert_eq!(
             original_node_ids.len(),
@@ -1198,7 +1230,10 @@ mod tests {
         let hashes1 = engine1.subsystem_hashes();
         let hashes2 = engine2.subsystem_hashes();
 
-        assert_eq!(hashes1, hashes2, "identical engines should have identical subsystem hashes");
+        assert_eq!(
+            hashes1, hashes2,
+            "identical engines should have identical subsystem hashes"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1383,9 +1418,7 @@ mod tests {
 
         // Restore each snapshot and verify hash.
         for (i, expected_hash) in hashes.iter().enumerate() {
-            let restored = Engine::restore_snapshot(&buffer, i)
-                .unwrap()
-                .unwrap();
+            let restored = Engine::restore_snapshot(&buffer, i).unwrap().unwrap();
             assert_eq!(
                 restored.state_hash(),
                 *expected_hash,
@@ -1440,10 +1473,7 @@ mod tests {
         let node = result.resolve_node(pending).unwrap();
 
         // Recipe: 1 iron -> 1 gear, 10 ticks.
-        engine.set_processor(
-            node,
-            make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 10),
-        );
+        engine.set_processor(node, make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 10));
         let mut input_inv = simple_inventory(100);
         let _ = input_inv.input_slots[0].add(iron(), 5);
         engine.set_input_inventory(node, input_inv);
@@ -1455,7 +1485,10 @@ mod tests {
         }
 
         let state_before = engine.get_processor_state(node).unwrap().clone();
-        assert!(matches!(state_before, ProcessorState::Working { progress: 3 }));
+        assert!(matches!(
+            state_before,
+            ProcessorState::Working { progress: 3 }
+        ));
 
         let data = engine.serialize().unwrap();
         let restored = Engine::deserialize(&data).unwrap();
@@ -1533,10 +1566,7 @@ mod tests {
             engine.set_processor(a, make_source(iron(), 1.0));
             engine.set_input_inventory(a, simple_inventory(100));
             engine.set_output_inventory(a, simple_inventory(100));
-            engine.set_processor(
-                b,
-                make_recipe(vec![(gear(), 999)], vec![(iron(), 1)], 1),
-            );
+            engine.set_processor(b, make_recipe(vec![(gear(), 999)], vec![(iron(), 1)], 1));
             engine.set_input_inventory(b, simple_inventory(100));
             engine.set_output_inventory(b, simple_inventory(100));
 
@@ -1593,8 +1623,11 @@ mod tests {
         let engine = make_test_engine();
         let original_hash = engine.state_hash();
 
-        let data = engine.serialize_partitioned().expect("partitioned serialize should succeed");
-        let restored = Engine::deserialize_partitioned(&data).expect("partitioned deserialize should succeed");
+        let data = engine
+            .serialize_partitioned()
+            .expect("partitioned serialize should succeed");
+        let restored =
+            Engine::deserialize_partitioned(&data).expect("partitioned deserialize should succeed");
 
         assert_eq!(restored.state_hash(), original_hash);
         assert_eq!(restored.sim_state.tick, engine.sim_state.tick);
@@ -1645,7 +1678,9 @@ mod tests {
         let baseline = engine.serialize_incremental(None).unwrap();
 
         // Only mark processors dirty.
-        engine.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_PROCESSORS);
+        engine
+            .dirty
+            .mark_partition(crate::dirty::DirtyTracker::PARTITION_PROCESSORS);
         let incremental = engine.serialize_incremental(Some(&baseline)).unwrap();
 
         // Deserialize and verify state is correct.
@@ -1656,7 +1691,9 @@ mod tests {
     #[test]
     fn incremental_no_baseline_falls_back() {
         let mut engine = make_test_engine();
-        engine.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_GRAPH);
+        engine
+            .dirty
+            .mark_partition(crate::dirty::DirtyTracker::PARTITION_GRAPH);
         let data = engine.serialize_incremental(None).unwrap();
         let restored = Engine::deserialize_partitioned(&data).unwrap();
         assert_eq!(restored.state_hash(), engine.state_hash());
@@ -1694,8 +1731,14 @@ mod tests {
         let legacy_restored = Engine::deserialize(&legacy_data).unwrap();
         let partitioned_restored = Engine::deserialize_partitioned(&partitioned_data).unwrap();
 
-        assert_eq!(legacy_restored.state_hash(), partitioned_restored.state_hash());
-        assert_eq!(legacy_restored.sim_state.tick, partitioned_restored.sim_state.tick);
+        assert_eq!(
+            legacy_restored.state_hash(),
+            partitioned_restored.state_hash()
+        );
+        assert_eq!(
+            legacy_restored.sim_state.tick,
+            partitioned_restored.sim_state.tick
+        );
     }
 
     #[test]
@@ -1719,8 +1762,141 @@ mod tests {
         let legacy = engine.serialize().unwrap();
         let partitioned = engine.serialize_partitioned().unwrap();
 
-        assert_eq!(Engine::detect_snapshot_format(&legacy), super::SnapshotFormat::Legacy);
-        assert_eq!(Engine::detect_snapshot_format(&partitioned), super::SnapshotFormat::Partitioned);
-        assert_eq!(Engine::detect_snapshot_format(&[0u8; 4]), super::SnapshotFormat::Unknown);
+        assert_eq!(
+            Engine::detect_snapshot_format(&legacy),
+            super::SnapshotFormat::Legacy
+        );
+        assert_eq!(
+            Engine::detect_snapshot_format(&partitioned),
+            super::SnapshotFormat::Partitioned
+        );
+        assert_eq!(
+            Engine::detect_snapshot_format(&[0u8; 4]),
+            super::SnapshotFormat::Unknown
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Deserialization error path tests (coverage gap-fill)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn deserialize_empty_data_returns_decode_error() {
+        let result = Engine::deserialize(&[]);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(DeserializeError::Decode(_))));
+    }
+
+    #[test]
+    fn deserialize_truncated_data_returns_decode_error() {
+        let engine = make_test_engine();
+        let mut data = engine.serialize().unwrap();
+        // Truncate to just a few bytes
+        data.truncate(4);
+        let result = Engine::deserialize(&data);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(DeserializeError::Decode(_))));
+    }
+
+    #[test]
+    fn deserialize_corrupted_data_returns_error() {
+        let engine = make_test_engine();
+        let mut data = engine.serialize().unwrap();
+        // Corrupt the middle of the data
+        let mid = data.len() / 2;
+        for i in mid..mid + 10 {
+            if i < data.len() {
+                data[i] = 0xFF;
+            }
+        }
+        let result = Engine::deserialize(&data);
+        // Should be some kind of error (Decode or InvalidMagic depending on what we corrupted)
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn partitioned_deserialize_empty_data_returns_decode_error() {
+        let result = Engine::deserialize_partitioned(&[]);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(DeserializeError::Decode(_))));
+    }
+
+    #[test]
+    fn partitioned_deserialize_corrupted_partition_returns_error() {
+        let engine = make_test_engine();
+        let data = engine.serialize_partitioned().unwrap();
+        // Decode, corrupt a partition, re-encode
+        let mut snap: super::PartitionedSnapshot = bitcode::deserialize(&data).unwrap();
+        snap.partitions[2] = vec![0xFF; 5]; // Corrupt inventory partition
+        let corrupted = bitcode::serialize(&snap).unwrap();
+        let result = Engine::deserialize_partitioned(&corrupted);
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(DeserializeError::PartitionDecode { index: 2, .. })
+        ));
+    }
+
+    #[test]
+    fn partitioned_future_version_returns_error() {
+        let engine = make_test_engine();
+        let data = engine.serialize_partitioned().unwrap();
+        let mut snap: super::PartitionedSnapshot = bitcode::deserialize(&data).unwrap();
+        snap.header.version = FORMAT_VERSION + 10;
+        let modified = bitcode::serialize(&snap).unwrap();
+        let result = Engine::deserialize_partitioned(&modified);
+        assert!(matches!(result, Err(DeserializeError::FutureVersion(_))));
+    }
+
+    #[test]
+    fn partitioned_old_version_returns_unsupported() {
+        let engine = make_test_engine();
+        let data = engine.serialize_partitioned().unwrap();
+        let mut snap: super::PartitionedSnapshot = bitcode::deserialize(&data).unwrap();
+        snap.header.version = 0;
+        let modified = bitcode::serialize(&snap).unwrap();
+        let result = Engine::deserialize_partitioned(&modified);
+        assert!(matches!(
+            result,
+            Err(DeserializeError::UnsupportedVersion(0))
+        ));
+    }
+
+    #[test]
+    fn partitioned_bad_magic_returns_invalid_magic() {
+        let engine = make_test_engine();
+        let data = engine.serialize_partitioned().unwrap();
+        let mut snap: super::PartitionedSnapshot = bitcode::deserialize(&data).unwrap();
+        snap.header.magic = 0xDEADBEEF;
+        let modified = bitcode::serialize(&snap).unwrap();
+        let result = Engine::deserialize_partitioned(&modified);
+        assert!(matches!(
+            result,
+            Err(DeserializeError::InvalidMagic(0xDEADBEEF))
+        ));
+    }
+
+    #[test]
+    fn read_snapshot_header_from_valid_data() {
+        let engine = make_test_engine();
+        let data = engine.serialize().unwrap();
+        let header = super::read_snapshot_header(&data).unwrap();
+        assert_eq!(header.magic, SNAPSHOT_MAGIC);
+        assert_eq!(header.version, FORMAT_VERSION);
+        assert_eq!(header.tick, engine.sim_state.tick);
+    }
+
+    #[test]
+    fn read_snapshot_header_from_garbage_returns_decode_error() {
+        let result = super::read_snapshot_header(&[0u8; 5]);
+        assert!(matches!(result, Err(DeserializeError::Decode(_))));
+    }
+
+    #[test]
+    fn detect_format_single_byte_returns_unknown() {
+        assert_eq!(
+            Engine::detect_snapshot_format(&[0x42]),
+            super::SnapshotFormat::Unknown
+        );
     }
 }

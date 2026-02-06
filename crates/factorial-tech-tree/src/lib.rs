@@ -109,17 +109,11 @@ pub enum Unlock {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CostScaling {
     /// Cost increases linearly: base + increment * level.
-    Linear {
-        base: u32,
-        increment: u32,
-    },
+    Linear { base: u32, increment: u32 },
 
     /// Cost increases exponentially: base * multiplier^level.
     /// `multiplier` is stored as a Fixed64 ratio (e.g. 1.5 means 50% increase).
-    Exponential {
-        base: u32,
-        multiplier: Fixed64,
-    },
+    Exponential { base: u32, multiplier: Fixed64 },
 }
 
 impl CostScaling {
@@ -231,10 +225,7 @@ pub enum ResearchProgress {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TechEvent {
     /// A technology has started being researched.
-    ResearchStarted {
-        tech_id: TechId,
-        tick: Ticks,
-    },
+    ResearchStarted { tech_id: TechId, tick: Ticks },
 
     /// A technology has been completed.
     ResearchCompleted {
@@ -391,10 +382,7 @@ impl TechTree {
 
     /// Check whether a technology is currently being researched.
     pub fn is_in_progress(&self, id: TechId) -> bool {
-        matches!(
-            self.states.get(&id),
-            Some(ResearchState::InProgress(_))
-        )
+        matches!(self.states.get(&id), Some(ResearchState::InProgress(_)))
     }
 
     /// Get the number of times a repeatable technology has been completed.
@@ -447,11 +435,7 @@ impl TechTree {
 
     /// Start researching a technology. Validates prerequisites and state.
     /// Emits `ResearchStarted` on success.
-    pub fn start_research(
-        &mut self,
-        id: TechId,
-        tick: Ticks,
-    ) -> Result<(), TechTreeError> {
+    pub fn start_research(&mut self, id: TechId, tick: Ticks) -> Result<(), TechTreeError> {
         let tech = self
             .technologies
             .get(&id)
@@ -491,7 +475,8 @@ impl TechTree {
         };
 
         self.states.insert(id, ResearchState::InProgress(progress));
-        self.events.push(TechEvent::ResearchStarted { tech_id: id, tick });
+        self.events
+            .push(TechEvent::ResearchStarted { tech_id: id, tick });
 
         Ok(())
     }
@@ -541,9 +526,7 @@ impl TechTree {
                 .unwrap_or(0);
 
             // Find current progress for this item.
-            let current = progress_items
-                .iter_mut()
-                .find(|(pi, _)| pi == item_type);
+            let current = progress_items.iter_mut().find(|(pi, _)| pi == item_type);
 
             if let Some((_, current_qty)) = current {
                 let remaining = required_amount.saturating_sub(*current_qty);
@@ -559,9 +542,10 @@ impl TechTree {
         let is_complete = if let ResearchState::InProgress(progress) = state {
             match (progress, &effective_cost) {
                 (ResearchProgress::Items(p), ResearchCost::Items(r))
-                | (ResearchProgress::Delivery(p), ResearchCost::Delivery(r)) => {
-                    p.iter().zip(r.iter()).all(|((_, have), (_, need))| have >= need)
-                }
+                | (ResearchProgress::Delivery(p), ResearchCost::Delivery(r)) => p
+                    .iter()
+                    .zip(r.iter())
+                    .all(|((_, have), (_, need))| have >= need),
                 _ => false,
             }
         } else {
@@ -622,11 +606,7 @@ impl TechTree {
 
     /// Advance a Rate-cost research by one tick. The rate is determined by
     /// the technology's cost definition. Completes research when total is met.
-    pub fn tick_rate(
-        &mut self,
-        id: TechId,
-        tick: Ticks,
-    ) -> Result<bool, TechTreeError> {
+    pub fn tick_rate(&mut self, id: TechId, tick: Ticks) -> Result<bool, TechTreeError> {
         let tech = self
             .technologies
             .get(&id)
@@ -668,11 +648,7 @@ impl TechTree {
     /// determined by the technology's cost definition. Game code is responsible
     /// for ensuring the item rate requirement is met each tick before calling
     /// this. Completes research when the duration is met.
-    pub fn tick_item_rate(
-        &mut self,
-        id: TechId,
-        tick: Ticks,
-    ) -> Result<bool, TechTreeError> {
+    pub fn tick_item_rate(&mut self, id: TechId, tick: Ticks) -> Result<bool, TechTreeError> {
         let tech = self
             .technologies
             .get(&id)
@@ -709,11 +685,7 @@ impl TechTree {
 
     /// Mark a Custom-cost research as complete. Game code decides when the
     /// custom condition is met.
-    pub fn complete_custom(
-        &mut self,
-        id: TechId,
-        tick: Ticks,
-    ) -> Result<(), TechTreeError> {
+    pub fn complete_custom(&mut self, id: TechId, tick: Ticks) -> Result<(), TechTreeError> {
         let tech = self
             .technologies
             .get(&id)
@@ -800,11 +772,7 @@ fn scale_cost(base_cost: &ResearchCost, scaling: &CostScaling, level: u32) -> Re
                             // Scale factor: (base + increment * level) / base
                             // Applied to each item's quantity.
                             let scaled_total = base.saturating_add(increment.saturating_mul(level));
-                            let factor = if *base == 0 {
-                                1
-                            } else {
-                                scaled_total / base
-                            };
+                            let factor = if *base == 0 { 1 } else { scaled_total / base };
                             base_qty.saturating_mul(factor.max(1))
                         }
                         CostScaling::Exponential { multiplier, .. } => {
@@ -840,13 +808,8 @@ fn scale_cost(base_cost: &ResearchCost, scaling: &CostScaling, level: u32) -> Re
                 .map(|(item, base_qty)| {
                     let scaled_qty = match scaling {
                         CostScaling::Linear { base, increment } => {
-                            let factor_total =
-                                base.saturating_add(increment.saturating_mul(level));
-                            let factor = if *base == 0 {
-                                1
-                            } else {
-                                factor_total / base
-                            };
+                            let factor_total = base.saturating_add(increment.saturating_mul(level));
+                            let factor = if *base == 0 { 1 } else { factor_total / base };
                             base_qty.saturating_mul(factor.max(1))
                         }
                         CostScaling::Exponential { multiplier, .. } => {
@@ -904,11 +867,7 @@ fn scale_cost(base_cost: &ResearchCost, scaling: &CostScaling, level: u32) -> Re
                         cost = cost.saturating_mul(*multiplier);
                     }
                     let result: i64 = cost.to_num();
-                    if result < 0 {
-                        0
-                    } else {
-                        result as Ticks
-                    }
+                    if result < 0 { 0 } else { result as Ticks }
                 }
             };
             let _ = duration;
@@ -973,10 +932,7 @@ mod tests {
             id: TechId(1),
             name: "Steel Smelting".to_string(),
             prerequisites: vec![TechId(0)],
-            cost: ResearchCost::Items(vec![
-                (red_science(), 50),
-                (green_science(), 50),
-            ]),
+            cost: ResearchCost::Items(vec![(red_science(), 50), (green_science(), 50)]),
             unlocks: vec![
                 Unlock::Building(steel_furnace()),
                 Unlock::Recipe(steel_plate_recipe()),
@@ -1058,10 +1014,7 @@ mod tests {
             id: TechId(0),
             name: "Test".to_string(),
             prerequisites: vec![],
-            cost: ResearchCost::Items(vec![
-                (red_science(), 10),
-                (green_science(), 5),
-            ]),
+            cost: ResearchCost::Items(vec![(red_science(), 10), (green_science(), 5)]),
             unlocks: vec![Unlock::Building(steel_furnace())],
             repeatable: false,
             cost_scaling: None,
@@ -1079,11 +1032,7 @@ mod tests {
 
         // Complete red, partial green.
         let consumed = tree
-            .contribute_items(
-                TechId(0),
-                &[(red_science(), 5), (green_science(), 3)],
-                2,
-            )
+            .contribute_items(TechId(0), &[(red_science(), 5), (green_science(), 3)], 2)
             .unwrap();
         // Only 3 red needed, 3 green consumed.
         assert_eq!(consumed, vec![(red_science(), 3), (green_science(), 3)]);
@@ -1135,10 +1084,7 @@ mod tests {
             id: TechId(0),
             name: "Test".to_string(),
             prerequisites: vec![],
-            cost: ResearchCost::Delivery(vec![
-                (red_science(), 20),
-                (green_science(), 10),
-            ]),
+            cost: ResearchCost::Delivery(vec![(red_science(), 20), (green_science(), 10)]),
             unlocks: vec![Unlock::Recipe(steel_plate_recipe())],
             repeatable: false,
             cost_scaling: None,
@@ -1151,10 +1097,7 @@ mod tests {
         let consumed = tree
             .contribute_items(TechId(0), &[(red_science(), 20), (green_science(), 10)], 1)
             .unwrap();
-        assert_eq!(
-            consumed,
-            vec![(red_science(), 20), (green_science(), 10)]
-        );
+        assert_eq!(consumed, vec![(red_science(), 20), (green_science(), 10)]);
         assert!(tree.is_completed(TechId(0)));
     }
 

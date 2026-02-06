@@ -5,8 +5,7 @@
 
 use crate::fixed::{Fixed32, Fixed64};
 use crate::registry::{
-    PropertyDef, PropertyDefault, PropertySize, RecipeEntry, RegistryBuilder,
-    RegistryError,
+    PropertyDef, PropertyDefault, PropertySize, RecipeEntry, RegistryBuilder, RegistryError,
 };
 
 // ---------------------------------------------------------------------------

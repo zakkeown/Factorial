@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Satisfactory-flavored integration tests for the Factorial engine.
 //!
 //! These tests model Satisfactory game mechanics (miner purity tiers,
@@ -24,35 +25,77 @@ use factorial_power::{PowerConsumer, PowerModule, PowerProducer};
 // ===========================================================================
 
 // Raw ores
-fn s_iron_ore() -> ItemTypeId { ItemTypeId(200) }
-fn s_copper_ore() -> ItemTypeId { ItemTypeId(201) }
-fn s_limestone() -> ItemTypeId { ItemTypeId(202) }
-fn s_coal() -> ItemTypeId { ItemTypeId(203) }
+fn s_iron_ore() -> ItemTypeId {
+    ItemTypeId(200)
+}
+fn s_copper_ore() -> ItemTypeId {
+    ItemTypeId(201)
+}
+fn s_limestone() -> ItemTypeId {
+    ItemTypeId(202)
+}
+fn s_coal() -> ItemTypeId {
+    ItemTypeId(203)
+}
 
 // Smelted ingots
-fn s_iron_ingot() -> ItemTypeId { ItemTypeId(210) }
-fn s_copper_ingot() -> ItemTypeId { ItemTypeId(211) }
-fn s_steel_ingot() -> ItemTypeId { ItemTypeId(212) }
-fn s_concrete() -> ItemTypeId { ItemTypeId(213) }
+fn s_iron_ingot() -> ItemTypeId {
+    ItemTypeId(210)
+}
+fn s_copper_ingot() -> ItemTypeId {
+    ItemTypeId(211)
+}
+fn s_steel_ingot() -> ItemTypeId {
+    ItemTypeId(212)
+}
+fn s_concrete() -> ItemTypeId {
+    ItemTypeId(213)
+}
 
 // Constructor products
-fn s_iron_plate() -> ItemTypeId { ItemTypeId(220) }
-fn s_iron_rod() -> ItemTypeId { ItemTypeId(221) }
-fn s_screw() -> ItemTypeId { ItemTypeId(222) }
-fn s_wire() -> ItemTypeId { ItemTypeId(223) }
-fn s_cable() -> ItemTypeId { ItemTypeId(224) }
+fn s_iron_plate() -> ItemTypeId {
+    ItemTypeId(220)
+}
+fn s_iron_rod() -> ItemTypeId {
+    ItemTypeId(221)
+}
+fn s_screw() -> ItemTypeId {
+    ItemTypeId(222)
+}
+fn s_wire() -> ItemTypeId {
+    ItemTypeId(223)
+}
+fn s_cable() -> ItemTypeId {
+    ItemTypeId(224)
+}
 
 // Assembler products
-fn s_reinforced_plate() -> ItemTypeId { ItemTypeId(225) }
-fn s_rotor() -> ItemTypeId { ItemTypeId(226) }
-fn s_modular_frame() -> ItemTypeId { ItemTypeId(227) }
-fn s_smart_plating() -> ItemTypeId { ItemTypeId(228) }
+fn s_reinforced_plate() -> ItemTypeId {
+    ItemTypeId(225)
+}
+fn s_rotor() -> ItemTypeId {
+    ItemTypeId(226)
+}
+fn s_modular_frame() -> ItemTypeId {
+    ItemTypeId(227)
+}
+fn s_smart_plating() -> ItemTypeId {
+    ItemTypeId(228)
+}
 
 // Steel-tier products
-fn s_steel_beam() -> ItemTypeId { ItemTypeId(230) }
-fn s_steel_pipe() -> ItemTypeId { ItemTypeId(231) }
-fn s_motor() -> ItemTypeId { ItemTypeId(232) }
-fn s_stator() -> ItemTypeId { ItemTypeId(233) }
+fn s_steel_beam() -> ItemTypeId {
+    ItemTypeId(230)
+}
+fn s_steel_pipe() -> ItemTypeId {
+    ItemTypeId(231)
+}
+fn s_motor() -> ItemTypeId {
+    ItemTypeId(232)
+}
+fn s_stator() -> ItemTypeId {
+    ItemTypeId(233)
+}
 
 // ===========================================================================
 // Satisfactory building capacities
@@ -106,65 +149,37 @@ fn mk5_belt() -> Transport {
 
 /// Smelter: 1 Iron Ore -> 1 Iron Ingot, 2 ticks.
 fn smelter_iron() -> Processor {
-    make_recipe(
-        vec![(s_iron_ore(), 1)],
-        vec![(s_iron_ingot(), 1)],
-        2,
-    )
+    make_recipe(vec![(s_iron_ore(), 1)], vec![(s_iron_ingot(), 1)], 2)
 }
 
 /// Smelter: 1 Copper Ore -> 1 Copper Ingot, 2 ticks.
 fn smelter_copper() -> Processor {
-    make_recipe(
-        vec![(s_copper_ore(), 1)],
-        vec![(s_copper_ingot(), 1)],
-        2,
-    )
+    make_recipe(vec![(s_copper_ore(), 1)], vec![(s_copper_ingot(), 1)], 2)
 }
 
 /// Constructor: 3 Iron Ingot -> 2 Iron Plate, 6 ticks.
 fn constructor_iron_plate() -> Processor {
-    make_recipe(
-        vec![(s_iron_ingot(), 3)],
-        vec![(s_iron_plate(), 2)],
-        6,
-    )
+    make_recipe(vec![(s_iron_ingot(), 3)], vec![(s_iron_plate(), 2)], 6)
 }
 
 /// Constructor: 1 Iron Ingot -> 1 Iron Rod, 4 ticks.
 fn constructor_iron_rod() -> Processor {
-    make_recipe(
-        vec![(s_iron_ingot(), 1)],
-        vec![(s_iron_rod(), 1)],
-        4,
-    )
+    make_recipe(vec![(s_iron_ingot(), 1)], vec![(s_iron_rod(), 1)], 4)
 }
 
 /// Constructor: 1 Iron Rod -> 4 Screw, 6 ticks.
 fn constructor_screw() -> Processor {
-    make_recipe(
-        vec![(s_iron_rod(), 1)],
-        vec![(s_screw(), 4)],
-        6,
-    )
+    make_recipe(vec![(s_iron_rod(), 1)], vec![(s_screw(), 4)], 6)
 }
 
 /// Constructor: 1 Copper Ingot -> 2 Wire, 4 ticks.
 fn constructor_wire() -> Processor {
-    make_recipe(
-        vec![(s_copper_ingot(), 1)],
-        vec![(s_wire(), 2)],
-        4,
-    )
+    make_recipe(vec![(s_copper_ingot(), 1)], vec![(s_wire(), 2)], 4)
 }
 
 /// Constructor: 2 Wire -> 1 Cable, 2 ticks.
 fn constructor_cable() -> Processor {
-    make_recipe(
-        vec![(s_wire(), 2)],
-        vec![(s_cable(), 1)],
-        2,
-    )
+    make_recipe(vec![(s_wire(), 2)], vec![(s_cable(), 1)], 2)
 }
 
 /// Assembler: 6 Iron Plate + 12 Screw -> 1 Reinforced Iron Plate, 12 ticks.
@@ -207,20 +222,12 @@ fn foundry_steel_ingot() -> Processor {
 
 /// Constructor: 4 Steel Ingot -> 1 Steel Beam, 4 ticks.
 fn constructor_steel_beam() -> Processor {
-    make_recipe(
-        vec![(s_steel_ingot(), 4)],
-        vec![(s_steel_beam(), 1)],
-        4,
-    )
+    make_recipe(vec![(s_steel_ingot(), 4)], vec![(s_steel_beam(), 1)], 4)
 }
 
 /// Constructor: 3 Steel Ingot -> 2 Steel Pipe, 6 ticks.
 fn constructor_steel_pipe() -> Processor {
-    make_recipe(
-        vec![(s_steel_ingot(), 3)],
-        vec![(s_steel_pipe(), 2)],
-        6,
-    )
+    make_recipe(vec![(s_steel_ingot(), 3)], vec![(s_steel_pipe(), 2)], 6)
 }
 
 /// Assembler: 10 Stator + 5 Rotor -> 1 Motor (simplified), 12 ticks.
@@ -244,11 +251,7 @@ fn assembler_stator() -> Processor {
 /// Alternate Constructor recipe: 5 Iron Ingot -> 4 Iron Rod (Cast Screw alt),
 /// 12 ticks. A slightly different ratio than the standard recipe.
 fn constructor_iron_rod_alternate() -> Processor {
-    make_recipe(
-        vec![(s_iron_ingot(), 5)],
-        vec![(s_iron_rod(), 4)],
-        12,
-    )
+    make_recipe(vec![(s_iron_ingot(), 5)], vec![(s_iron_rod(), 4)], 12)
 }
 
 // ===========================================================================
@@ -310,9 +313,9 @@ fn test_miner_purity_tiers() {
     // Connect miners to sinks via belt tiers that match their production rates.
     // The Mk.1 belt (speed 1.0, 8 slots) throughput caps at ~1 item/tick, so
     // faster miners need faster belts to realize their full output.
-    connect(&mut engine, impure_miner, impure_sink, mk1_belt());  // 0.5/tick, Mk.1 is plenty
-    connect(&mut engine, normal_miner, normal_sink, mk1_belt());  // 1.0/tick, Mk.1 is adequate
-    connect(&mut engine, pure_miner, pure_sink, mk3_belt());      // 2.0/tick, needs Mk.3+
+    connect(&mut engine, impure_miner, impure_sink, mk1_belt()); // 0.5/tick, Mk.1 is plenty
+    connect(&mut engine, normal_miner, normal_sink, mk1_belt()); // 1.0/tick, Mk.1 is adequate
+    connect(&mut engine, pure_miner, pure_sink, mk3_belt()); // 2.0/tick, needs Mk.3+
 
     // Run 100 ticks.
     for _ in 0..100 {
@@ -416,13 +419,7 @@ fn test_overclocking_with_power_shards() {
 
     // Normal smelter: 4 MW base power.
     let base_power = Fixed64::from_num(4);
-    power.add_consumer(
-        net,
-        smelter_normal,
-        PowerConsumer {
-            demand: base_power,
-        },
-    );
+    power.add_consumer(net, smelter_normal, PowerConsumer { demand: base_power });
 
     // ENGINE GAP: Overclocked smelter power demand should be automatically
     // derived from the speed modifier. Satisfactory's formula is approximately:
@@ -521,16 +518,21 @@ fn test_constructor_assembler_manufacturer() {
         SAT_STD_CAP,
         SAT_STD_CAP,
     );
-    connect(&mut engine, iron_ingot_src_for_rod, iron_rod_constructor, mk1_belt());
+    connect(
+        &mut engine,
+        iron_ingot_src_for_rod,
+        iron_rod_constructor,
+        mk1_belt(),
+    );
 
     // --- Screw Constructor: 1 Iron Rod -> 4 Screw, 6 ticks ---
-    let screw_constructor = add_node(
+    let screw_constructor = add_node(&mut engine, constructor_screw(), SAT_STD_CAP, SAT_STD_CAP);
+    connect(
         &mut engine,
-        constructor_screw(),
-        SAT_STD_CAP,
-        SAT_STD_CAP,
+        iron_rod_constructor,
+        screw_constructor,
+        mk1_belt(),
     );
-    connect(&mut engine, iron_rod_constructor, screw_constructor, mk1_belt());
 
     // --- Iron Plate Constructor: 3 Iron Ingot -> 2 Iron Plate, 6 ticks ---
     let iron_plate_constructor = add_node(
@@ -539,7 +541,12 @@ fn test_constructor_assembler_manufacturer() {
         SAT_STD_CAP,
         SAT_STD_CAP,
     );
-    connect(&mut engine, iron_ingot_src_for_plate, iron_plate_constructor, mk1_belt());
+    connect(
+        &mut engine,
+        iron_ingot_src_for_plate,
+        iron_plate_constructor,
+        mk1_belt(),
+    );
 
     // --- Assembler: 6 Iron Plate + 12 Screw -> 1 Reinforced Iron Plate ---
     let assembler_rip = add_node(
@@ -548,13 +555,22 @@ fn test_constructor_assembler_manufacturer() {
         SAT_MULTI_CAP,
         SAT_STD_CAP,
     );
-    connect(&mut engine, iron_plate_constructor, assembler_rip, mk1_belt());
+    connect(
+        &mut engine,
+        iron_plate_constructor,
+        assembler_rip,
+        mk1_belt(),
+    );
     connect(&mut engine, screw_constructor, assembler_rip, mk1_belt());
 
     // --- Sink to accumulate Reinforced Iron Plates ---
     let rip_sink = add_node(
         &mut engine,
-        make_recipe(vec![(s_reinforced_plate(), 9999)], vec![(s_iron_ore(), 1)], 99999),
+        make_recipe(
+            vec![(s_reinforced_plate(), 9999)],
+            vec![(s_iron_ore(), 1)],
+            99999,
+        ),
         SAT_SINK_CAP,
         SAT_STD_CAP,
     );
@@ -715,9 +731,18 @@ fn test_conveyor_belt_tiers() {
     let mk5_output = input_quantity(&engine, mk5_sink, s_iron_ingot());
 
     // All should produce something.
-    assert!(mk1_output > 0, "Mk.1 belt line should produce ingots, got {mk1_output}");
-    assert!(mk3_output > 0, "Mk.3 belt line should produce ingots, got {mk3_output}");
-    assert!(mk5_output > 0, "Mk.5 belt line should produce ingots, got {mk5_output}");
+    assert!(
+        mk1_output > 0,
+        "Mk.1 belt line should produce ingots, got {mk1_output}"
+    );
+    assert!(
+        mk3_output > 0,
+        "Mk.3 belt line should produce ingots, got {mk3_output}"
+    );
+    assert!(
+        mk5_output > 0,
+        "Mk.5 belt line should produce ingots, got {mk5_output}"
+    );
 
     // Higher belt tiers should deliver at least as much (throughput limited by
     // smelter recipe duration, but faster belts reduce pipeline latency so
@@ -974,12 +999,7 @@ fn test_train_freight_system() {
     connect(&mut engine, ore_mine, base_station, train);
 
     // Smelter array at the base.
-    let smelter = add_node(
-        &mut engine,
-        smelter_iron(),
-        SAT_MULTI_CAP,
-        SAT_STD_CAP,
-    );
+    let smelter = add_node(&mut engine, smelter_iron(), SAT_MULTI_CAP, SAT_STD_CAP);
     connect(&mut engine, base_station, smelter, mk1_belt());
 
     // Sink.
@@ -1034,32 +1054,77 @@ fn test_space_elevator_phase_1() {
 
     // === Iron Ingot sources (dedicated per consumer to avoid fan-out issues) ===
     let make_iron_ingot_src = |e: &mut Engine| -> NodeId {
-        add_node(e, make_source(s_iron_ingot(), 5.0), SAT_STD_CAP, SAT_STD_CAP)
+        add_node(
+            e,
+            make_source(s_iron_ingot(), 5.0),
+            SAT_STD_CAP,
+            SAT_STD_CAP,
+        )
     };
 
     // --- Iron Plate chain ---
     let ingot_for_plate = make_iron_ingot_src(&mut engine);
-    let plate_constructor = add_node(&mut engine, constructor_iron_plate(), SAT_STD_CAP, SAT_STD_CAP);
+    let plate_constructor = add_node(
+        &mut engine,
+        constructor_iron_plate(),
+        SAT_STD_CAP,
+        SAT_STD_CAP,
+    );
     connect(&mut engine, ingot_for_plate, plate_constructor, mk1_belt());
 
     // --- Iron Rod chain (for Rotor) ---
     let ingot_for_rod_rotor = make_iron_ingot_src(&mut engine);
-    let rod_constructor_rotor = add_node(&mut engine, constructor_iron_rod(), SAT_STD_CAP, SAT_STD_CAP);
-    connect(&mut engine, ingot_for_rod_rotor, rod_constructor_rotor, mk1_belt());
+    let rod_constructor_rotor = add_node(
+        &mut engine,
+        constructor_iron_rod(),
+        SAT_STD_CAP,
+        SAT_STD_CAP,
+    );
+    connect(
+        &mut engine,
+        ingot_for_rod_rotor,
+        rod_constructor_rotor,
+        mk1_belt(),
+    );
 
     // --- Screw chain (for Reinforced Plate) ---
     let ingot_for_rod_screw_rip = make_iron_ingot_src(&mut engine);
-    let rod_for_screw_rip = add_node(&mut engine, constructor_iron_rod(), SAT_STD_CAP, SAT_STD_CAP);
+    let rod_for_screw_rip = add_node(
+        &mut engine,
+        constructor_iron_rod(),
+        SAT_STD_CAP,
+        SAT_STD_CAP,
+    );
     let screw_for_rip = add_node(&mut engine, constructor_screw(), SAT_STD_CAP, SAT_STD_CAP);
-    connect(&mut engine, ingot_for_rod_screw_rip, rod_for_screw_rip, mk1_belt());
+    connect(
+        &mut engine,
+        ingot_for_rod_screw_rip,
+        rod_for_screw_rip,
+        mk1_belt(),
+    );
     connect(&mut engine, rod_for_screw_rip, screw_for_rip, mk1_belt());
 
     // --- Screw chain (for Rotor) ---
     let ingot_for_rod_screw_rotor = make_iron_ingot_src(&mut engine);
-    let rod_for_screw_rotor = add_node(&mut engine, constructor_iron_rod(), SAT_STD_CAP, SAT_STD_CAP);
+    let rod_for_screw_rotor = add_node(
+        &mut engine,
+        constructor_iron_rod(),
+        SAT_STD_CAP,
+        SAT_STD_CAP,
+    );
     let screw_for_rotor = add_node(&mut engine, constructor_screw(), SAT_STD_CAP, SAT_STD_CAP);
-    connect(&mut engine, ingot_for_rod_screw_rotor, rod_for_screw_rotor, mk1_belt());
-    connect(&mut engine, rod_for_screw_rotor, screw_for_rotor, mk1_belt());
+    connect(
+        &mut engine,
+        ingot_for_rod_screw_rotor,
+        rod_for_screw_rotor,
+        mk1_belt(),
+    );
+    connect(
+        &mut engine,
+        rod_for_screw_rotor,
+        screw_for_rotor,
+        mk1_belt(),
+    );
 
     // --- Reinforced Iron Plate Assembler ---
     let rip_assembler = add_node(
@@ -1072,13 +1137,13 @@ fn test_space_elevator_phase_1() {
     connect(&mut engine, screw_for_rip, rip_assembler, mk1_belt());
 
     // --- Rotor Assembler ---
-    let rotor_assembler = add_node(
+    let rotor_assembler = add_node(&mut engine, assembler_rotor(), SAT_MULTI_CAP, SAT_STD_CAP);
+    connect(
         &mut engine,
-        assembler_rotor(),
-        SAT_MULTI_CAP,
-        SAT_STD_CAP,
+        rod_constructor_rotor,
+        rotor_assembler,
+        mk1_belt(),
     );
-    connect(&mut engine, rod_constructor_rotor, rotor_assembler, mk1_belt());
     connect(&mut engine, screw_for_rotor, rotor_assembler, mk1_belt());
 
     // --- Smart Plating Assembler ---
@@ -1088,8 +1153,18 @@ fn test_space_elevator_phase_1() {
         SAT_MULTI_CAP,
         SAT_STD_CAP,
     );
-    connect(&mut engine, rip_assembler, smart_plating_assembler, mk1_belt());
-    connect(&mut engine, rotor_assembler, smart_plating_assembler, mk1_belt());
+    connect(
+        &mut engine,
+        rip_assembler,
+        smart_plating_assembler,
+        mk1_belt(),
+    );
+    connect(
+        &mut engine,
+        rotor_assembler,
+        smart_plating_assembler,
+        mk1_belt(),
+    );
 
     // --- Space Elevator Sink ---
     let space_elevator = add_node(
@@ -1102,7 +1177,12 @@ fn test_space_elevator_phase_1() {
         SAT_SINK_CAP,
         SAT_STD_CAP,
     );
-    connect(&mut engine, smart_plating_assembler, space_elevator, mk1_belt());
+    connect(
+        &mut engine,
+        smart_plating_assembler,
+        space_elevator,
+        mk1_belt(),
+    );
 
     // Run enough ticks to produce 50 Smart Plating.
     // Smart Plating takes 30 ticks per craft, so we need roughly:
@@ -1134,8 +1214,18 @@ fn test_power_scaling_coal_to_fuel() {
     let smelter1 = add_node(&mut engine, smelter_iron(), SAT_STD_CAP, SAT_STD_CAP);
     let smelter2 = add_node(&mut engine, smelter_iron(), SAT_STD_CAP, SAT_STD_CAP);
     let smelter3 = add_node(&mut engine, smelter_iron(), SAT_STD_CAP, SAT_STD_CAP);
-    let constructor1 = add_node(&mut engine, constructor_iron_rod(), SAT_STD_CAP, SAT_STD_CAP);
-    let assembler1 = add_node(&mut engine, assembler_reinforced_plate(), SAT_MULTI_CAP, SAT_STD_CAP);
+    let constructor1 = add_node(
+        &mut engine,
+        constructor_iron_rod(),
+        SAT_STD_CAP,
+        SAT_STD_CAP,
+    );
+    let assembler1 = add_node(
+        &mut engine,
+        assembler_reinforced_plate(),
+        SAT_MULTI_CAP,
+        SAT_STD_CAP,
+    );
 
     // --- Power setup ---
     let mut power = PowerModule::new();
@@ -1341,7 +1431,12 @@ fn test_drone_point_to_point() {
         SAT_STD_CAP,
         SAT_STD_CAP,
     );
-    connect(&mut engine, cluster_a_ingot_src, cluster_a_plate_constructor, mk1_belt());
+    connect(
+        &mut engine,
+        cluster_a_ingot_src,
+        cluster_a_plate_constructor,
+        mk1_belt(),
+    );
 
     // === Drone link: Cluster A -> Cluster B (capacity=9, travel_time=10) ===
     // This models a drone port that picks up iron plates and flies them
@@ -1358,7 +1453,12 @@ fn test_drone_point_to_point() {
     );
 
     // Connect drone from Cluster A plates to Cluster B assembler.
-    connect(&mut engine, cluster_a_plate_constructor, cluster_b_assembler, drone);
+    connect(
+        &mut engine,
+        cluster_a_plate_constructor,
+        cluster_b_assembler,
+        drone,
+    );
 
     // Local screw production in Cluster B.
     let cluster_b_ingot_src = add_node(
@@ -1373,20 +1473,35 @@ fn test_drone_point_to_point() {
         SAT_STD_CAP,
         SAT_STD_CAP,
     );
-    let cluster_b_screw_constructor = add_node(
+    let cluster_b_screw_constructor =
+        add_node(&mut engine, constructor_screw(), SAT_STD_CAP, SAT_STD_CAP);
+    connect(
         &mut engine,
-        constructor_screw(),
-        SAT_STD_CAP,
-        SAT_STD_CAP,
+        cluster_b_ingot_src,
+        cluster_b_rod_constructor,
+        mk1_belt(),
     );
-    connect(&mut engine, cluster_b_ingot_src, cluster_b_rod_constructor, mk1_belt());
-    connect(&mut engine, cluster_b_rod_constructor, cluster_b_screw_constructor, mk1_belt());
-    connect(&mut engine, cluster_b_screw_constructor, cluster_b_assembler, mk1_belt());
+    connect(
+        &mut engine,
+        cluster_b_rod_constructor,
+        cluster_b_screw_constructor,
+        mk1_belt(),
+    );
+    connect(
+        &mut engine,
+        cluster_b_screw_constructor,
+        cluster_b_assembler,
+        mk1_belt(),
+    );
 
     // Sink for reinforced plates.
     let rip_sink = add_node(
         &mut engine,
-        make_recipe(vec![(s_reinforced_plate(), 9999)], vec![(s_iron_ore(), 1)], 99999),
+        make_recipe(
+            vec![(s_reinforced_plate(), 9999)],
+            vec![(s_iron_ore(), 1)],
+            99999,
+        ),
         SAT_SINK_CAP,
         SAT_STD_CAP,
     );

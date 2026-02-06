@@ -1,6 +1,6 @@
-use crate::id::*;
 use crate::fixed::Fixed64;
-use serde::{Serialize, Deserialize};
+use crate::id::*;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 slotmap::new_key_type! {
@@ -89,7 +89,8 @@ impl InventorySlot {
 
     /// Get quantity of a specific item type.
     pub fn quantity(&self, item_type: ItemTypeId) -> u32 {
-        self.stacks.iter()
+        self.stacks
+            .iter()
             .find(|s| s.item_type == item_type)
             .map(|s| s.quantity)
             .unwrap_or(0)
@@ -119,7 +120,12 @@ impl InventorySlot {
     }
 
     /// Set a single property on a typed stack. Returns false if the item type is not present.
-    pub fn set_stack_property(&mut self, item_type: ItemTypeId, property: PropertyId, value: Fixed64) -> bool {
+    pub fn set_stack_property(
+        &mut self,
+        item_type: ItemTypeId,
+        property: PropertyId,
+        value: Fixed64,
+    ) -> bool {
         if let Some(stack) = self.stacks.iter_mut().find(|s| s.item_type == item_type) {
             stack.set_property(property, value);
             true
@@ -129,7 +135,12 @@ impl InventorySlot {
     }
 
     /// Like `add()` but merges properties onto the stack (incoming overrides existing).
-    pub fn add_with_properties(&mut self, item_type: ItemTypeId, quantity: u32, properties: &BTreeMap<PropertyId, Fixed64>) -> u32 {
+    pub fn add_with_properties(
+        &mut self,
+        item_type: ItemTypeId,
+        quantity: u32,
+        properties: &BTreeMap<PropertyId, Fixed64>,
+    ) -> u32 {
         let current_total: u32 = self.stacks.iter().map(|s| s.quantity).sum();
         let space = self.capacity.saturating_sub(current_total);
         let to_add = quantity.min(space);
@@ -163,8 +174,12 @@ pub struct Inventory {
 impl Inventory {
     pub fn new(input_count: usize, output_count: usize, capacity: u32) -> Self {
         Self {
-            input_slots: (0..input_count).map(|_| InventorySlot::new(capacity)).collect(),
-            output_slots: (0..output_count).map(|_| InventorySlot::new(capacity)).collect(),
+            input_slots: (0..input_count)
+                .map(|_| InventorySlot::new(capacity))
+                .collect(),
+            output_slots: (0..output_count)
+                .map(|_| InventorySlot::new(capacity))
+                .collect(),
         }
     }
 }
@@ -243,7 +258,10 @@ mod tests {
 
         let retrieved = slot.get_properties(iron);
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().get(&temp).copied(), Some(Fixed64::from_num(70)));
+        assert_eq!(
+            retrieved.unwrap().get(&temp).copied(),
+            Some(Fixed64::from_num(70))
+        );
 
         // Non-existent type returns None.
         assert!(slot.get_properties(ItemTypeId(99)).is_none());
@@ -303,8 +321,8 @@ mod tests {
 
     #[test]
     fn item_stack_with_properties() {
-        use crate::id::PropertyId;
         use crate::fixed::Fixed64;
+        use crate::id::PropertyId;
 
         let mut stack = ItemStack {
             item_type: ItemTypeId(0),

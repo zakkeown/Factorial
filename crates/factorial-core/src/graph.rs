@@ -1,5 +1,5 @@
 use crate::id::*;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use slotmap::{SecondaryMap, SlotMap};
 use std::collections::VecDeque;
 
@@ -222,8 +222,17 @@ impl ProductionGraph {
     }
 
     /// Connect two nodes immediately with an optional item filter. Returns the assigned `EdgeId`.
-    fn connect_immediate_filtered(&mut self, from: NodeId, to: NodeId, item_filter: Option<ItemTypeId>) -> EdgeId {
-        let edge_id = self.edges.insert(EdgeData { from, to, item_filter });
+    fn connect_immediate_filtered(
+        &mut self,
+        from: NodeId,
+        to: NodeId,
+        item_filter: Option<ItemTypeId>,
+    ) -> EdgeId {
+        let edge_id = self.edges.insert(EdgeData {
+            from,
+            to,
+            item_filter,
+        });
 
         if let Some(adj) = self.adjacency.get_mut(from) {
             adj.outputs.push(edge_id);
@@ -543,11 +552,7 @@ impl ProductionGraph {
             .filter_map(|(eid, edge)| {
                 let from_pos = position.get(edge.from).copied().unwrap_or(0);
                 let to_pos = position.get(edge.to).copied().unwrap_or(0);
-                if to_pos <= from_pos {
-                    Some(eid)
-                } else {
-                    None
-                }
+                if to_pos <= from_pos { Some(eid) } else { None }
             })
             .collect();
 
@@ -627,9 +632,8 @@ mod tests {
         let mut graph = ProductionGraph::new();
         let building = BuildingTypeId(0);
 
-        let pending: Vec<PendingNodeId> = (0..count)
-            .map(|_| graph.queue_add_node(building))
-            .collect();
+        let pending: Vec<PendingNodeId> =
+            (0..count).map(|_| graph.queue_add_node(building)).collect();
 
         let result = graph.apply_mutations();
 
@@ -997,5 +1001,177 @@ mod tests {
         let order = graph.topological_order().unwrap();
         assert_eq!(order, &[a, b]);
         assert_eq!(graph.node_count(), 2);
+    }
+
+    // -----------------------------------------------------------------------
+    // Error path tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn graph_error_display_messages() {
+        let (_graph, nodes) = make_graph_with_nodes(1);
+        let node = nodes[0];
+        let err = GraphError::NodeNotFound(node);
+        let msg = format!("{err}");
+        assert!(msg.contains("node not found"), "got: {msg}");
+
+        let mut sm: slotmap::SlotMap<EdgeId, ()> = slotmap::SlotMap::with_key();
+        let edge = sm.insert(());
+        let err = GraphError::EdgeNotFound(edge);
+        let msg = format!("{err}");
+        assert!(msg.contains("edge not found"), "got: {msg}");
+
+        let err = GraphError::CycleDetected;
+        let msg = format!("{err}");
+        assert!(msg.contains("cycle"), "got: {msg}");
+    }
+
+    #[test]
+    fn empty_graph_topological_order() {
+        let mut graph = ProductionGraph::new();
+        let order = graph.topological_order().unwrap();
+        assert!(order.is_empty());
+    }
+
+    #[test]
+    fn topological_order_with_feedback_acyclic() {
+        let (mut graph, nodes) = make_graph_with_nodes(3);
+        let [a, b, c] = [nodes[0], nodes[1], nodes[2]];
+        graph.queue_connect(a, b);
+        graph.queue_connect(b, c);
+        graph.apply_mutations();
+
+        let (order, back_edges) = graph.topological_order_with_feedback();
+        assert_eq!(order.len(), 3);
+        assert!(
+            back_edges.is_empty(),
+            "acyclic graph should have no back edges"
+        );
+    }
+
+    #[test]
+    fn topological_order_with_feedback_cyclic() {
+        let (mut graph, nodes) = make_graph_with_nodes(3);
+        let [a, b, c] = [nodes[0], nodes[1], nodes[2]];
+        graph.queue_connect(a, b);
+        graph.queue_connect(b, c);
+        graph.queue_connect(c, a);
+        graph.apply_mutations();
+
+        let (order, back_edges) = graph.topological_order_with_feedback();
+        assert_eq!(
+            order.len(),
+            3,
+            "all nodes should appear in order even with cycle"
+        );
+        assert!(
+            !back_edges.is_empty(),
+            "cyclic graph should have back edges"
+        );
+    }
+
+    #[test]
+    fn connect_filtered_edge_preserves_filter() {
+        let (mut graph, nodes) = make_graph_with_nodes(2);
+        let [a, b] = [nodes[0], nodes[1]];
+        let iron = ItemTypeId(0);
+        let pe = graph.queue_connect_filtered(a, b, Some(iron));
+        let result = graph.apply_mutations();
+        let edge = result.resolve_edge(pe).unwrap();
+        let edge_data = graph.get_edge(edge).unwrap();
+        assert_eq!(edge_data.item_filter, Some(iron));
+    }
+
+    #[test]
+    fn connect_filtered_edge_none_filter() {
+        let (mut graph, nodes) = make_graph_with_nodes(2);
+        let [a, b] = [nodes[0], nodes[1]];
+        let pe = graph.queue_connect_filtered(a, b, None);
+        let result = graph.apply_mutations();
+        let edge = result.resolve_edge(pe).unwrap();
+        let edge_data = graph.get_edge(edge).unwrap();
+        assert_eq!(edge_data.item_filter, None);
+    }
+
+    // ===================================================================
+    // Mutation-testing targeted tests
+    // ===================================================================
+
+    // Kill: line 335 "replace += with *=" in queue_connect_filtered
+    // The pending edge counter must increment by 1, not multiply.
+    #[test]
+    fn connect_filtered_increments_pending_edge_id() {
+        let (mut graph, nodes) = make_graph_with_nodes(3);
+        let [a, b, c] = [nodes[0], nodes[1], nodes[2]];
+
+        // Queue two filtered connections; their pending IDs should differ by exactly 1.
+        let pe1 = graph.queue_connect_filtered(a, b, None);
+        let pe2 = graph.queue_connect_filtered(b, c, None);
+        assert_eq!(pe2.0 - pe1.0, 1, "pending edge IDs must be sequential");
+
+        let result = graph.apply_mutations();
+        let e1 = result.resolve_edge(pe1).unwrap();
+        let e2 = result.resolve_edge(pe2).unwrap();
+        assert_ne!(e1, e2);
+    }
+
+    // Kill: line 521 "replace -= with +=" / "/=" in topological_order_with_feedback
+    // and line 531 "replace < with <=" boundary.
+    // The in-degree decrement is critical for Kahn's algorithm correctness.
+    #[test]
+    fn topological_order_with_feedback_respects_in_degree() {
+        // Build: A->B, A->C, B->D, C->D (diamond).
+        // D has in-degree 2. Both B and C must be processed before D appears.
+        let (mut graph, nodes) = make_graph_with_nodes(4);
+        let [a, b, c, d] = [nodes[0], nodes[1], nodes[2], nodes[3]];
+
+        graph.queue_connect(a, b);
+        graph.queue_connect(a, c);
+        graph.queue_connect(b, d);
+        graph.queue_connect(c, d);
+        graph.apply_mutations();
+
+        let (order, back_edges) = graph.topological_order_with_feedback();
+        assert_eq!(order.len(), 4);
+        assert!(back_edges.is_empty(), "acyclic diamond should have no back edges");
+
+        // A must be first (only node with in-degree 0).
+        assert_eq!(order[0], a);
+        // D must be last (in-degree 2, only reachable after B and C).
+        assert_eq!(order[3], d);
+
+        // B and C positions must both be between A and D.
+        let b_pos = order.iter().position(|&n| n == b).unwrap();
+        let c_pos = order.iter().position(|&n| n == c).unwrap();
+        assert!(b_pos > 0 && b_pos < 3);
+        assert!(c_pos > 0 && c_pos < 3);
+    }
+
+    // Kill: line 145 "replace default_dirty -> bool with false"
+    // The default_dirty function returns true so that deserialized graphs
+    // recompute their topo cache.
+    #[test]
+    fn deserialized_graph_recomputes_topo() {
+        let (mut graph, nodes) = make_graph_with_nodes(3);
+        let [a, b, c] = [nodes[0], nodes[1], nodes[2]];
+        graph.queue_connect(a, b);
+        graph.queue_connect(b, c);
+        graph.apply_mutations();
+
+        // Compute topo order first so cache is populated.
+        let order = graph.topological_order().unwrap();
+        assert_eq!(order, &[a, b, c]);
+
+        // Round-trip via serialization.
+        let bytes = bitcode::serialize(&graph).expect("serialize graph");
+        let mut deserialized: ProductionGraph =
+            bitcode::deserialize(&bytes).expect("deserialize graph");
+
+        // The deserialized graph must still produce a correct topo order
+        // (dirty flag should force recomputation).
+        let order = deserialized.topological_order().unwrap();
+        assert_eq!(order.len(), 3);
+        assert_eq!(order[0], a);
+        assert_eq!(order[2], c);
     }
 }

@@ -65,7 +65,10 @@ pub enum BlueprintError {
     #[error("partial commit rolled back ({placed_count} placed): {cause}")]
     PartialCommitRollback { placed_count: usize, cause: String },
     #[error("rollback failed: original={original_error}, rollback={rollback_error}")]
-    RollbackFailed { original_error: String, rollback_error: String },
+    RollbackFailed {
+        original_error: String,
+        rollback_error: String,
+    },
 }
 
 /// Error combining a blueprint commit with a snapshot.
@@ -211,7 +214,10 @@ impl Blueprint {
     /// Remove an entry from the blueprint, clearing its ghost tiles
     /// and any connections referencing it.
     pub fn remove(&mut self, id: BlueprintEntryId) -> Result<(), BlueprintError> {
-        let entry = self.entries.remove(&id).ok_or(BlueprintError::EntryNotFound)?;
+        let entry = self
+            .entries
+            .remove(&id)
+            .ok_or(BlueprintError::EntryNotFound)?;
 
         // Remove ghost tiles.
         let effective = entry.footprint.rotated(entry.rotation);
@@ -221,7 +227,8 @@ impl Blueprint {
 
         // Remove connections that reference this entry.
         let planned_ref = BlueprintNodeRef::Planned(id);
-        self.connections.retain(|c| c.from != planned_ref && c.to != planned_ref);
+        self.connections
+            .retain(|c| c.from != planned_ref && c.to != planned_ref);
 
         Ok(())
     }
@@ -423,7 +430,8 @@ impl Blueprint {
         let mutation_result = engine.graph.apply_mutations();
         let mut node_map = BTreeMap::new();
         for (&id, pending) in &pending_map {
-            let node_id = mutation_result.resolve_node(*pending)
+            let node_id = mutation_result
+                .resolve_node(*pending)
                 .ok_or(BlueprintError::NodeNotFound)?;
             node_map.insert(id, node_id);
         }
@@ -448,7 +456,10 @@ impl Blueprint {
                 }
                 engine.graph.apply_mutations();
                 if rollback_errors.is_empty() {
-                    return Err(BlueprintError::PartialCommitRollback { placed_count, cause });
+                    return Err(BlueprintError::PartialCommitRollback {
+                        placed_count,
+                        cause,
+                    });
                 } else {
                     return Err(BlueprintError::RollbackFailed {
                         original_error: cause,
@@ -474,7 +485,9 @@ impl Blueprint {
                 BlueprintNodeRef::Planned(bp_id) => node_map[&bp_id],
             };
 
-            let pending = engine.graph.queue_connect_filtered(from_node, to_node, conn.item_filter);
+            let pending = engine
+                .graph
+                .queue_connect_filtered(from_node, to_node, conn.item_filter);
             pending_edges.push((pending, conn.transport.clone()));
         }
 
@@ -482,7 +495,8 @@ impl Blueprint {
         let edge_result = engine.graph.apply_mutations();
         let mut edge_ids = Vec::new();
         for (pending, transport) in pending_edges {
-            let edge_id = edge_result.resolve_edge(pending)
+            let edge_id = edge_result
+                .resolve_edge(pending)
                 .ok_or(BlueprintError::NodeNotFound)?;
             engine.set_transport(edge_id, transport);
             edge_ids.push(edge_id);
@@ -567,30 +581,36 @@ impl Blueprint {
         let mut node_to_bp: BTreeMap<u64, BlueprintEntryId> = BTreeMap::new();
 
         for &node_id in &nodes {
-            let Some(position) = spatial.get_position(node_id) else { continue };
-            let Some(footprint) = spatial.get_footprint(node_id) else { continue };
-            let Some(node_data) = engine.graph.get_node(node_id) else { continue };
+            let Some(position) = spatial.get_position(node_id) else {
+                continue;
+            };
+            let Some(footprint) = spatial.get_footprint(node_id) else {
+                continue;
+            };
+            let Some(node_data) = engine.graph.get_node(node_id) else {
+                continue;
+            };
 
-            let processor = engine.get_processor(node_id)
+            let processor = engine
+                .get_processor(node_id)
                 .cloned()
                 .unwrap_or(Processor::Passthrough);
 
-            let input_capacity = engine.get_input_inventory(node_id)
+            let input_capacity = engine
+                .get_input_inventory(node_id)
                 .and_then(|inv| inv.input_slots.first())
                 .map(|s| s.capacity)
                 .unwrap_or(100);
 
-            let output_capacity = engine.get_output_inventory(node_id)
+            let output_capacity = engine
+                .get_output_inventory(node_id)
                 .and_then(|inv| inv.output_slots.first())
                 .map(|s| s.capacity)
                 .unwrap_or(100);
 
             let entry = BlueprintEntry {
                 building_type: node_data.building_type,
-                position: GridPosition::new(
-                    position.x + offset.x,
-                    position.y + offset.y,
-                ),
+                position: GridPosition::new(position.x + offset.x, position.y + offset.y),
                 footprint,
                 rotation: Rotation::None,
                 processor,
@@ -607,18 +627,22 @@ impl Blueprint {
         // Capture connections between captured nodes.
         for &node_id in &nodes {
             let node_key = node_id.data().as_ffi();
-            let Some(&from_bp_id) = node_to_bp.get(&node_key) else { continue };
+            let Some(&from_bp_id) = node_to_bp.get(&node_key) else {
+                continue;
+            };
             for &edge_id in engine.graph.get_outputs(node_id) {
-                let Some(edge_data) = engine.graph.get_edge(edge_id) else { continue };
+                let Some(edge_data) = engine.graph.get_edge(edge_id) else {
+                    continue;
+                };
                 let to_key = edge_data.to.data().as_ffi();
                 if let Some(&to_bp_id) = node_to_bp.get(&to_key) {
-                    let transport = engine.get_transport(edge_id)
-                        .cloned()
-                        .unwrap_or_else(|| Transport::Flow(factorial_core::transport::FlowTransport {
+                    let transport = engine.get_transport(edge_id).cloned().unwrap_or_else(|| {
+                        Transport::Flow(factorial_core::transport::FlowTransport {
                             rate: factorial_core::fixed::Fixed64::from_num(1.0),
                             buffer_capacity: factorial_core::fixed::Fixed64::from_num(100.0),
                             latency: 0,
-                        }));
+                        })
+                    });
                     bp.connections.push(BlueprintConnection {
                         from: BlueprintNodeRef::Planned(from_bp_id),
                         to: BlueprintNodeRef::Planned(to_bp_id),
@@ -635,8 +659,7 @@ impl Blueprint {
     /// Save this blueprint to a JSON file.
     #[cfg(feature = "blueprint-io")]
     pub fn save_to_file(&self, path: impl AsRef<std::path::Path>) -> Result<(), BlueprintIoError> {
-        let json = serde_json::to_string_pretty(self)
-            .map_err(BlueprintIoError::Serialize)?;
+        let json = serde_json::to_string_pretty(self).map_err(BlueprintIoError::Serialize)?;
         std::fs::write(path, json)?;
         Ok(())
     }
@@ -663,8 +686,8 @@ impl Default for Blueprint {
 mod tests {
     use super::*;
     use factorial_core::engine::Engine;
-    use factorial_core::sim::SimulationStrategy;
     use factorial_core::serialize::SnapshotRingBuffer;
+    use factorial_core::sim::SimulationStrategy;
     use factorial_core::test_utils::{building, iron, make_flow_transport, make_source};
 
     fn make_entry(pos: GridPosition) -> BlueprintEntry {
@@ -679,7 +702,10 @@ mod tests {
         }
     }
 
-    fn make_entry_with_footprint(pos: GridPosition, footprint: BuildingFootprint) -> BlueprintEntry {
+    fn make_entry_with_footprint(
+        pos: GridPosition,
+        footprint: BuildingFootprint,
+    ) -> BlueprintEntry {
         BlueprintEntry {
             building_type: building(),
             position: pos,
@@ -691,7 +717,11 @@ mod tests {
         }
     }
 
-    fn make_rotated_entry(pos: GridPosition, footprint: BuildingFootprint, rotation: Rotation) -> BlueprintEntry {
+    fn make_rotated_entry(
+        pos: GridPosition,
+        footprint: BuildingFootprint,
+        rotation: Rotation,
+    ) -> BlueprintEntry {
         BlueprintEntry {
             building_type: building(),
             position: pos,
@@ -717,7 +747,9 @@ mod tests {
         let (_engine, spatial) = setup_engine_and_spatial();
         let mut bp = Blueprint::new();
 
-        let id = bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+        let id = bp
+            .add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
 
         assert_eq!(bp.len(), 1);
         assert!(bp.is_ghost_at(GridPosition::new(0, 0)));
@@ -737,7 +769,9 @@ mod tests {
         let pending = engine.graph.queue_add_node(building());
         let result = engine.graph.apply_mutations();
         let node = result.resolve_node(pending).unwrap();
-        spatial.place(node, GridPosition::new(5, 5), BuildingFootprint::single()).unwrap();
+        spatial
+            .place(node, GridPosition::new(5, 5), BuildingFootprint::single())
+            .unwrap();
 
         // Try to add blueprint entry at same position.
         let result = bp.add(make_entry(GridPosition::new(5, 5)), &spatial);
@@ -752,7 +786,8 @@ mod tests {
         let (_engine, spatial) = setup_engine_and_spatial();
         let mut bp = Blueprint::new();
 
-        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
         let result = bp.add(make_entry(GridPosition::new(0, 0)), &spatial);
         assert!(matches!(result, Err(BlueprintError::OverlapsPlanned)));
     }
@@ -765,13 +800,24 @@ mod tests {
         let (_engine, spatial) = setup_engine_and_spatial();
         let mut bp = Blueprint::new();
 
-        let fp = BuildingFootprint { width: 3, height: 2 };
-        let id = bp.add(make_entry_with_footprint(GridPosition::new(0, 0), fp), &spatial).unwrap();
+        let fp = BuildingFootprint {
+            width: 3,
+            height: 2,
+        };
+        let id = bp
+            .add(
+                make_entry_with_footprint(GridPosition::new(0, 0), fp),
+                &spatial,
+            )
+            .unwrap();
 
         // Should occupy 6 tiles.
         for x in 0..3 {
             for y in 0..2 {
-                assert!(bp.is_ghost_at(GridPosition::new(x, y)), "ghost at ({x},{y})");
+                assert!(
+                    bp.is_ghost_at(GridPosition::new(x, y)),
+                    "ghost at ({x},{y})"
+                );
                 assert_eq!(bp.ghost_at(GridPosition::new(x, y)), Some(id));
             }
         }
@@ -786,7 +832,9 @@ mod tests {
         let (_engine, spatial) = setup_engine_and_spatial();
         let mut bp = Blueprint::new();
 
-        let id = bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+        let id = bp
+            .add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
         bp.remove(id).unwrap();
 
         assert_eq!(bp.len(), 0);
@@ -802,8 +850,12 @@ mod tests {
         let (_engine, spatial) = setup_engine_and_spatial();
         let mut bp = Blueprint::new();
 
-        let id1 = bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
-        let id2 = bp.add(make_entry(GridPosition::new(1, 0)), &spatial).unwrap();
+        let id1 = bp
+            .add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
+        let id2 = bp
+            .add(make_entry(GridPosition::new(1, 0)), &spatial)
+            .unwrap();
         bp.connect(
             BlueprintNodeRef::Planned(id1),
             BlueprintNodeRef::Planned(id2),
@@ -824,8 +876,11 @@ mod tests {
         let (_engine, spatial) = setup_engine_and_spatial();
         let mut bp = Blueprint::new();
 
-        let id = bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
-        bp.move_entry(id, GridPosition::new(5, 5), &spatial).unwrap();
+        let id = bp
+            .add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
+        bp.move_entry(id, GridPosition::new(5, 5), &spatial)
+            .unwrap();
 
         assert!(!bp.is_ghost_at(GridPosition::new(0, 0)));
         assert!(bp.is_ghost_at(GridPosition::new(5, 5)));
@@ -844,9 +899,13 @@ mod tests {
         let pending = engine.graph.queue_add_node(building());
         let result = engine.graph.apply_mutations();
         let node = result.resolve_node(pending).unwrap();
-        spatial.place(node, GridPosition::new(5, 5), BuildingFootprint::single()).unwrap();
+        spatial
+            .place(node, GridPosition::new(5, 5), BuildingFootprint::single())
+            .unwrap();
 
-        let id = bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+        let id = bp
+            .add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
         let result = bp.move_entry(id, GridPosition::new(5, 5), &spatial);
         assert!(matches!(result, Err(BlueprintError::OverlapsExisting)));
 
@@ -862,7 +921,9 @@ mod tests {
         let (mut engine, mut spatial) = setup_engine_and_spatial();
         let mut bp = Blueprint::new();
 
-        let bp_id = bp.add(make_entry(GridPosition::new(3, 3)), &spatial).unwrap();
+        let bp_id = bp
+            .add(make_entry(GridPosition::new(3, 3)), &spatial)
+            .unwrap();
         let result = bp.commit(&mut engine, &mut spatial).unwrap();
 
         assert!(result.node_map.contains_key(&bp_id));
@@ -881,8 +942,12 @@ mod tests {
         let (mut engine, mut spatial) = setup_engine_and_spatial();
         let mut bp = Blueprint::new();
 
-        let id1 = bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
-        let id2 = bp.add(make_entry(GridPosition::new(1, 0)), &spatial).unwrap();
+        let id1 = bp
+            .add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
+        let id2 = bp
+            .add(make_entry(GridPosition::new(1, 0)), &spatial)
+            .unwrap();
         bp.connect(
             BlueprintNodeRef::Planned(id1),
             BlueprintNodeRef::Planned(id2),
@@ -912,10 +977,18 @@ mod tests {
         engine.set_processor(existing_node, make_source(iron(), 1.0));
         engine.set_input_inventory(existing_node, Inventory::new(1, 1, 100));
         engine.set_output_inventory(existing_node, Inventory::new(1, 1, 100));
-        spatial.place(existing_node, GridPosition::new(0, 0), BuildingFootprint::single()).unwrap();
+        spatial
+            .place(
+                existing_node,
+                GridPosition::new(0, 0),
+                BuildingFootprint::single(),
+            )
+            .unwrap();
 
         let mut bp = Blueprint::new();
-        let bp_id = bp.add(make_entry(GridPosition::new(1, 0)), &spatial).unwrap();
+        let bp_id = bp
+            .add(make_entry(GridPosition::new(1, 0)), &spatial)
+            .unwrap();
         bp.connect(
             BlueprintNodeRef::Existing(existing_node),
             BlueprintNodeRef::Planned(bp_id),
@@ -948,13 +1021,16 @@ mod tests {
         let mut bp = Blueprint::new();
 
         // Add blueprint entry at (0,0).
-        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
 
         // Now place a real building at (0,0), making the blueprint stale.
         let pending = engine.graph.queue_add_node(building());
         let result = engine.graph.apply_mutations();
         let node = result.resolve_node(pending).unwrap();
-        spatial.place(node, GridPosition::new(0, 0), BuildingFootprint::single()).unwrap();
+        spatial
+            .place(node, GridPosition::new(0, 0), BuildingFootprint::single())
+            .unwrap();
 
         let errors = bp.validate(&spatial);
         assert_eq!(errors.len(), 1);
@@ -972,16 +1048,31 @@ mod tests {
         let pending = engine.graph.queue_add_node(building());
         let result = engine.graph.apply_mutations();
         let node = result.resolve_node(pending).unwrap();
-        spatial.place(node, GridPosition::new(0, 0), BuildingFootprint::single()).unwrap();
+        spatial
+            .place(node, GridPosition::new(0, 0), BuildingFootprint::single())
+            .unwrap();
 
         // Ghost at (1,0).
-        bp.add(make_entry(GridPosition::new(1, 0)), &spatial).unwrap();
+        bp.add(make_entry(GridPosition::new(1, 0)), &spatial)
+            .unwrap();
 
         // Can't place at (0,0) (real) or (1,0) (ghost).
-        assert!(!bp.can_place(GridPosition::new(0, 0), BuildingFootprint::single(), &spatial));
-        assert!(!bp.can_place(GridPosition::new(1, 0), BuildingFootprint::single(), &spatial));
+        assert!(!bp.can_place(
+            GridPosition::new(0, 0),
+            BuildingFootprint::single(),
+            &spatial
+        ));
+        assert!(!bp.can_place(
+            GridPosition::new(1, 0),
+            BuildingFootprint::single(),
+            &spatial
+        ));
         // Can place at (2,0).
-        assert!(bp.can_place(GridPosition::new(2, 0), BuildingFootprint::single(), &spatial));
+        assert!(bp.can_place(
+            GridPosition::new(2, 0),
+            BuildingFootprint::single(),
+            &spatial
+        ));
     }
 
     // -----------------------------------------------------------------------
@@ -992,8 +1083,12 @@ mod tests {
         let (_engine, spatial) = setup_engine_and_spatial();
         let mut bp = Blueprint::new();
 
-        let id1 = bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
-        let id2 = bp.add(make_entry(GridPosition::new(1, 0)), &spatial).unwrap();
+        let id1 = bp
+            .add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
+        let id2 = bp
+            .add(make_entry(GridPosition::new(1, 0)), &spatial)
+            .unwrap();
         bp.connect(
             BlueprintNodeRef::Planned(id1),
             BlueprintNodeRef::Planned(id2),
@@ -1017,8 +1112,12 @@ mod tests {
         let (_engine, spatial) = setup_engine_and_spatial();
         let mut bp = Blueprint::new();
 
-        let id1 = bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
-        let id2 = bp.add(make_entry(GridPosition::new(1, 0)), &spatial).unwrap();
+        let id1 = bp
+            .add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
+        let id2 = bp
+            .add(make_entry(GridPosition::new(1, 0)), &spatial)
+            .unwrap();
         bp.connect(
             BlueprintNodeRef::Planned(id1),
             BlueprintNodeRef::Planned(id2),
@@ -1045,9 +1144,12 @@ mod tests {
         let (mut engine, mut spatial) = setup_engine_and_spatial();
         let mut ring = SnapshotRingBuffer::new(5);
         let mut bp = Blueprint::new();
-        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
 
-        let (_result, _data) = bp.commit_with_snapshot(&mut engine, &mut spatial, &mut ring, None).unwrap();
+        let (_result, _data) = bp
+            .commit_with_snapshot(&mut engine, &mut spatial, &mut ring, None)
+            .unwrap();
         assert_eq!(ring.len(), 1);
     }
 
@@ -1056,8 +1158,12 @@ mod tests {
         let (mut engine, mut spatial) = setup_engine_and_spatial();
         let mut ring = SnapshotRingBuffer::new(5);
         let mut bp = Blueprint::new();
-        let bp_id1 = bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
-        let bp_id2 = bp.add(make_entry(GridPosition::new(1, 0)), &spatial).unwrap();
+        let bp_id1 = bp
+            .add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
+        let bp_id2 = bp
+            .add(make_entry(GridPosition::new(1, 0)), &spatial)
+            .unwrap();
         bp.connect(
             BlueprintNodeRef::Planned(bp_id1),
             BlueprintNodeRef::Planned(bp_id2),
@@ -1065,7 +1171,9 @@ mod tests {
             None,
         );
 
-        let (result, _data) = bp.commit_with_snapshot(&mut engine, &mut spatial, &mut ring, None).unwrap();
+        let (result, _data) = bp
+            .commit_with_snapshot(&mut engine, &mut spatial, &mut ring, None)
+            .unwrap();
         assert_eq!(result.node_map.len(), 2);
         assert_eq!(result.edge_ids.len(), 1);
     }
@@ -1076,12 +1184,18 @@ mod tests {
         let mut ring = SnapshotRingBuffer::new(5);
 
         let mut bp1 = Blueprint::new();
-        bp1.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
-        let (_result1, data1) = bp1.commit_with_snapshot(&mut engine, &mut spatial, &mut ring, None).unwrap();
+        bp1.add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
+        let (_result1, data1) = bp1
+            .commit_with_snapshot(&mut engine, &mut spatial, &mut ring, None)
+            .unwrap();
 
         let mut bp2 = Blueprint::new();
-        bp2.add(make_entry(GridPosition::new(1, 0)), &spatial).unwrap();
-        let (_result2, _data2) = bp2.commit_with_snapshot(&mut engine, &mut spatial, &mut ring, Some(&data1)).unwrap();
+        bp2.add(make_entry(GridPosition::new(1, 0)), &spatial)
+            .unwrap();
+        let (_result2, _data2) = bp2
+            .commit_with_snapshot(&mut engine, &mut spatial, &mut ring, Some(&data1))
+            .unwrap();
 
         assert_eq!(ring.len(), 2);
     }
@@ -1100,9 +1214,12 @@ mod tests {
         let (mut engine, mut spatial) = setup_engine_and_spatial();
         let mut ring = SnapshotRingBuffer::new(5);
         let mut bp = Blueprint::new();
-        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
 
-        let (_result, data) = bp.commit_with_snapshot(&mut engine, &mut spatial, &mut ring, None).unwrap();
+        let (_result, data) = bp
+            .commit_with_snapshot(&mut engine, &mut spatial, &mut ring, None)
+            .unwrap();
         let restored = Engine::deserialize_partitioned(&data);
         assert!(restored.is_ok());
     }
@@ -1112,9 +1229,12 @@ mod tests {
         let (mut engine, mut spatial) = setup_engine_and_spatial();
         let mut ring = SnapshotRingBuffer::new(5);
         let mut bp = Blueprint::new();
-        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
 
-        let (_result, data) = bp.commit_with_snapshot(&mut engine, &mut spatial, &mut ring, None).unwrap();
+        let (_result, data) = bp
+            .commit_with_snapshot(&mut engine, &mut spatial, &mut ring, None)
+            .unwrap();
         let restored = Engine::deserialize_partitioned(&data).unwrap();
         assert_eq!(restored.node_count(), engine.node_count());
     }
@@ -1125,7 +1245,10 @@ mod tests {
 
     #[test]
     fn rotation_footprint_swap_90() {
-        let fp = BuildingFootprint { width: 3, height: 2 };
+        let fp = BuildingFootprint {
+            width: 3,
+            height: 2,
+        };
         let rotated = fp.rotated(Rotation::Cw90);
         assert_eq!(rotated.width, 2);
         assert_eq!(rotated.height, 3);
@@ -1133,7 +1256,10 @@ mod tests {
 
     #[test]
     fn rotation_footprint_180_unchanged() {
-        let fp = BuildingFootprint { width: 3, height: 2 };
+        let fp = BuildingFootprint {
+            width: 3,
+            height: 2,
+        };
         let rotated = fp.rotated(Rotation::Cw180);
         assert_eq!(rotated.width, 3);
         assert_eq!(rotated.height, 2);
@@ -1145,11 +1271,16 @@ mod tests {
         let mut bp = Blueprint::new();
 
         // 3w x 1h rotated 90 becomes 1w x 3h
-        let fp = BuildingFootprint { width: 3, height: 1 };
-        let id = bp.add(
-            make_rotated_entry(GridPosition::new(0, 0), fp, Rotation::Cw90),
-            &spatial,
-        ).unwrap();
+        let fp = BuildingFootprint {
+            width: 3,
+            height: 1,
+        };
+        let id = bp
+            .add(
+                make_rotated_entry(GridPosition::new(0, 0), fp, Rotation::Cw90),
+                &spatial,
+            )
+            .unwrap();
 
         // Should occupy (0,0), (0,1), (0,2) — 1 wide, 3 tall.
         assert!(bp.is_ghost_at(GridPosition::new(0, 0)));
@@ -1166,13 +1297,19 @@ mod tests {
         let (_engine, spatial) = setup_engine_and_spatial();
         let mut bp = Blueprint::new();
 
-        let fp = BuildingFootprint { width: 3, height: 1 };
-        let id = bp.add(
-            make_rotated_entry(GridPosition::new(0, 0), fp, Rotation::Cw90),
-            &spatial,
-        ).unwrap();
+        let fp = BuildingFootprint {
+            width: 3,
+            height: 1,
+        };
+        let id = bp
+            .add(
+                make_rotated_entry(GridPosition::new(0, 0), fp, Rotation::Cw90),
+                &spatial,
+            )
+            .unwrap();
 
-        bp.move_entry(id, GridPosition::new(5, 5), &spatial).unwrap();
+        bp.move_entry(id, GridPosition::new(5, 5), &spatial)
+            .unwrap();
         // Old tiles should be gone.
         assert!(!bp.is_ghost_at(GridPosition::new(0, 0)));
         // New tiles should use rotated footprint (1w x 3h).
@@ -1187,11 +1324,16 @@ mod tests {
         let (mut engine, mut spatial) = setup_engine_and_spatial();
         let mut bp = Blueprint::new();
 
-        let fp = BuildingFootprint { width: 3, height: 1 };
-        let bp_id = bp.add(
-            make_rotated_entry(GridPosition::new(0, 0), fp, Rotation::Cw90),
-            &spatial,
-        ).unwrap();
+        let fp = BuildingFootprint {
+            width: 3,
+            height: 1,
+        };
+        let bp_id = bp
+            .add(
+                make_rotated_entry(GridPosition::new(0, 0), fp, Rotation::Cw90),
+                &spatial,
+            )
+            .unwrap();
 
         let result = bp.commit(&mut engine, &mut spatial).unwrap();
         let node_id = result.node_map[&bp_id];
@@ -1217,11 +1359,15 @@ mod tests {
         engine.set_processor(node, make_source(iron(), 1.0));
         engine.set_input_inventory(node, Inventory::new(1, 1, 100));
         engine.set_output_inventory(node, Inventory::new(1, 1, 100));
-        spatial.place(node, GridPosition::new(5, 5), BuildingFootprint::single()).unwrap();
+        spatial
+            .place(node, GridPosition::new(5, 5), BuildingFootprint::single())
+            .unwrap();
 
         let bp = Blueprint::capture_region(
-            &engine, &spatial,
-            GridPosition::new(0, 0), GridPosition::new(10, 10),
+            &engine,
+            &spatial,
+            GridPosition::new(0, 0),
+            GridPosition::new(10, 10),
             GridPosition::new(0, 0),
         );
         assert_eq!(bp.len(), 1);
@@ -1244,8 +1390,12 @@ mod tests {
         engine.set_input_inventory(n2, Inventory::new(1, 1, 100));
         engine.set_output_inventory(n2, Inventory::new(1, 1, 100));
 
-        spatial.place(n1, GridPosition::new(0, 0), BuildingFootprint::single()).unwrap();
-        spatial.place(n2, GridPosition::new(1, 0), BuildingFootprint::single()).unwrap();
+        spatial
+            .place(n1, GridPosition::new(0, 0), BuildingFootprint::single())
+            .unwrap();
+        spatial
+            .place(n2, GridPosition::new(1, 0), BuildingFootprint::single())
+            .unwrap();
 
         let pe = engine.graph.queue_connect(n1, n2);
         let er = engine.graph.apply_mutations();
@@ -1253,8 +1403,10 @@ mod tests {
         engine.set_transport(eid, make_flow_transport(1.0));
 
         let bp = Blueprint::capture_region(
-            &engine, &spatial,
-            GridPosition::new(0, 0), GridPosition::new(5, 5),
+            &engine,
+            &spatial,
+            GridPosition::new(0, 0),
+            GridPosition::new(5, 5),
             GridPosition::new(0, 0),
         );
         assert_eq!(bp.len(), 2);
@@ -1278,12 +1430,18 @@ mod tests {
         engine.set_input_inventory(n2, Inventory::new(1, 1, 100));
         engine.set_output_inventory(n2, Inventory::new(1, 1, 100));
 
-        spatial.place(n1, GridPosition::new(0, 0), BuildingFootprint::single()).unwrap();
-        spatial.place(n2, GridPosition::new(100, 100), BuildingFootprint::single()).unwrap();
+        spatial
+            .place(n1, GridPosition::new(0, 0), BuildingFootprint::single())
+            .unwrap();
+        spatial
+            .place(n2, GridPosition::new(100, 100), BuildingFootprint::single())
+            .unwrap();
 
         let bp = Blueprint::capture_region(
-            &engine, &spatial,
-            GridPosition::new(0, 0), GridPosition::new(5, 5),
+            &engine,
+            &spatial,
+            GridPosition::new(0, 0),
+            GridPosition::new(5, 5),
             GridPosition::new(0, 0),
         );
         assert_eq!(bp.len(), 1);
@@ -1306,8 +1464,12 @@ mod tests {
         engine.set_input_inventory(n2, Inventory::new(1, 1, 100));
         engine.set_output_inventory(n2, Inventory::new(1, 1, 100));
 
-        spatial.place(n1, GridPosition::new(0, 0), BuildingFootprint::single()).unwrap();
-        spatial.place(n2, GridPosition::new(100, 100), BuildingFootprint::single()).unwrap();
+        spatial
+            .place(n1, GridPosition::new(0, 0), BuildingFootprint::single())
+            .unwrap();
+        spatial
+            .place(n2, GridPosition::new(100, 100), BuildingFootprint::single())
+            .unwrap();
 
         let pe = engine.graph.queue_connect(n1, n2);
         let er = engine.graph.apply_mutations();
@@ -1316,8 +1478,10 @@ mod tests {
 
         // Only capture the first node — connection should NOT be included.
         let bp = Blueprint::capture_region(
-            &engine, &spatial,
-            GridPosition::new(0, 0), GridPosition::new(5, 5),
+            &engine,
+            &spatial,
+            GridPosition::new(0, 0),
+            GridPosition::new(5, 5),
             GridPosition::new(0, 0),
         );
         assert_eq!(bp.len(), 1);
@@ -1341,8 +1505,12 @@ mod tests {
         engine.set_input_inventory(n2, Inventory::new(1, 1, 100));
         engine.set_output_inventory(n2, Inventory::new(1, 1, 100));
 
-        spatial.place(n1, GridPosition::new(0, 0), BuildingFootprint::single()).unwrap();
-        spatial.place(n2, GridPosition::new(1, 0), BuildingFootprint::single()).unwrap();
+        spatial
+            .place(n1, GridPosition::new(0, 0), BuildingFootprint::single())
+            .unwrap();
+        spatial
+            .place(n2, GridPosition::new(1, 0), BuildingFootprint::single())
+            .unwrap();
 
         let pe = engine.graph.queue_connect(n1, n2);
         let er = engine.graph.apply_mutations();
@@ -1351,8 +1519,10 @@ mod tests {
 
         // Capture and commit at an offset.
         let bp = Blueprint::capture_region(
-            &engine, &spatial,
-            GridPosition::new(0, 0), GridPosition::new(5, 5),
+            &engine,
+            &spatial,
+            GridPosition::new(0, 0),
+            GridPosition::new(5, 5),
             GridPosition::new(10, 10),
         );
         assert_eq!(bp.len(), 2);
@@ -1374,7 +1544,8 @@ mod tests {
     fn estimate_cost_single_entry() {
         let (_engine, spatial) = setup_engine_and_spatial();
         let mut bp = Blueprint::new();
-        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
 
         let costs = bp.estimate_cost(|_bt| vec![(iron(), 5)]);
         assert_eq!(costs.get(&iron()), Some(&5));
@@ -1384,11 +1555,15 @@ mod tests {
     fn estimate_cost_multiple_sums() {
         let (_engine, spatial) = setup_engine_and_spatial();
         let mut bp = Blueprint::new();
-        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
-        bp.add(make_entry(GridPosition::new(1, 0)), &spatial).unwrap();
-        bp.add(make_entry(GridPosition::new(2, 0)), &spatial).unwrap();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
+        bp.add(make_entry(GridPosition::new(1, 0)), &spatial)
+            .unwrap();
+        bp.add(make_entry(GridPosition::new(2, 0)), &spatial)
+            .unwrap();
 
-        let costs = bp.estimate_cost(|_bt| vec![(iron(), 3), (factorial_core::test_utils::copper(), 2)]);
+        let costs =
+            bp.estimate_cost(|_bt| vec![(iron(), 3), (factorial_core::test_utils::copper(), 2)]);
         assert_eq!(costs.get(&iron()), Some(&9));
         assert_eq!(costs.get(&factorial_core::test_utils::copper()), Some(&6));
     }
@@ -1412,19 +1587,24 @@ mod tests {
         let pending = engine.graph.queue_add_node(building());
         let result = engine.graph.apply_mutations();
         let node = result.resolve_node(pending).unwrap();
-        spatial.place(node, GridPosition::new(1, 0), BuildingFootprint::single()).unwrap();
+        spatial
+            .place(node, GridPosition::new(1, 0), BuildingFootprint::single())
+            .unwrap();
 
         // Create a blueprint with 2 entries. Second one overlaps.
         // We need to bypass the initial validation, so place the building AFTER
         // creating the blueprint but before commit.
         let mut bp = Blueprint::new();
-        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
 
         // Now place a real building at the second position to cause spatial.place to fail.
         let pending2 = engine.graph.queue_add_node(building());
         let result2 = engine.graph.apply_mutations();
         let node2 = result2.resolve_node(pending2).unwrap();
-        spatial.place(node2, GridPosition::new(0, 0), BuildingFootprint::single()).unwrap();
+        spatial
+            .place(node2, GridPosition::new(0, 0), BuildingFootprint::single())
+            .unwrap();
 
         // Commit should fail with overlap.
         let result = bp.commit(&mut engine, &mut spatial);
@@ -1436,7 +1616,8 @@ mod tests {
         // This test verifies that after a failed commit, spatial tiles are freed.
         let (mut engine, mut spatial) = setup_engine_and_spatial();
         let mut bp = Blueprint::new();
-        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
 
         // No overlap here, so commit succeeds.
         let result = bp.commit(&mut engine, &mut spatial).unwrap();
@@ -1452,7 +1633,8 @@ mod tests {
     fn commit_rollback_cleans_graph() {
         let (mut engine, mut spatial) = setup_engine_and_spatial();
         let mut bp = Blueprint::new();
-        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
 
         let result = bp.commit(&mut engine, &mut spatial).unwrap();
         let committed_node = *result.node_map.values().next().unwrap();
@@ -1467,8 +1649,10 @@ mod tests {
     fn undo_removes_nodes() {
         let (mut engine, mut spatial) = setup_engine_and_spatial();
         let mut bp = Blueprint::new();
-        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
-        bp.add(make_entry(GridPosition::new(1, 0)), &spatial).unwrap();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
+        bp.add(make_entry(GridPosition::new(1, 0)), &spatial)
+            .unwrap();
 
         let result = bp.commit(&mut engine, &mut spatial).unwrap();
         assert_eq!(engine.node_count(), 2);
@@ -1482,8 +1666,12 @@ mod tests {
     fn undo_removes_edges() {
         let (mut engine, mut spatial) = setup_engine_and_spatial();
         let mut bp = Blueprint::new();
-        let id1 = bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
-        let id2 = bp.add(make_entry(GridPosition::new(1, 0)), &spatial).unwrap();
+        let id1 = bp
+            .add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
+        let id2 = bp
+            .add(make_entry(GridPosition::new(1, 0)), &spatial)
+            .unwrap();
         bp.connect(
             BlueprintNodeRef::Planned(id1),
             BlueprintNodeRef::Planned(id2),
@@ -1503,7 +1691,8 @@ mod tests {
     fn undo_removes_spatial() {
         let (mut engine, mut spatial) = setup_engine_and_spatial();
         let mut bp = Blueprint::new();
-        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
 
         let result = bp.commit(&mut engine, &mut spatial).unwrap();
         assert_eq!(spatial.node_count(), 1);
@@ -1517,8 +1706,12 @@ mod tests {
     fn undo_record_matches_commit() {
         let (mut engine, mut spatial) = setup_engine_and_spatial();
         let mut bp = Blueprint::new();
-        let id1 = bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
-        let id2 = bp.add(make_entry(GridPosition::new(1, 0)), &spatial).unwrap();
+        let id1 = bp
+            .add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
+        let id2 = bp
+            .add(make_entry(GridPosition::new(1, 0)), &spatial)
+            .unwrap();
         bp.connect(
             BlueprintNodeRef::Planned(id1),
             BlueprintNodeRef::Planned(id2),
@@ -1536,7 +1729,8 @@ mod tests {
     fn undo_allows_re_placement() {
         let (mut engine, mut spatial) = setup_engine_and_spatial();
         let mut bp = Blueprint::new();
-        bp.add(make_entry(GridPosition::new(0, 0)), &spatial).unwrap();
+        bp.add(make_entry(GridPosition::new(0, 0)), &spatial)
+            .unwrap();
 
         let result = bp.commit(&mut engine, &mut spatial).unwrap();
         let record = result.undo_record();
