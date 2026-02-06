@@ -1468,4 +1468,210 @@ mod tests {
             assert_eq!(d.consumed_total, 10);
         }
     }
+
+    // ===================================================================
+    // Mutation-testing targeted tests
+    // ===================================================================
+
+    // Kill: tick_source line 348 "replace * with /" in effective_rate calculation
+    // The effective rate = base_rate * speed * productivity must use multiplication.
+    #[test]
+    fn source_speed_modifier_doubles_rate() {
+        // 1 iron per tick base, 2x speed => 2 iron per tick.
+        let mut proc = make_source(iron(), 1.0, Depletion::Infinite);
+        let mut state = ProcessorState::Idle;
+        let mods = vec![Modifier {
+            id: ModifierId(0),
+            kind: ModifierKind::Speed(fixed(2.0)),
+            stacking: StackingRule::default(),
+        }];
+
+        let r = proc.tick(&mut state, &mods, &[], 100);
+        assert_eq!(r.produced, vec![(iron(), 2)]);
+    }
+
+    // Kill: tick_source line 373 boundary condition mutations
+    // "replace > with ==" / ">=" / "<" in state transition logic
+    #[test]
+    fn source_zero_rate_goes_idle() {
+        // With rate 0.0, the source should stay Idle (effective_rate == 0).
+        let mut proc = make_source(iron(), 0.0, Depletion::Infinite);
+        let mut state = ProcessorState::Idle;
+        let no_mods: Vec<Modifier> = vec![];
+
+        let r = proc.tick(&mut state, &no_mods, &[], 100);
+        assert!(r.produced.is_empty());
+        assert_eq!(state, ProcessorState::Idle);
+    }
+
+    // Kill: tick_fixed line 409 "replace > with <" and line 410 "replace + with -/+"
+    // Tests that the ceiling calculation for effective_dur works correctly.
+    #[test]
+    fn fixed_recipe_fractional_speed_ceils_duration() {
+        // base_duration=10, speed=3.0 => 10/3 = 3.333... => ceiled to 4 ticks.
+        let mut proc = make_fixed_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 10);
+        let mut state = ProcessorState::Idle;
+        let mods = vec![Modifier {
+            id: ModifierId(0),
+            kind: ModifierKind::Speed(fixed(3.0)),
+            stacking: StackingRule::default(),
+        }];
+
+        // Tick 1: consume inputs, start working (progress=1).
+        let r = proc.tick(&mut state, &mods, &[(iron(), 10)], 10);
+        assert_eq!(r.consumed, vec![(iron(), 1)]);
+        assert!(matches!(state, ProcessorState::Working { progress: 1 }));
+
+        // Ticks 2, 3: still working.
+        for _ in 2..4 {
+            let r = proc.tick(&mut state, &mods, &[(iron(), 9)], 10);
+            assert!(r.produced.is_empty());
+        }
+
+        // Tick 4: should produce (ceil(10/3) = 4).
+        let r = proc.tick(&mut state, &mods, &[(iron(), 9)], 10);
+        assert_eq!(r.produced, vec![(gear(), 1)]);
+        assert_eq!(state, ProcessorState::Idle);
+    }
+
+    // Kill: tick_fixed line 422 "replace < with <=" in output space check
+    #[test]
+    fn fixed_recipe_exact_output_space_starts() {
+        // Recipe outputs 1 gear. If output_space == 1, it should start (not stall).
+        let mut proc = make_fixed_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 2);
+        let mut state = ProcessorState::Idle;
+        let no_mods: Vec<Modifier> = vec![];
+
+        let r = proc.tick(&mut state, &no_mods, &[(iron(), 10)], 1);
+        assert_eq!(r.consumed, vec![(iron(), 1)]);
+        assert!(matches!(state, ProcessorState::Working { .. }));
+    }
+
+    // Kill: tick_demand line 607 "replace == with !=" and line 611 "> with >="
+    // Tests the demand processor's consumed_total tracking.
+    #[test]
+    fn demand_consumed_total_tracks_correctly() {
+        let mut proc = make_demand(iron(), 3.0);
+        let mut state = ProcessorState::Idle;
+        let no_mods: Vec<Modifier> = vec![];
+
+        // Tick 1: consume 3 iron.
+        proc.tick(&mut state, &no_mods, &[(iron(), 10)], 0);
+        if let Processor::Demand(d) = &proc {
+            assert_eq!(d.consumed_total, 3);
+        }
+
+        // Tick 2: consume 3 more.
+        proc.tick(&mut state, &no_mods, &[(iron(), 10)], 0);
+        if let Processor::Demand(d) = &proc {
+            assert_eq!(d.consumed_total, 6);
+        }
+    }
+
+    // Kill: tick_demand line 616 "replace - with +" in accumulated subtraction
+    #[test]
+    fn demand_accumulated_decreases_after_consume() {
+        // Rate 2.5 per tick. After tick 1: accumulated 2.5, consume 2 => accumulated 0.5.
+        // After tick 2: accumulated 0.5 + 2.5 = 3.0, consume 3 => accumulated 0.0.
+        let mut proc = make_demand(iron(), 2.5);
+        let mut state = ProcessorState::Idle;
+        let no_mods: Vec<Modifier> = vec![];
+
+        // Tick 1: consume 2.
+        let r = proc.tick(&mut state, &no_mods, &[(iron(), 10)], 0);
+        assert_eq!(r.consumed, vec![(iron(), 2)]);
+
+        // Tick 2: consume 3 (0.5 leftover + 2.5 new = 3.0).
+        let r = proc.tick(&mut state, &no_mods, &[(iron(), 10)], 0);
+        assert_eq!(r.consumed, vec![(iron(), 3)]);
+    }
+
+    // Kill: tick_passthrough line 708 "replace -= with +=" in space_remaining
+    #[test]
+    fn passthrough_multiple_types_respects_total_space() {
+        let mut proc = Processor::Passthrough;
+        let mut state = ProcessorState::Idle;
+        let no_mods: Vec<Modifier> = vec![];
+
+        // 5 iron + 5 copper, but only 7 output space.
+        // Should consume 5 iron (space left: 2), then 2 copper.
+        let r = proc.tick(&mut state, &no_mods, &[(iron(), 5), (copper(), 5)], 7);
+        assert_eq!(r.consumed, vec![(iron(), 5), (copper(), 2)]);
+        assert_eq!(r.produced, vec![(iron(), 5), (copper(), 2)]);
+    }
+
+    // Kill: tick_passthrough line 705 "replace > with >=" boundary
+    #[test]
+    fn passthrough_zero_qty_items_not_emitted() {
+        let mut proc = Processor::Passthrough;
+        let mut state = ProcessorState::Idle;
+        let no_mods: Vec<Modifier> = vec![];
+
+        // Provide items with 0 quantity -- should not appear in consumed/produced.
+        let r = proc.tick(&mut state, &no_mods, &[(iron(), 0)], 100);
+        assert!(r.consumed.is_empty());
+        assert!(r.produced.is_empty());
+    }
+
+    // Kill: tick_demand line 622 "replace == with !=" and "replace && with ||"
+    #[test]
+    fn demand_stalls_when_items_wanted_but_none_consumed() {
+        // Multi-type demand with accepted_types, but provide items not in the list.
+        let mut proc = Processor::Demand(DemandProcessor {
+            input_type: iron(),
+            base_rate: fixed(2.0),
+            accumulated: fixed(0.0),
+            consumed_total: 0,
+            accepted_types: Some(vec![iron()]),
+        });
+        let mut state = ProcessorState::Idle;
+        let no_mods: Vec<Modifier> = vec![];
+
+        // Provide only copper (not in accepted_types), with rate 2.0 (whole > 0).
+        let r = proc.tick(&mut state, &no_mods, &[(copper(), 10)], 0);
+        assert!(r.consumed.is_empty());
+        assert_eq!(
+            state,
+            ProcessorState::Stalled {
+                reason: StallReason::MissingInputs
+            }
+        );
+    }
+
+    // Kill: Capped stacking "replace > with >=" boundary
+    #[test]
+    fn stacking_capped_equal_values() {
+        // Two speed mods both 1.5 with Capped => should still be 1.5.
+        let mods = vec![
+            Modifier {
+                id: ModifierId(0),
+                kind: ModifierKind::Speed(fixed(1.5)),
+                stacking: StackingRule::Capped,
+            },
+            Modifier {
+                id: ModifierId(1),
+                kind: ModifierKind::Speed(fixed(1.5)),
+                stacking: StackingRule::Capped,
+            },
+        ];
+        let resolved = ResolvedModifiers::resolve(&mods);
+        assert_eq!(resolved.speed, fixed(1.5));
+    }
+
+    // Kill: property_processor line 536/568 "replace != with =="
+    #[test]
+    fn property_processor_respects_output_space() {
+        // Property processor with limited output space.
+        let mut proc = Processor::Property(PropertyProcessor {
+            input_type: iron(),
+            output_type: gear(),
+            transform: PropertyTransform::Set(PropertyId(0), fixed(100.0)),
+        });
+        let mut state = ProcessorState::Idle;
+
+        // 10 available but only 3 output space.
+        let r = proc.tick(&mut state, &[], &[(iron(), 10)], 3);
+        assert_eq!(r.consumed, vec![(iron(), 3)]);
+        assert_eq!(r.produced, vec![(gear(), 3)]);
+    }
 }

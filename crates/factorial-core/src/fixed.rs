@@ -108,4 +108,24 @@ mod tests {
         let t: Ticks = 60;
         assert_eq!(t, 60u64);
     }
+
+    // Mutation-testing targeted: kill "replace checked_mul_64 -> None"
+    #[test]
+    fn checked_mul_64_happy_path() {
+        let a = f64_to_fixed64(3.0);
+        let b = f64_to_fixed64(4.0);
+        let result = checked_mul_64(a, b);
+        assert!(result.is_some());
+        assert_eq!(fixed64_to_f64(result.unwrap()), 12.0);
+    }
+
+    // Mutation-testing targeted: kill "replace checked_div_64 -> None"
+    #[test]
+    fn checked_div_64_happy_path() {
+        let a = f64_to_fixed64(12.0);
+        let b = f64_to_fixed64(4.0);
+        let result = checked_div_64(a, b);
+        assert!(result.is_some());
+        assert_eq!(fixed64_to_f64(result.unwrap()), 3.0);
+    }
 }
