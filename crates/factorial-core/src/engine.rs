@@ -151,6 +151,7 @@ impl Engine {
         self.processor_states
             .insert(node, ProcessorState::default());
         self.dirty.mark_node(node);
+        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_PROCESSORS);
     }
 
     /// Replace a node's processor and reset its processing state to Idle.
@@ -164,18 +165,21 @@ impl Engine {
     pub fn set_input_inventory(&mut self, node: NodeId, inventory: Inventory) {
         self.inputs.insert(node, inventory);
         self.dirty.mark_node(node);
+        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_INVENTORIES);
     }
 
     /// Set the output inventory for a node.
     pub fn set_output_inventory(&mut self, node: NodeId, inventory: Inventory) {
         self.outputs.insert(node, inventory);
         self.dirty.mark_node(node);
+        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_INVENTORIES);
     }
 
     /// Set the modifiers for a node.
     pub fn set_modifiers(&mut self, node: NodeId, mods: Vec<Modifier>) {
         self.modifiers.insert(node, mods);
         self.dirty.mark_node(node);
+        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_PROCESSORS);
     }
 
     /// Get the processor state for a node (read-only).
@@ -256,6 +260,7 @@ impl Engine {
         self.transports.insert(edge, transport);
         self.transport_states.insert(edge, state);
         self.dirty.mark_edge(edge);
+        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_TRANSPORTS);
     }
 
     /// Get the transport state for an edge (read-only).
@@ -298,6 +303,7 @@ impl Engine {
             entry.or_default();
         }
         self.dirty.mark_node(node);
+        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_JUNCTIONS);
     }
 
     /// Remove a junction from a node.
@@ -305,6 +311,7 @@ impl Engine {
         self.junctions.remove(node);
         self.junction_states.remove(node);
         self.dirty.mark_node(node);
+        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_JUNCTIONS);
     }
 
     /// Get the junction configuration for a node.
@@ -557,6 +564,7 @@ impl Engine {
             let mutation_result = self.graph.apply_mutations();
             result.mutation_results.push(mutation_result);
             self.dirty.mark_graph();
+            self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_GRAPH);
         }
     }
 
@@ -1214,6 +1222,10 @@ impl Engine {
     // -----------------------------------------------------------------------
 
     fn phase_bookkeeping(&mut self) {
+        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_GRAPH);
+        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_PROCESSORS);
+        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_INVENTORIES);
+        self.dirty.mark_partition(crate::dirty::DirtyTracker::PARTITION_TRANSPORTS);
         self.sim_state.tick += 1;
         self.last_state_hash = self.compute_state_hash();
     }

@@ -12,12 +12,40 @@ pub struct DirtyTracker {
     dirty_edges: BTreeSet<EdgeId>,
     graph_dirty: bool,
     any_dirty: bool,
+    dirty_partitions: [bool; 5],
 }
 
 impl DirtyTracker {
+    pub const PARTITION_GRAPH: usize = 0;
+    pub const PARTITION_PROCESSORS: usize = 1;
+    pub const PARTITION_INVENTORIES: usize = 2;
+    pub const PARTITION_TRANSPORTS: usize = 3;
+    pub const PARTITION_JUNCTIONS: usize = 4;
+    pub const PARTITION_COUNT: usize = 5;
+
     /// Create a new tracker with nothing dirty.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn mark_partition(&mut self, idx: usize) {
+        self.dirty_partitions[idx] = true;
+    }
+
+    pub fn dirty_partitions(&self) -> &[bool; 5] {
+        &self.dirty_partitions
+    }
+
+    pub fn any_partition_dirty(&self) -> bool {
+        self.dirty_partitions.iter().any(|&d| d)
+    }
+
+    pub fn clear_partitions(&mut self) {
+        self.dirty_partitions = [false; 5];
+    }
+
+    pub fn mark_all_partitions(&mut self) {
+        self.dirty_partitions = [true; 5];
     }
 
     /// Mark a single node as dirty (e.g. processor or inventory changed).
@@ -227,5 +255,65 @@ mod tests {
         let should_serialize = tracker.is_dirty();
 
         assert!(!should_serialize, "clean tracker should skip serialization");
+    }
+
+    #[test]
+    fn partition_initially_clean() {
+        let tracker = DirtyTracker::new();
+        assert!(!tracker.any_partition_dirty());
+        for &p in tracker.dirty_partitions() {
+            assert!(!p);
+        }
+    }
+
+    #[test]
+    fn mark_partition_makes_dirty() {
+        let mut tracker = DirtyTracker::new();
+        tracker.mark_partition(DirtyTracker::PARTITION_PROCESSORS);
+        assert!(tracker.any_partition_dirty());
+        assert!(tracker.dirty_partitions()[DirtyTracker::PARTITION_PROCESSORS]);
+        assert!(!tracker.dirty_partitions()[DirtyTracker::PARTITION_GRAPH]);
+    }
+
+    #[test]
+    fn mark_clean_does_not_clear_partitions() {
+        let mut tracker = DirtyTracker::new();
+        tracker.mark_partition(DirtyTracker::PARTITION_INVENTORIES);
+        tracker.mark_node(make_node_ids(1).1[0]);
+        tracker.mark_clean();
+        // Per-tick dirty state is cleared...
+        assert!(!tracker.is_dirty());
+        // ...but partitions survive.
+        assert!(tracker.dirty_partitions()[DirtyTracker::PARTITION_INVENTORIES]);
+    }
+
+    #[test]
+    fn clear_partitions_resets_all() {
+        let mut tracker = DirtyTracker::new();
+        tracker.mark_all_partitions();
+        assert!(tracker.any_partition_dirty());
+        tracker.clear_partitions();
+        assert!(!tracker.any_partition_dirty());
+    }
+
+    #[test]
+    fn mark_all_partitions_sets_all() {
+        let mut tracker = DirtyTracker::new();
+        tracker.mark_all_partitions();
+        for &p in tracker.dirty_partitions() {
+            assert!(p);
+        }
+    }
+
+    #[test]
+    fn partition_accumulates_across_mark_clean_cycles() {
+        let mut tracker = DirtyTracker::new();
+        tracker.mark_partition(DirtyTracker::PARTITION_GRAPH);
+        tracker.mark_clean();
+        tracker.mark_partition(DirtyTracker::PARTITION_TRANSPORTS);
+        tracker.mark_clean();
+        // Both partitions should still be dirty.
+        assert!(tracker.dirty_partitions()[DirtyTracker::PARTITION_GRAPH]);
+        assert!(tracker.dirty_partitions()[DirtyTracker::PARTITION_TRANSPORTS]);
     }
 }
