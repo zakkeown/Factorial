@@ -1723,4 +1723,125 @@ mod tests {
         assert_eq!(Engine::detect_snapshot_format(&partitioned), super::SnapshotFormat::Partitioned);
         assert_eq!(Engine::detect_snapshot_format(&[0u8; 4]), super::SnapshotFormat::Unknown);
     }
+
+    // -----------------------------------------------------------------------
+    // Deserialization error path tests (coverage gap-fill)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn deserialize_empty_data_returns_decode_error() {
+        let result = Engine::deserialize(&[]);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(DeserializeError::Decode(_))));
+    }
+
+    #[test]
+    fn deserialize_truncated_data_returns_decode_error() {
+        let engine = make_test_engine();
+        let mut data = engine.serialize().unwrap();
+        // Truncate to just a few bytes
+        data.truncate(4);
+        let result = Engine::deserialize(&data);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(DeserializeError::Decode(_))));
+    }
+
+    #[test]
+    fn deserialize_corrupted_data_returns_error() {
+        let engine = make_test_engine();
+        let mut data = engine.serialize().unwrap();
+        // Corrupt the middle of the data
+        let mid = data.len() / 2;
+        for i in mid..mid + 10 {
+            if i < data.len() {
+                data[i] = 0xFF;
+            }
+        }
+        let result = Engine::deserialize(&data);
+        // Should be some kind of error (Decode or InvalidMagic depending on what we corrupted)
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn partitioned_deserialize_empty_data_returns_decode_error() {
+        let result = Engine::deserialize_partitioned(&[]);
+        assert!(result.is_err());
+        assert!(matches!(result, Err(DeserializeError::Decode(_))));
+    }
+
+    #[test]
+    fn partitioned_deserialize_corrupted_partition_returns_error() {
+        let engine = make_test_engine();
+        let data = engine.serialize_partitioned().unwrap();
+        // Decode, corrupt a partition, re-encode
+        let mut snap: super::PartitionedSnapshot = bitcode::deserialize(&data).unwrap();
+        snap.partitions[2] = vec![0xFF; 5]; // Corrupt inventory partition
+        let corrupted = bitcode::serialize(&snap).unwrap();
+        let result = Engine::deserialize_partitioned(&corrupted);
+        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(DeserializeError::PartitionDecode { index: 2, .. })
+        ));
+    }
+
+    #[test]
+    fn partitioned_future_version_returns_error() {
+        let engine = make_test_engine();
+        let data = engine.serialize_partitioned().unwrap();
+        let mut snap: super::PartitionedSnapshot = bitcode::deserialize(&data).unwrap();
+        snap.header.version = FORMAT_VERSION + 10;
+        let modified = bitcode::serialize(&snap).unwrap();
+        let result = Engine::deserialize_partitioned(&modified);
+        assert!(matches!(result, Err(DeserializeError::FutureVersion(_))));
+    }
+
+    #[test]
+    fn partitioned_old_version_returns_unsupported() {
+        let engine = make_test_engine();
+        let data = engine.serialize_partitioned().unwrap();
+        let mut snap: super::PartitionedSnapshot = bitcode::deserialize(&data).unwrap();
+        snap.header.version = 0;
+        let modified = bitcode::serialize(&snap).unwrap();
+        let result = Engine::deserialize_partitioned(&modified);
+        assert!(matches!(
+            result,
+            Err(DeserializeError::UnsupportedVersion(0))
+        ));
+    }
+
+    #[test]
+    fn partitioned_bad_magic_returns_invalid_magic() {
+        let engine = make_test_engine();
+        let data = engine.serialize_partitioned().unwrap();
+        let mut snap: super::PartitionedSnapshot = bitcode::deserialize(&data).unwrap();
+        snap.header.magic = 0xDEADBEEF;
+        let modified = bitcode::serialize(&snap).unwrap();
+        let result = Engine::deserialize_partitioned(&modified);
+        assert!(matches!(
+            result,
+            Err(DeserializeError::InvalidMagic(0xDEADBEEF))
+        ));
+    }
+
+    #[test]
+    fn read_snapshot_header_from_valid_data() {
+        let engine = make_test_engine();
+        let data = engine.serialize().unwrap();
+        let header = super::read_snapshot_header(&data).unwrap();
+        assert_eq!(header.magic, SNAPSHOT_MAGIC);
+        assert_eq!(header.version, FORMAT_VERSION);
+        assert_eq!(header.tick, engine.sim_state.tick);
+    }
+
+    #[test]
+    fn read_snapshot_header_from_garbage_returns_decode_error() {
+        let result = super::read_snapshot_header(&[0u8; 5]);
+        assert!(matches!(result, Err(DeserializeError::Decode(_))));
+    }
+
+    #[test]
+    fn detect_format_single_byte_returns_unknown() {
+        assert_eq!(Engine::detect_snapshot_format(&[0x42]), super::SnapshotFormat::Unknown);
+    }
 }
