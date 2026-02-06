@@ -331,6 +331,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "factorial-integration-tests"
+version = "0.1.0"
+dependencies = [
+ "factorial-core",
+ "factorial-power",
+ "factorial-stats",
+ "factorial-tech-tree",
+ "fixed",
+]
+
+[[package]]
 name = "factorial-power"
 version = "0.1.0"
 dependencies = [

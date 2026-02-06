@@ -1,0 +1,12 @@
+[package]
+name = "factorial-integration-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dev-dependencies]
+factorial-core = { path = "../factorial-core", features = ["test-utils"] }
+factorial-power = { path = "../factorial-power" }
+factorial-tech-tree = { path = "../factorial-tech-tree" }
+factorial-stats = { path = "../factorial-stats" }
+fixed = { workspace = true }
