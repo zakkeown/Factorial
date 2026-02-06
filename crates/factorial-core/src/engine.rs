@@ -4032,4 +4032,114 @@ mod tests {
         };
         assert!(engine.snapshot_transport(fake_id).is_none());
     }
+
+    // -----------------------------------------------------------------------
+    // Edge case tests: delta mode, pause/resume, empty graph, accessors
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn delta_mode_advance_runs_correct_steps() {
+        let mut engine = Engine::new(SimulationStrategy::Delta { fixed_timestep: 3 });
+        let iron = test_utils::iron();
+        let _node = test_utils::add_node(&mut engine, test_utils::make_source(iron, 1.0), 100, 100);
+
+        // Advance by 10 time units with timestep of 3 = 3 full steps (9 consumed, 1 leftover)
+        let result = engine.advance(10);
+        assert_eq!(result.steps_run, 3);
+        assert_eq!(engine.sim_state.tick, 3);
+        assert_eq!(engine.sim_state.accumulator, 1); // remainder
+    }
+
+    #[test]
+    fn delta_mode_advance_zero_dt() {
+        let mut engine = Engine::new(SimulationStrategy::Delta { fixed_timestep: 5 });
+        let result = engine.advance(0);
+        assert_eq!(result.steps_run, 0);
+        assert_eq!(engine.sim_state.tick, 0);
+    }
+
+    #[test]
+    fn delta_mode_accumulates_across_calls() {
+        let mut engine = Engine::new(SimulationStrategy::Delta { fixed_timestep: 3 });
+        // Advance by 2 -- not enough for a step
+        let result = engine.advance(2);
+        assert_eq!(result.steps_run, 0);
+        assert_eq!(engine.sim_state.accumulator, 2);
+
+        // Advance by 2 more -- now we have 4, enough for one step of 3
+        let result = engine.advance(2);
+        assert_eq!(result.steps_run, 1);
+        assert_eq!(engine.sim_state.tick, 1);
+        assert_eq!(engine.sim_state.accumulator, 1);
+    }
+
+    #[test]
+    fn tick_mode_advance_runs_one_step() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        // In tick mode, advance(dt) ignores dt and always runs exactly one step
+        let result = engine.advance(5);
+        assert_eq!(result.steps_run, 1);
+        assert_eq!(engine.sim_state.tick, 1);
+    }
+
+    #[test]
+    fn step_empty_engine() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        // Should not panic on an engine with no nodes
+        let result = engine.step();
+        assert_eq!(result.steps_run, 1);
+        assert_eq!(engine.sim_state.tick, 1);
+    }
+
+    #[test]
+    fn pause_prevents_stepping() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        engine.pause();
+        assert!(engine.is_paused());
+
+        let result = engine.step();
+        assert_eq!(result.steps_run, 0);
+        assert_eq!(engine.sim_state.tick, 0);
+    }
+
+    #[test]
+    fn unpause_resumes_stepping() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        engine.pause();
+        engine.step();
+        assert_eq!(engine.sim_state.tick, 0);
+
+        engine.resume();
+        engine.step();
+        assert_eq!(engine.sim_state.tick, 1);
+    }
+
+    #[test]
+    fn node_and_edge_count_accessors() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        assert_eq!(engine.node_count(), 0);
+        assert_eq!(engine.edge_count(), 0);
+
+        let iron = test_utils::iron();
+        let n1 = test_utils::add_node(&mut engine, test_utils::make_source(iron, 1.0), 50, 50);
+        let n2 = test_utils::add_node(&mut engine, test_utils::make_source(iron, 1.0), 50, 50);
+        assert_eq!(engine.node_count(), 2);
+
+        test_utils::connect(&mut engine, n1, n2, test_utils::make_flow_transport(1.0));
+        assert_eq!(engine.edge_count(), 1);
+    }
+
+    #[test]
+    fn get_inventories_for_nonexistent_node() {
+        let engine = Engine::new(SimulationStrategy::Tick);
+        let fake_id = {
+            let mut sm: slotmap::SlotMap<NodeId, ()> = slotmap::SlotMap::with_key();
+            let id = sm.insert(());
+            sm.remove(id);
+            id
+        };
+        assert!(engine.get_input_inventory(fake_id).is_none());
+        assert!(engine.get_output_inventory(fake_id).is_none());
+        assert!(engine.get_processor_state(fake_id).is_none());
+    }
 }
