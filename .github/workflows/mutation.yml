@@ -1,0 +1,41 @@
+name: Mutation Testing
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Weekly on Monday at 6 AM UTC
+  workflow_dispatch: # Manual trigger
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  mutants:
+    name: Mutation Testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-mutants
+        run: cargo install cargo-mutants
+      - name: Run mutation testing (factorial-core)
+        run: |
+          cargo mutants --package factorial-core \
+            --timeout 120 \
+            --output mutants-core 2>&1 | tee mutants-core-summary.txt
+      - name: Run mutation testing (factorial-ffi)
+        run: |
+          cargo mutants --package factorial-ffi \
+            --timeout 120 \
+            --output mutants-ffi 2>&1 | tee mutants-ffi-summary.txt
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-results
+          path: |
+            mutants-core/
+            mutants-ffi/
+            mutants-core-summary.txt
+            mutants-ffi-summary.txt
