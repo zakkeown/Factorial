@@ -670,21 +670,21 @@ fn tech_tree_progression() {
         engine.step();
 
         // Every 10 ticks, contribute items to current research.
-        if tick % 10 == 0 {
-            if let Some(tech_id) = current_research {
-                // Contribute a generous amount — the factory should be producing enough.
-                let contributions: Vec<(ItemTypeId, u32)> = match tech_id {
-                    t if t == basic_smelting_id => vec![(iron_ingot(), 5)],
-                    t if t == workshops_id => vec![(iron_gear_b(), 5), (copper_wire(), 5)],
-                    t if t == machine_shops_id => vec![(motor(), 5)],
-                    t if t == industrial_id => vec![(steel(), 5), (circuit_board(), 5)],
-                    t if t == manufacturing_id => vec![(computer(), 5)],
-                    _ => vec![],
-                };
+        if tick % 10 == 0
+            && let Some(tech_id) = current_research
+        {
+            // Contribute a generous amount — the factory should be producing enough.
+            let contributions: Vec<(ItemTypeId, u32)> = match tech_id {
+                t if t == basic_smelting_id => vec![(iron_ingot(), 5)],
+                t if t == workshops_id => vec![(iron_gear_b(), 5), (copper_wire(), 5)],
+                t if t == machine_shops_id => vec![(motor(), 5)],
+                t if t == industrial_id => vec![(steel(), 5), (circuit_board(), 5)],
+                t if t == manufacturing_id => vec![(computer(), 5)],
+                _ => vec![],
+            };
 
-                // Ignore errors (might not have enough yet).
-                let _ = tech_tree.contribute_items(tech_id, &contributions, tick);
-            }
+            // Ignore errors (might not have enough yet).
+            let _ = tech_tree.contribute_items(tech_id, &contributions, tick);
         }
 
         // Check for completed research.
