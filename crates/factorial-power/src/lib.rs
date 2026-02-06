@@ -28,6 +28,25 @@ use serde::{Deserialize, Serialize};
 pub struct PowerNetworkId(pub u32);
 
 // ---------------------------------------------------------------------------
+// Power priority
+// ---------------------------------------------------------------------------
+
+/// Priority level for power consumers. Higher-priority consumers receive
+/// power before lower-priority ones during allocation.
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+pub enum PowerPriority {
+    /// Lowest priority — receives power last.
+    Low,
+    /// Default priority.
+    #[default]
+    Medium,
+    /// Highest priority — receives power first (e.g. life support).
+    High,
+}
+
+// ---------------------------------------------------------------------------
 // Per-node power specs
 // ---------------------------------------------------------------------------
 
@@ -179,6 +198,11 @@ pub struct PowerModule {
     pub consumers: BTreeMap<NodeId, PowerConsumer>,
     /// Per-node storage specs (mutable charge state).
     pub storage: BTreeMap<NodeId, PowerStorage>,
+    /// Per-consumer priority, keyed by (network, node).
+    pub consumer_priorities: BTreeMap<(PowerNetworkId, NodeId), PowerPriority>,
+    /// Per-consumer satisfaction ratio, keyed by (network, node).
+    /// Updated each tick during priority-based power allocation.
+    pub consumer_satisfaction: BTreeMap<(PowerNetworkId, NodeId), Fixed64>,
     /// Next network ID to assign.
     next_network_id: u32,
 }
@@ -197,6 +221,8 @@ impl PowerModule {
             producers: BTreeMap::new(),
             consumers: BTreeMap::new(),
             storage: BTreeMap::new(),
+            consumer_priorities: BTreeMap::new(),
+            consumer_satisfaction: BTreeMap::new(),
             next_network_id: 0,
         }
     }
@@ -237,14 +263,26 @@ impl PowerModule {
         }
     }
 
-    /// Register a consumer node and add it to a network.
+    /// Register a consumer node and add it to a network with default (Medium) priority.
     pub fn add_consumer(
         &mut self,
         network_id: PowerNetworkId,
         node: NodeId,
         consumer: PowerConsumer,
     ) {
+        self.add_consumer_with_priority(network_id, node, consumer, PowerPriority::default());
+    }
+
+    /// Register a consumer node and add it to a network with a specific priority.
+    pub fn add_consumer_with_priority(
+        &mut self,
+        network_id: PowerNetworkId,
+        node: NodeId,
+        consumer: PowerConsumer,
+        priority: PowerPriority,
+    ) {
         self.consumers.insert(node, consumer);
+        self.consumer_priorities.insert((network_id, node), priority);
         if let Some(network) = self.networks.get_mut(&network_id) {
             network.add_consumer(node);
         }
@@ -268,6 +306,9 @@ impl PowerModule {
         self.producers.remove(&node);
         self.consumers.remove(&node);
         self.storage.remove(&node);
+        // Clean up priority and per-consumer satisfaction entries for this node.
+        self.consumer_priorities.retain(|&(_, n), _| n != node);
+        self.consumer_satisfaction.retain(|&(_, n), _| n != node);
         for network in self.networks.values_mut() {
             network.remove_node(node);
         }
@@ -278,16 +319,42 @@ impl PowerModule {
         self.networks.get(&network_id).map(|n| n.satisfaction)
     }
 
+    /// Get the per-consumer satisfaction ratio for a specific consumer on a
+    /// specific network. Returns `None` if the consumer is not registered.
+    pub fn get_consumer_satisfaction(
+        &self,
+        network: PowerNetworkId,
+        node: NodeId,
+    ) -> Option<Fixed64> {
+        self.consumer_satisfaction.get(&(network, node)).copied()
+    }
+
+    /// Update the capacity (watts output) of an existing producer on a network.
+    ///
+    /// This allows dynamic power production changes (e.g. a steam turbine whose
+    /// output varies with input temperature). The new capacity takes effect on
+    /// the next `tick()`.
+    pub fn set_producer_capacity(
+        &mut self,
+        _network: PowerNetworkId,
+        node: NodeId,
+        capacity: Fixed64,
+    ) {
+        if let Some(producer) = self.producers.get_mut(&node) {
+            producer.capacity = capacity;
+        }
+    }
+
     /// Advance all power networks by one tick.
     ///
     /// For each network:
     /// 1. Sum total production from all producer nodes.
     /// 2. Sum total demand from all consumer nodes.
     /// 3. If production >= demand: satisfaction = 1.0, charge storage with excess.
-    /// 4. If production < demand: discharge storage to cover deficit.
-    ///    - If storage covers it: satisfaction = 1.0.
-    ///    - Otherwise: satisfaction = (production + discharged) / demand.
-    /// 5. Emit brownout/restored events on state transitions.
+    /// 4. If production < demand: discharge storage to cover deficit, then
+    ///    allocate available power to consumers in priority order (High first).
+    /// 5. Store per-consumer satisfaction ratios.
+    /// 6. Emit brownout/restored events on state transitions.
     ///
     /// Returns a list of events emitted this tick.
     pub fn tick(&mut self, current_tick: Ticks) -> Vec<PowerEvent> {
@@ -318,6 +385,25 @@ impl PowerModule {
                 .map(|c| c.demand)
                 .fold(zero, |acc, val| acc + val);
 
+            // Collect consumer node IDs with their demands and priorities,
+            // sorted by priority (High first, then Medium, then Low).
+            let mut consumer_entries: Vec<(NodeId, Fixed64, PowerPriority)> = network
+                .consumers
+                .iter()
+                .filter_map(|&node_id| {
+                    let demand = self.consumers.get(&node_id)?.demand;
+                    let priority = self
+                        .consumer_priorities
+                        .get(&(net_id, node_id))
+                        .copied()
+                        .unwrap_or_default();
+                    Some((node_id, demand, priority))
+                })
+                .collect();
+            // Sort by priority descending (High > Medium > Low).
+            // Ord for PowerPriority: Low < Medium < High, so reverse.
+            consumer_entries.sort_by(|a, b| b.2.cmp(&a.2));
+
             // Collect storage node IDs for this network so we can mutate storage.
             let storage_nodes: Vec<NodeId> = network.storage.clone();
             let was_brownout = network.was_brownout;
@@ -343,6 +429,7 @@ impl PowerModule {
                         }
                     }
                 }
+                // No consumers, nothing to record.
             } else if total_production >= total_demand {
                 // Surplus: fully satisfied, charge storage with excess.
                 satisfaction = one;
@@ -360,8 +447,12 @@ impl PowerModule {
                         }
                     }
                 }
+                // All consumers fully satisfied.
+                for &(node_id, _, _) in &consumer_entries {
+                    self.consumer_satisfaction.insert((net_id, node_id), one);
+                }
             } else {
-                // Deficit: try to cover with storage.
+                // Deficit: try to cover with storage first.
                 let mut remaining_deficit = total_demand - total_production;
                 for node_id in &storage_nodes {
                     if remaining_deficit <= zero {
@@ -376,18 +467,55 @@ impl PowerModule {
                     }
                 }
 
+                // Total available power = total_demand - remaining_deficit
+                let total_available = total_demand - remaining_deficit;
+
                 if remaining_deficit <= zero {
-                    // Storage covered the deficit.
+                    // Storage covered the deficit — all consumers satisfied.
                     satisfaction = one;
+                    for &(node_id, _, _) in &consumer_entries {
+                        self.consumer_satisfaction.insert((net_id, node_id), one);
+                    }
                 } else {
-                    // Partial satisfaction.
-                    let supplied = total_demand - remaining_deficit;
-                    // satisfaction = supplied / total_demand, clamped to [0, 1].
-                    satisfaction = if total_demand > zero {
-                        let ratio = supplied / total_demand;
-                        if ratio > one { one } else if ratio < zero { zero } else { ratio }
-                    } else {
+                    // Priority-based allocation: distribute available power
+                    // to consumers in priority order.
+                    let mut power_remaining = total_available;
+                    let mut total_satisfied_demand = zero;
+
+                    for &(node_id, demand, _) in &consumer_entries {
+                        if power_remaining >= demand {
+                            // Fully satisfy this consumer.
+                            self.consumer_satisfaction.insert((net_id, node_id), one);
+                            power_remaining -= demand;
+                            total_satisfied_demand += demand;
+                        } else if power_remaining > zero {
+                            // Partially satisfy this consumer.
+                            let ratio = power_remaining / demand;
+                            let clamped = if ratio > one {
+                                one
+                            } else if ratio < zero {
+                                zero
+                            } else {
+                                ratio
+                            };
+                            self.consumer_satisfaction
+                                .insert((net_id, node_id), clamped);
+                            total_satisfied_demand += power_remaining;
+                            power_remaining = zero;
+                        } else {
+                            // No power left for this consumer.
+                            self.consumer_satisfaction.insert((net_id, node_id), zero);
+                        }
+                    }
+
+                    // Overall network satisfaction = total supplied / total demand.
+                    let ratio = total_satisfied_demand / total_demand;
+                    satisfaction = if ratio > one {
                         one
+                    } else if ratio < zero {
+                        zero
+                    } else {
+                        ratio
                     };
                     deficit = remaining_deficit;
                 }
@@ -399,7 +527,7 @@ impl PowerModule {
 
             let is_brownout = satisfaction < one;
 
-            // Step 5: Emit events on state transitions only.
+            // Step 6: Emit events on state transitions only.
             if is_brownout && !was_brownout {
                 network.was_brownout = true;
                 events.push(PowerEvent::PowerGridBrownout {
@@ -1197,6 +1325,7 @@ mod tests {
         assert_serde::<PowerConsumer>();
         assert_serde::<PowerStorage>();
         assert_serde::<PowerNetworkId>();
+        assert_serde::<PowerPriority>();
     }
 
     // -----------------------------------------------------------------------
@@ -1252,5 +1381,67 @@ mod tests {
         let sat2 = run();
         assert_eq!(sat1, sat2, "satisfaction should be deterministic");
         assert_eq!(sat1, fixed(0.5), "50W / 100W = 0.5");
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 30: Power priority — high priority gets power first
+    // -----------------------------------------------------------------------
+    #[test]
+    fn power_priority_high_gets_power_first() {
+        let mut module = PowerModule::new();
+        let net = module.create_network();
+        let nodes = make_node_ids(3);
+
+        // 100W producer, two 100W consumers: one High, one Low.
+        module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(100.0) });
+        module.add_consumer_with_priority(
+            net,
+            nodes[1],
+            PowerConsumer { demand: fixed(100.0) },
+            PowerPriority::High,
+        );
+        module.add_consumer_with_priority(
+            net,
+            nodes[2],
+            PowerConsumer { demand: fixed(100.0) },
+            PowerPriority::Low,
+        );
+
+        module.tick(1);
+
+        // High priority consumer should get 100% satisfaction.
+        let high_sat = module.get_consumer_satisfaction(net, nodes[1]).unwrap();
+        assert_eq!(high_sat, fixed(1.0), "high priority consumer should be fully satisfied");
+
+        // Low priority consumer should get 0% satisfaction.
+        let low_sat = module.get_consumer_satisfaction(net, nodes[2]).unwrap();
+        assert_eq!(low_sat, fixed(0.0), "low priority consumer should get no power");
+
+        // Overall network satisfaction = 100 / 200 = 0.5.
+        assert_eq!(module.satisfaction(net).unwrap(), fixed(0.5));
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 31: Dynamic power production updates each tick
+    // -----------------------------------------------------------------------
+    #[test]
+    fn dynamic_power_production_updates_each_tick() {
+        let mut module = PowerModule::new();
+        let net = module.create_network();
+        let nodes = make_node_ids(2);
+
+        // 100W producer, 200W consumer. Satisfaction = 0.5.
+        module.add_producer(net, nodes[0], PowerProducer { capacity: fixed(100.0) });
+        module.add_consumer(net, nodes[1], PowerConsumer { demand: fixed(200.0) });
+
+        module.tick(1);
+        assert_eq!(module.satisfaction(net).unwrap(), fixed(0.5));
+
+        // Double producer capacity via set_producer_capacity.
+        module.set_producer_capacity(net, nodes[0], fixed(200.0));
+
+        module.tick(2);
+        // Now 200W / 200W = 1.0.
+        assert_eq!(module.satisfaction(net).unwrap(), fixed(1.0));
     }
 }
