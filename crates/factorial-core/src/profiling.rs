@@ -94,6 +94,7 @@ mod tests {
             base_rate: Fixed64::from_num(rate),
             depletion: Depletion::Infinite,
             accumulated: Fixed64::from_num(0.0),
+            initial_properties: None,
         })
     }
 

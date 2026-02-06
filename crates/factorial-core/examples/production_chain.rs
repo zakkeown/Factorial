@@ -44,6 +44,7 @@ fn main() {
             base_rate: Fixed64::from_num(3),
             depletion: Depletion::Infinite,
             accumulated: Fixed64::from_num(0),
+            initial_properties: None,
         }),
     );
 

@@ -1219,6 +1219,7 @@ pub unsafe extern "C" fn factorial_set_source(
             base_rate: Fixed64::from_bits(rate),
             depletion: Depletion::Infinite,
             accumulated: Fixed64::from_num(0),
+            initial_properties: None,
         });
         engine.inner.set_processor(nid, processor);
         FactorialResult::Ok
@@ -1592,6 +1593,7 @@ mod tests {
             base_rate: Fixed64::from_num(rate),
             depletion: Depletion::Infinite,
             accumulated: Fixed64::from_num(0.0),
+            initial_properties: None,
         })
     }
 

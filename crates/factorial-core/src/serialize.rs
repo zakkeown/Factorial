@@ -412,6 +412,15 @@ impl Engine {
                         h.write_u32(src.output_type.0);
                         h.write_fixed64(src.base_rate);
                         h.write_fixed64(src.accumulated);
+                        if let Some(ref props) = src.initial_properties {
+                            h.write_u32(props.len() as u32);
+                            for (k, v) in props {
+                                h.write_u32(k.0 as u32);
+                                h.write_fixed64(*v);
+                            }
+                        } else {
+                            h.write_u32(0);
+                        }
                     }
                     Processor::Fixed(recipe) => {
                         h.write_u32(1);
@@ -478,6 +487,11 @@ impl Engine {
                     for stack in &slot.stacks {
                         h.write_u32(stack.item_type.0);
                         h.write_u32(stack.quantity);
+                        h.write_u32(stack.properties.len() as u32);
+                        for (k, v) in &stack.properties {
+                            h.write_u32(k.0 as u32);
+                            h.write_fixed64(*v);
+                        }
                     }
                 }
             }
@@ -486,6 +500,11 @@ impl Engine {
                     for stack in &slot.stacks {
                         h.write_u32(stack.item_type.0);
                         h.write_u32(stack.quantity);
+                        h.write_u32(stack.properties.len() as u32);
+                        for (k, v) in &stack.properties {
+                            h.write_u32(k.0 as u32);
+                            h.write_fixed64(*v);
+                        }
                     }
                 }
             }
@@ -610,6 +629,7 @@ mod tests {
             base_rate: Fixed64::from_num(rate),
             depletion: Depletion::Infinite,
             accumulated: Fixed64::from_num(0.0),
+            initial_properties: None,
         })
     }
 

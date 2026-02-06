@@ -63,6 +63,9 @@ pub struct SourceProcessor {
     /// Fractional production accumulator. When this reaches >= 1 whole items
     /// are emitted. Allows sub-1 base_rate to work correctly.
     pub accumulated: Fixed64,
+    /// Optional initial properties to stamp onto every produced item stack.
+    #[serde(default)]
+    pub initial_properties: Option<std::collections::BTreeMap<PropertyId, Fixed64>>,
 }
 
 /// Consumes a fixed set of inputs and produces a fixed set of outputs after a
@@ -189,6 +192,10 @@ pub struct ProcessorResult {
     pub produced: Vec<(ItemTypeId, u32)>,
     /// Whether the processor changed state (Idle->Working, Working->Idle, etc.).
     pub state_changed: bool,
+    /// Property transform to apply to produced items (from PropertyProcessor).
+    pub property_transform: Option<PropertyTransform>,
+    /// Initial properties to stamp onto produced items (from SourceProcessor).
+    pub initial_properties: Option<std::collections::BTreeMap<PropertyId, Fixed64>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -353,6 +360,7 @@ fn tick_source(
     if whole > 0 {
         src.accumulated -= Fixed64::from_num(whole);
         result.produced.push((src.output_type, whole));
+        result.initial_properties = src.initial_properties.clone();
     }
 
     // Update state.
@@ -541,11 +549,12 @@ fn tick_property(
         return result;
     }
 
-    // Process one item per tick. The actual property transformation would be
-    // applied by the caller using `prop.transform`; we just signal consume/produce.
+    // Process items per tick. The actual property transformation is applied
+    // by the engine using `result.property_transform`.
     let qty = available.min(output_space);
     result.consumed.push((prop.input_type, qty));
     result.produced.push((prop.output_type, qty));
+    result.property_transform = Some(prop.transform.clone());
 
     let new_state = ProcessorState::Working { progress: 0 };
     if *state != new_state {
@@ -761,6 +770,7 @@ mod tests {
             base_rate: fixed(rate),
             depletion,
             accumulated: fixed(0.0),
+            initial_properties: None,
         })
     }
 

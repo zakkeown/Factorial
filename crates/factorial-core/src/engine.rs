@@ -216,6 +216,25 @@ impl Engine {
         })
     }
 
+    /// Get the property value for items of a given type in a node's input inventory.
+    pub fn get_input_item_property(
+        &self,
+        node: NodeId,
+        item_type: ItemTypeId,
+        property: PropertyId,
+    ) -> Option<Fixed64> {
+        self.inputs.get(node).and_then(|inv| {
+            for slot in &inv.input_slots {
+                for stack in &slot.stacks {
+                    if stack.item_type == item_type {
+                        return stack.get_property(property);
+                    }
+                }
+            }
+            None
+        })
+    }
+
     // -----------------------------------------------------------------------
     // Edge management
     // -----------------------------------------------------------------------
@@ -733,6 +752,22 @@ impl Engine {
             .and_then(|e| e.item_filter)
             .unwrap_or_else(|| self.determine_item_type_for_edge(source));
 
+        // Capture properties from source output BEFORE removing items.
+        let captured_properties = if result.items_moved > 0 {
+            self.outputs.get(source).and_then(|output_inv| {
+                for slot in &output_inv.output_slots {
+                    if let Some(props) = slot.get_properties(item_type) {
+                        if !props.is_empty() {
+                            return Some(props.clone());
+                        }
+                    }
+                }
+                None
+            })
+        } else {
+            None
+        };
+
         // Remove moved items from source output (type-filtered).
         if result.items_moved > 0
             && let Some(output_inv) = self.outputs.get_mut(source)
@@ -747,7 +782,7 @@ impl Engine {
             }
         }
 
-        // Deliver items to destination input.
+        // Deliver items to destination input (with properties if present).
         if result.items_delivered > 0
             && let Some(input_inv) = self.inputs.get_mut(dest)
         {
@@ -756,8 +791,13 @@ impl Engine {
                 if remaining == 0 {
                     break;
                 }
-                let overflow = slot.add(item_type, remaining);
-                remaining = overflow;
+                if let Some(ref props) = captured_properties {
+                    let overflow = slot.add_with_properties(item_type, remaining, props);
+                    remaining = overflow;
+                } else {
+                    let overflow = slot.add(item_type, remaining);
+                    remaining = overflow;
+                }
             }
         }
     }
@@ -901,11 +941,18 @@ impl Engine {
             }
         }
 
+        // Capture input item properties BEFORE consuming (for PropertyProcessor transforms).
+        let input_properties = if processor_result.property_transform.is_some() {
+            self.capture_input_properties(node_id)
+        } else {
+            None
+        };
+
         // Apply consumed items to input inventory.
         self.apply_consumed(node_id, &processor_result);
 
-        // Apply produced items to output inventory.
-        self.apply_produced(node_id, &processor_result);
+        // Apply produced items to output inventory (with property propagation).
+        self.apply_produced(node_id, &processor_result, input_properties.as_ref());
     }
 
     /// Gather available input items from a node's input inventory.
@@ -942,6 +989,25 @@ impl Engine {
             .sum()
     }
 
+    /// Capture input item properties for a node (used before consuming for PropertyProcessor).
+    fn capture_input_properties(&self, node_id: NodeId) -> Option<std::collections::BTreeMap<PropertyId, Fixed64>> {
+        // Get the input type from the PropertyProcessor.
+        let input_type = match self.processors.get(node_id)? {
+            Processor::Property(prop) => prop.input_type,
+            _ => return None,
+        };
+        // Read properties from the input inventory.
+        let input_inv = self.inputs.get(node_id)?;
+        for slot in &input_inv.input_slots {
+            if let Some(props) = slot.get_properties(input_type) {
+                if !props.is_empty() {
+                    return Some(props.clone());
+                }
+            }
+        }
+        None
+    }
+
     /// Remove consumed items from a node's input inventory.
     fn apply_consumed(&mut self, node_id: NodeId, result: &ProcessorResult) {
         let Some(input_inv) = self.inputs.get_mut(node_id) else {
@@ -959,8 +1025,40 @@ impl Engine {
         }
     }
 
-    /// Add produced items to a node's output inventory.
-    fn apply_produced(&mut self, node_id: NodeId, result: &ProcessorResult) {
+    /// Add produced items to a node's output inventory, applying property propagation.
+    fn apply_produced(
+        &mut self,
+        node_id: NodeId,
+        result: &ProcessorResult,
+        input_properties: Option<&std::collections::BTreeMap<PropertyId, Fixed64>>,
+    ) {
+        use crate::processor::PropertyTransform;
+
+        // Compute output properties from sources:
+        // 1. SourceProcessor: initial_properties
+        // 2. PropertyProcessor: apply transform to captured input properties
+        let output_properties = if let Some(ref initial) = result.initial_properties {
+            Some(initial.clone())
+        } else if let Some(ref transform) = result.property_transform {
+            let mut props = input_properties.cloned().unwrap_or_default();
+            match transform {
+                PropertyTransform::Set(id, val) => {
+                    props.insert(*id, *val);
+                }
+                PropertyTransform::Add(id, delta) => {
+                    let current = props.get(id).copied().unwrap_or(Fixed64::from_num(0));
+                    props.insert(*id, current + *delta);
+                }
+                PropertyTransform::Multiply(id, factor) => {
+                    let current = props.get(id).copied().unwrap_or(Fixed64::from_num(1));
+                    props.insert(*id, current * *factor);
+                }
+            }
+            Some(props)
+        } else {
+            None
+        };
+
         let Some(output_inv) = self.outputs.get_mut(node_id) else {
             return;
         };
@@ -970,8 +1068,13 @@ impl Engine {
                 if qty == 0 {
                     break;
                 }
-                let overflow = slot.add(item_type, qty);
-                qty = overflow;
+                if let Some(ref props) = output_properties {
+                    let overflow = slot.add_with_properties(item_type, qty, props);
+                    qty = overflow;
+                } else {
+                    let overflow = slot.add(item_type, qty);
+                    qty = overflow;
+                }
             }
         }
     }
@@ -1474,6 +1577,7 @@ mod tests {
     use crate::fixed::Fixed64;
     use crate::id::*;
     use crate::processor::*;
+    use crate::test_utils;
     use crate::transport::*;
 
     // -----------------------------------------------------------------------
@@ -1504,6 +1608,7 @@ mod tests {
             base_rate: Fixed64::from_num(rate),
             depletion: Depletion::Infinite,
             accumulated: Fixed64::from_num(0.0),
+            initial_properties: None,
         })
     }
 
@@ -3681,5 +3786,117 @@ mod tests {
 
         // Should have consumed some of both types.
         assert!(remaining_iron < 5 || remaining_copper < 5, "Should consume some items");
+    }
+
+    // -----------------------------------------------------------------------
+    // Property propagation: Source with initial_properties -> PropertyProcessor
+    // -----------------------------------------------------------------------
+    #[test]
+    fn property_propagation_source_to_property_processor() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        let water = ItemTypeId(400);
+        let temp = PropertyId(0);
+
+        // Source: water at rate 2.0 with initial temperature of 70.
+        let mut initial_props = std::collections::BTreeMap::new();
+        initial_props.insert(temp, Fixed64::from_num(70));
+        let source = test_utils::add_node(
+            &mut engine,
+            Processor::Source(SourceProcessor {
+                output_type: water,
+                base_rate: Fixed64::from_num(2.0),
+                depletion: Depletion::Infinite,
+                accumulated: Fixed64::from_num(0.0),
+                initial_properties: Some(initial_props),
+            }),
+            100,
+            100,
+        );
+
+        // PropertyProcessor: Add(temperature, -14) => 70 + (-14) = 56.
+        let cooler = test_utils::add_node(
+            &mut engine,
+            Processor::Property(PropertyProcessor {
+                input_type: water,
+                output_type: water,
+                transform: PropertyTransform::Add(temp, Fixed64::from_num(-14)),
+            }),
+            100,
+            100,
+        );
+
+        test_utils::connect(&mut engine, source, cooler, make_flow_transport(10.0));
+
+        // Sink to pull items through.
+        let sink = test_utils::add_node(
+            &mut engine,
+            Processor::Demand(DemandProcessor {
+                input_type: water,
+                base_rate: Fixed64::from_num(1.0),
+                accumulated: Fixed64::from_num(0.0),
+                consumed_total: 0,
+                accepted_types: None,
+            }),
+            1000,
+            100,
+        );
+        test_utils::connect(&mut engine, cooler, sink, make_flow_transport(10.0));
+
+        // Run enough ticks for items to flow through.
+        for _ in 0..20 {
+            engine.step();
+        }
+
+        // Verify property on cooler output.
+        let cooler_output_temp = engine.get_item_property(cooler, water, temp);
+        assert_eq!(
+            cooler_output_temp,
+            Some(Fixed64::from_num(56)),
+            "temperature should be 70 + (-14) = 56, got {:?}",
+            cooler_output_temp
+        );
+
+        // Verify property at sink input via get_input_item_property.
+        let sink_input_temp = engine.get_input_item_property(sink, water, temp);
+        assert_eq!(
+            sink_input_temp,
+            Some(Fixed64::from_num(56)),
+            "sink input temperature should be 56, got {:?}",
+            sink_input_temp
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Source initial_properties stamped on output
+    // -----------------------------------------------------------------------
+    #[test]
+    fn source_initial_properties_stamped() {
+        let mut engine = Engine::new(SimulationStrategy::Tick);
+        let water = ItemTypeId(400);
+        let temp = PropertyId(0);
+
+        let mut initial_props = std::collections::BTreeMap::new();
+        initial_props.insert(temp, Fixed64::from_num(70));
+        let source = test_utils::add_node(
+            &mut engine,
+            Processor::Source(SourceProcessor {
+                output_type: water,
+                base_rate: Fixed64::from_num(2.0),
+                depletion: Depletion::Infinite,
+                accumulated: Fixed64::from_num(0.0),
+                initial_properties: Some(initial_props),
+            }),
+            100,
+            100,
+        );
+
+        engine.step();
+
+        let output_temp = engine.get_item_property(source, water, temp);
+        assert_eq!(
+            output_temp,
+            Some(Fixed64::from_num(70)),
+            "source output should have temperature=70"
+        );
     }
 }

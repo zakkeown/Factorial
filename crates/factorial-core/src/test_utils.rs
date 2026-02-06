@@ -106,6 +106,7 @@ pub fn make_source(item: ItemTypeId, rate: f64) -> Processor {
         base_rate: fixed(rate),
         depletion: Depletion::Infinite,
         accumulated: fixed(0.0),
+        initial_properties: None,
     })
 }
 
