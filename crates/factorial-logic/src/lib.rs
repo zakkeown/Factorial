@@ -920,4 +920,61 @@ mod tests {
         module.remove_network(net);
         assert!(module.network_signals(net).is_none());
     }
+
+    #[test]
+    fn serde_round_trip() {
+        let mut module = LogicModule::new();
+        let nodes = make_node_ids(3);
+        let net = module.create_network(WireColor::Red);
+        module.add_to_network(net, nodes[0]);
+        module.add_to_network(net, nodes[1]);
+
+        let iron = ItemTypeId(0);
+        let mut s = SignalSet::new();
+        s.insert(iron, fixed(100.0));
+        module.set_constant(nodes[0], s, true);
+
+        module.set_circuit_control(
+            nodes[1],
+            Condition {
+                left: SignalSelector::Signal(iron),
+                op: ComparisonOp::Gt,
+                right: SignalSelector::Constant(fixed(50.0)),
+            },
+            WireColor::Red,
+        );
+
+        module.set_arithmetic(
+            nodes[2],
+            ArithmeticCombinator {
+                left: SignalSelector::Signal(iron),
+                op: ArithmeticOp::Multiply,
+                right: SignalSelector::Constant(fixed(2.0)),
+                output: ItemTypeId(1),
+            },
+        );
+
+        // Tick once to populate internal state.
+        let (inputs, outputs) = make_inventories();
+        module.tick(&inputs, &outputs, 1);
+
+        // Serialize and deserialize.
+        let data = bitcode::serialize(&module).expect("serialize");
+        let restored: LogicModule = bitcode::deserialize(&data).expect("deserialize");
+
+        assert_eq!(restored.networks.len(), module.networks.len());
+        assert_eq!(restored.constants.len(), module.constants.len());
+        assert_eq!(
+            restored.circuit_controls.len(),
+            module.circuit_controls.len()
+        );
+        assert_eq!(
+            restored.arithmetic_combinators.len(),
+            module.arithmetic_combinators.len()
+        );
+        assert_eq!(
+            restored.network_signals(net).unwrap().get(&iron),
+            module.network_signals(net).unwrap().get(&iron),
+        );
+    }
 }
