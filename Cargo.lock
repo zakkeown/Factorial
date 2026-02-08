@@ -365,6 +365,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "factorial-logic"
+version = "0.1.0"
+dependencies = [
+ "bitcode",
+ "factorial-core",
+ "fixed",
+ "serde",
+ "slotmap",
+]
+
+[[package]]
 name = "factorial-power"
 version = "0.1.0"
 dependencies = [
