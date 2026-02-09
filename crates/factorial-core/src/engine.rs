@@ -34,6 +34,58 @@ use crate::transport::{Transport, TransportResult, TransportState};
 use slotmap::SecondaryMap;
 
 // ---------------------------------------------------------------------------
+// Per-node hashing (free function for parallelism)
+// ---------------------------------------------------------------------------
+
+/// Hash the state of a single node (inputs, outputs, processor state).
+/// Returns a u64 that can be combined with other node hashes via wrapping_add.
+fn hash_node_state(
+    node_id: NodeId,
+    inputs: &SecondaryMap<NodeId, Inventory>,
+    outputs: &SecondaryMap<NodeId, Inventory>,
+    processor_states: &SecondaryMap<NodeId, ProcessorState>,
+) -> u64 {
+    let mut hasher = StateHash::new();
+
+    // Hash input inventory.
+    if let Some(inv) = inputs.get(node_id) {
+        for slot in &inv.input_slots {
+            for stack in &slot.stacks {
+                hasher.write_u32(stack.item_type.0);
+                hasher.write_u32(stack.quantity);
+            }
+        }
+    }
+
+    // Hash output inventory.
+    if let Some(inv) = outputs.get(node_id) {
+        for slot in &inv.output_slots {
+            for stack in &slot.stacks {
+                hasher.write_u32(stack.item_type.0);
+                hasher.write_u32(stack.quantity);
+            }
+        }
+    }
+
+    // Hash processor state.
+    if let Some(ps) = processor_states.get(node_id) {
+        match ps {
+            ProcessorState::Idle => hasher.write_u32(0),
+            ProcessorState::Working { progress } => {
+                hasher.write_u32(1);
+                hasher.write_u32(*progress);
+            }
+            ProcessorState::Stalled { reason } => {
+                hasher.write_u32(2);
+                hasher.write_u32(*reason as u32);
+            }
+        }
+    }
+
+    hasher.finish()
+}
+
+// ---------------------------------------------------------------------------
 // Engine
 // ---------------------------------------------------------------------------
 
@@ -98,6 +150,27 @@ pub struct Engine {
     /// processing (splitter budget computation) and consumed by transport.
     pub(crate) edge_budgets: SecondaryMap<EdgeId, u32>,
 
+    /// Reusable buffer for iterating transport edge IDs (avoids per-tick alloc).
+    pub(crate) transport_edge_buf: Vec<EdgeId>,
+
+    /// Reusable buffer for gathering available inputs per node.
+    pub(crate) input_buf: Vec<(ItemTypeId, u32)>,
+
+    /// Cached output item type per node (avoids per-edge processor lookup).
+    pub(crate) node_item_type_cache: SecondaryMap<NodeId, ItemTypeId>,
+
+    /// Per-node hash cache for incremental state hashing.
+    pub(crate) node_hash_cache: SecondaryMap<NodeId, u64>,
+
+    /// Running sum of all per-node hashes (order-independent via wrapping_add).
+    pub(crate) combined_node_hash: u64,
+
+    /// Nodes whose hash needs recomputation this tick.
+    pub(crate) hash_dirty_nodes: Vec<NodeId>,
+
+    /// Whether the entire hash cache needs rebuilding (after deserialization or first tick).
+    pub(crate) hash_cache_cold: bool,
+
     /// Timing profile for the most recent tick (profiling feature only).
     #[cfg(feature = "profiling")]
     pub(crate) last_profile: Option<crate::profiling::TickProfile>,
@@ -135,6 +208,13 @@ impl Engine {
             junctions: SecondaryMap::new(),
             junction_states: SecondaryMap::new(),
             edge_budgets: SecondaryMap::new(),
+            transport_edge_buf: Vec::new(),
+            input_buf: Vec::new(),
+            node_item_type_cache: SecondaryMap::new(),
+            node_hash_cache: SecondaryMap::new(),
+            combined_node_hash: 0,
+            hash_dirty_nodes: Vec::new(),
+            hash_cache_cold: true,
             #[cfg(feature = "profiling")]
             last_profile: None,
         }
@@ -147,6 +227,7 @@ impl Engine {
     /// Set the processor for a node. Must be called after the node has been
     /// added to the graph (i.e., after `apply_mutations`).
     pub fn set_processor(&mut self, node: NodeId, processor: Processor) {
+        self.cache_item_type(node, &processor);
         self.processors.insert(node, processor);
         self.processor_states
             .insert(node, ProcessorState::default());
@@ -158,8 +239,43 @@ impl Engine {
     /// Replace a node's processor and reset its processing state to Idle.
     /// Use this for dynamic recipe selection at runtime.
     pub fn swap_processor(&mut self, node: NodeId, processor: Processor) {
+        self.cache_item_type(node, &processor);
         self.processors.insert(node, processor);
         self.processor_states.insert(node, ProcessorState::Idle);
+    }
+
+    /// Extract and cache the output item type from a processor.
+    fn cache_item_type(&mut self, node: NodeId, processor: &Processor) {
+        let item_type = match processor {
+            Processor::Source(src) => Some(src.output_type),
+            Processor::Fixed(recipe) => recipe.outputs.first().map(|o| o.item_type),
+            Processor::Property(prop) => Some(prop.output_type),
+            Processor::Demand(demand) => Some(demand.input_type),
+            Processor::Passthrough => None,
+        };
+        if let Some(it) = item_type {
+            self.node_item_type_cache.insert(node, it);
+        }
+    }
+
+    /// Rebuild the item type cache from all processors. Called after deserialization.
+    pub(crate) fn rebuild_item_type_cache(&mut self) {
+        self.node_item_type_cache.clear();
+        let node_ids: Vec<NodeId> = self.processors.keys().collect();
+        for nid in node_ids {
+            if let Some(processor) = self.processors.get(nid) {
+                let item_type = match processor {
+                    Processor::Source(src) => Some(src.output_type),
+                    Processor::Fixed(recipe) => recipe.outputs.first().map(|o| o.item_type),
+                    Processor::Property(prop) => Some(prop.output_type),
+                    Processor::Demand(demand) => Some(demand.input_type),
+                    Processor::Passthrough => None,
+                };
+                if let Some(it) = item_type {
+                    self.node_item_type_cache.insert(nid, it);
+                }
+            }
+        }
     }
 
     /// Set the input inventory for a node.
@@ -602,6 +718,8 @@ impl Engine {
             self.dirty.mark_graph();
             self.dirty
                 .mark_partition(crate::dirty::DirtyTracker::PARTITION_GRAPH);
+            // Node set changed — rebuild the entire hash cache next bookkeeping.
+            self.hash_cache_cold = true;
         }
     }
 
@@ -618,69 +736,70 @@ impl Engine {
         self.edge_budgets.clear();
 
         // For each node with a splitter junction, compute output distribution.
-        let junction_nodes: Vec<(NodeId, Junction)> = self
-            .junctions
-            .iter()
-            .map(|(id, j)| (id, j.clone()))
-            .collect();
+        // Only collect IDs; look up each junction inside the loop to avoid
+        // cloning all junction configs (most may be Inserter/Merger, not Splitter).
+        let junction_node_ids: Vec<NodeId> = self.junctions.keys().collect();
 
-        for (node_id, junction) in junction_nodes {
-            if let Junction::Splitter(config) = &junction {
-                let outputs = self.graph.get_outputs(node_id);
-                if outputs.is_empty() {
-                    continue;
-                }
+        for node_id in junction_node_ids {
+            let Some(Junction::Splitter(config)) = self.junctions.get(node_id) else {
+                continue;
+            };
+            let config = config.clone(); // SplitterConfig is tiny (policy + Option<ItemTypeId>)
 
-                let total = match config.filter {
-                    Some(item_type) => self.output_quantity_of(node_id, item_type),
-                    None => self.output_total(node_id),
-                };
+            let outputs = self.graph.get_outputs(node_id);
+            if outputs.is_empty() {
+                continue;
+            }
 
-                if total == 0 {
-                    continue;
-                }
+            let total = match config.filter {
+                Some(item_type) => self.output_quantity_of(node_id, item_type),
+                None => self.output_total(node_id),
+            };
 
-                let state = self
-                    .junction_states
-                    .get(node_id)
-                    .cloned()
-                    .unwrap_or_default();
+            if total == 0 {
+                continue;
+            }
 
-                let num_outputs = outputs.len();
-                // Clone outputs to avoid borrow conflicts.
-                let outputs_vec: Vec<EdgeId> = outputs.to_vec();
+            let state = self
+                .junction_states
+                .get(node_id)
+                .cloned()
+                .unwrap_or_default();
 
-                match config.policy {
-                    crate::junction::SplitPolicy::RoundRobin => {
-                        // Give each output an equal share, with the
-                        // current round-robin target getting the remainder.
-                        let share = total / num_outputs as u32;
-                        let remainder = total % num_outputs as u32;
-                        for (i, &edge_id) in outputs_vec.iter().enumerate() {
-                            let budget = share
-                                + if i == state.round_robin_index % num_outputs {
-                                    remainder
-                                } else {
-                                    0
-                                };
-                            self.edge_budgets.insert(edge_id, budget);
-                        }
-                    }
-                    crate::junction::SplitPolicy::Priority => {
-                        // All items to the first edge.
-                        for (i, &edge_id) in outputs_vec.iter().enumerate() {
-                            if i == 0 {
-                                self.edge_budgets.insert(edge_id, total);
+            let num_outputs = outputs.len();
+            // Clone outputs to avoid borrow conflicts.
+            let outputs_vec: Vec<EdgeId> = outputs.to_vec();
+
+            match config.policy {
+                crate::junction::SplitPolicy::RoundRobin => {
+                    // Give each output an equal share, with the
+                    // current round-robin target getting the remainder.
+                    let share = total / num_outputs as u32;
+                    let remainder = total % num_outputs as u32;
+                    for (i, &edge_id) in outputs_vec.iter().enumerate() {
+                        let budget = share
+                            + if i == state.round_robin_index % num_outputs {
+                                remainder
                             } else {
-                                self.edge_budgets.insert(edge_id, 0);
-                            }
+                                0
+                            };
+                        self.edge_budgets.insert(edge_id, budget);
+                    }
+                }
+                crate::junction::SplitPolicy::Priority => {
+                    // All items to the first edge.
+                    for (i, &edge_id) in outputs_vec.iter().enumerate() {
+                        if i == 0 {
+                            self.edge_budgets.insert(edge_id, total);
+                        } else {
+                            self.edge_budgets.insert(edge_id, 0);
                         }
                     }
-                    crate::junction::SplitPolicy::EvenSplit => {
-                        let share = total / num_outputs as u32;
-                        for &edge_id in &outputs_vec {
-                            self.edge_budgets.insert(edge_id, share);
-                        }
+                }
+                crate::junction::SplitPolicy::EvenSplit => {
+                    let share = total / num_outputs as u32;
+                    for &edge_id in &outputs_vec {
+                        self.edge_budgets.insert(edge_id, share);
                     }
                 }
             }
@@ -739,10 +858,12 @@ impl Engine {
 
         let tick = self.sim_state.tick;
 
-        // Collect edge IDs to iterate (avoids borrow conflicts).
-        let edge_ids: Vec<EdgeId> = self.transports.keys().collect();
+        // Reuse a buffer for edge IDs (avoids per-tick allocation).
+        self.transport_edge_buf.clear();
+        self.transport_edge_buf.extend(self.transports.keys());
 
-        for edge_id in edge_ids {
+        for i in 0..self.transport_edge_buf.len() {
+            let edge_id = self.transport_edge_buf[i];
             let Some(edge_data) = self.graph.get_edge(edge_id) else {
                 continue;
             };
@@ -844,60 +965,66 @@ impl Engine {
         };
 
         // Remove moved items from source output (type-filtered).
-        if result.items_moved > 0
-            && let Some(output_inv) = self.outputs.get_mut(source)
-        {
-            let mut remaining = result.items_moved;
-            for slot in &mut output_inv.output_slots {
-                if remaining == 0 {
-                    break;
+        if result.items_moved > 0 {
+            if let Some(output_inv) = self.outputs.get_mut(source) {
+                let mut remaining = result.items_moved;
+                for slot in &mut output_inv.output_slots {
+                    if remaining == 0 {
+                        break;
+                    }
+                    let removed = slot.remove(item_type, remaining);
+                    remaining -= removed;
                 }
-                let removed = slot.remove(item_type, remaining);
-                remaining -= removed;
             }
+            self.hash_dirty_nodes.push(source);
         }
 
         // Deliver items to destination input (with properties if present).
-        if result.items_delivered > 0
-            && let Some(input_inv) = self.inputs.get_mut(dest)
-        {
-            let mut remaining = result.items_delivered;
-            for slot in &mut input_inv.input_slots {
-                if remaining == 0 {
-                    break;
-                }
-                if let Some(ref props) = captured_properties {
-                    let overflow = slot.add_with_properties(item_type, remaining, props);
-                    remaining = overflow;
-                } else {
-                    let overflow = slot.add(item_type, remaining);
-                    remaining = overflow;
+        if result.items_delivered > 0 {
+            if let Some(input_inv) = self.inputs.get_mut(dest) {
+                let mut remaining = result.items_delivered;
+                for slot in &mut input_inv.input_slots {
+                    if remaining == 0 {
+                        break;
+                    }
+                    if let Some(ref props) = captured_properties {
+                        let overflow = slot.add_with_properties(item_type, remaining, props);
+                        remaining = overflow;
+                    } else {
+                        let overflow = slot.add(item_type, remaining);
+                        remaining = overflow;
+                    }
                 }
             }
+            self.hash_dirty_nodes.push(dest);
         }
     }
 
     /// Determine the item type flowing through an edge based on the source node.
     /// Falls back to ItemTypeId(0) if no type can be determined.
     fn determine_item_type_for_edge(&self, source: NodeId) -> ItemTypeId {
-        // Check the source's processor for its output type.
+        // Fast path: check the cached item type (populated by set_processor/swap_processor).
+        if let Some(&cached) = self.node_item_type_cache.get(source) {
+            return cached;
+        }
+
+        // Medium path: check processor configuration directly (handles deserialized
+        // engines where the cache hasn't been populated yet).
         if let Some(processor) = self.processors.get(source) {
             match processor {
                 Processor::Source(src) => return src.output_type,
                 Processor::Fixed(recipe) => {
-                    if let Some(first_output) = recipe.outputs.first() {
-                        return first_output.item_type;
+                    if let Some(output) = recipe.outputs.first() {
+                        return output.item_type;
                     }
                 }
                 Processor::Property(prop) => return prop.output_type,
                 Processor::Demand(demand) => return demand.input_type,
-                Processor::Passthrough => {
-                    // No inherent type -- fall through to inventory check below.
-                }
+                Processor::Passthrough => {}
             }
         }
 
-        // Check the source's output inventory for any existing items.
+        // Slow path for Passthrough or uncached nodes: scan output inventory.
         if let Some(output_inv) = self.outputs.get(source) {
             for slot in &output_inv.output_slots {
                 for stack in &slot.stacks {
@@ -915,34 +1042,186 @@ impl Engine {
     // Phase 3: Process
     // -----------------------------------------------------------------------
 
+    #[cfg(not(feature = "parallel"))]
     fn phase_process(&mut self) {
         // Use feedback-aware ordering so cycles don't skip processing.
         // Back-edges naturally introduce a one-tick delay: items placed in
         // output on tick N are transported on tick N+1, so cycle nodes see
         // last-tick's output as this-tick's input.
-        let (order, _back_edges) = self.graph.topological_order_with_feedback();
+        // Ensure cache is fresh, then swap it out to avoid borrow conflict
+        // with process_node(&mut self). No allocation — reuses the cached Vec.
+        let _ = self.graph.topological_order_with_feedback();
+        let order = self.graph.take_feedback_cache();
 
-        for node_id in order {
+        for &node_id in &order {
             self.process_node(node_id);
+        }
+
+        self.graph.restore_feedback_cache(order);
+    }
+
+    #[cfg(feature = "parallel")]
+    fn phase_process(&mut self) {
+        use rayon::prelude::*;
+
+        let (levels, _back_edges) = self.graph.topological_order_by_level();
+        let tick = self.sim_state.tick;
+
+        for level in levels {
+            // EXTRACT: gather read-only inputs and clone processor + state for each node.
+            struct NodeWork {
+                node_id: NodeId,
+                processor: Processor,
+                state: ProcessorState,
+                mods: Vec<Modifier>,
+                available_inputs: Vec<(ItemTypeId, u32)>,
+                output_space: u32,
+                prev_state: Option<ProcessorState>,
+            }
+
+            let work: Vec<NodeWork> = level
+                .iter()
+                .filter_map(|&node_id| {
+                    let processor = self.processors.get(node_id)?.clone();
+                    let state = self.processor_states.get(node_id)?.clone();
+                    let mods = self.modifiers.get(node_id).cloned().unwrap_or_default();
+                    let mut available_inputs = Vec::new();
+                    Self::gather_inputs_into(&self.inputs, node_id, &mut available_inputs);
+                    let output_space = self.calculate_output_space(node_id);
+                    let prev_state = Some(state.clone());
+                    Some(NodeWork {
+                        node_id,
+                        processor,
+                        state,
+                        mods,
+                        available_inputs,
+                        output_space,
+                        prev_state,
+                    })
+                })
+                .collect();
+
+            // PROCESS: tick each node in parallel.
+            struct NodeResult {
+                node_id: NodeId,
+                processor: Processor,
+                state: ProcessorState,
+                prev_state: Option<ProcessorState>,
+                result: ProcessorResult,
+            }
+
+            let results: Vec<NodeResult> = work
+                .into_par_iter()
+                .map(|mut w| {
+                    let result = w.processor.tick(
+                        &mut w.state,
+                        &w.mods,
+                        &w.available_inputs,
+                        w.output_space,
+                    );
+                    NodeResult {
+                        node_id: w.node_id,
+                        processor: w.processor,
+                        state: w.state,
+                        prev_state: w.prev_state,
+                        result,
+                    }
+                })
+                .collect();
+
+            // APPLY: write back results sequentially.
+            for nr in results {
+                // Write back processor and state.
+                self.processors.insert(nr.node_id, nr.processor);
+                self.processor_states.insert(nr.node_id, nr.state);
+
+                // Emit production events.
+                for &(item_type, quantity) in &nr.result.consumed {
+                    self.event_bus.emit(Event::ItemConsumed {
+                        node: nr.node_id,
+                        item_type,
+                        quantity,
+                        tick,
+                    });
+                }
+                for &(item_type, quantity) in &nr.result.produced {
+                    self.event_bus.emit(Event::ItemProduced {
+                        node: nr.node_id,
+                        item_type,
+                        quantity,
+                        tick,
+                    });
+                }
+
+                // Emit state-change events.
+                if nr.result.state_changed {
+                    let new_state = self.processor_states.get(nr.node_id);
+
+                    if matches!(nr.prev_state.as_ref(), Some(ProcessorState::Stalled { .. }))
+                        && !matches!(new_state, Some(ProcessorState::Stalled { .. }))
+                    {
+                        self.event_bus.emit(Event::BuildingResumed {
+                            node: nr.node_id,
+                            tick,
+                        });
+                    }
+
+                    match (nr.prev_state.as_ref(), new_state) {
+                        (
+                            Some(ProcessorState::Idle) | Some(ProcessorState::Stalled { .. }),
+                            Some(ProcessorState::Working { .. }),
+                        ) => {
+                            self.event_bus.emit(Event::RecipeStarted {
+                                node: nr.node_id,
+                                tick,
+                            });
+                        }
+                        (Some(ProcessorState::Working { .. }), Some(ProcessorState::Idle)) => {
+                            self.event_bus.emit(Event::RecipeCompleted {
+                                node: nr.node_id,
+                                tick,
+                            });
+                        }
+                        (_, Some(ProcessorState::Stalled { reason })) => {
+                            self.event_bus.emit(Event::BuildingStalled {
+                                node: nr.node_id,
+                                reason: *reason,
+                                tick,
+                            });
+                        }
+                        _ => {}
+                    }
+                }
+
+                // Capture input properties and apply consumed/produced.
+                let input_properties = if nr.result.property_transform.is_some() {
+                    self.capture_input_properties(nr.node_id)
+                } else {
+                    None
+                };
+                self.apply_consumed(nr.node_id, &nr.result);
+                self.apply_produced(nr.node_id, &nr.result, input_properties.as_ref());
+
+                // Mark node hash dirty (progress increments every tick for Working nodes).
+                self.hash_dirty_nodes.push(nr.node_id);
+            }
         }
     }
 
+    #[cfg(not(feature = "parallel"))]
     fn process_node(&mut self, node_id: NodeId) {
         let tick = self.sim_state.tick;
 
-        // Gather available inputs from the node's input inventory.
-        let available_inputs = self.gather_available_inputs(node_id);
+        // Gather available inputs into reusable buffer.
+        self.gather_available_inputs(node_id);
 
         // Calculate output space.
         let output_space = self.calculate_output_space(node_id);
 
-        // Get modifiers (clone to avoid borrow conflict).
-        let mods = self.modifiers.get(node_id).cloned().unwrap_or_default();
-
         // Snapshot previous state for detecting state transitions.
         let prev_state = self.processor_states.get(node_id).cloned();
 
-        // Tick the processor.
+        // Tick the processor using disjoint field borrows to avoid cloning modifiers.
         let processor_result = {
             let Some(processor) = self.processors.get_mut(node_id) else {
                 return;
@@ -950,7 +1229,10 @@ impl Engine {
             let Some(state) = self.processor_states.get_mut(node_id) else {
                 return;
             };
-            processor.tick(state, &mods, &available_inputs, output_space)
+            let mods = self.modifiers.get(node_id);
+            let empty_mods = [];
+            let mods_slice = mods.map(|m| m.as_slice()).unwrap_or(&empty_mods);
+            processor.tick(state, mods_slice, &self.input_buf, output_space)
         };
 
         // Emit production events.
@@ -1027,27 +1309,40 @@ impl Engine {
 
         // Apply produced items to output inventory (with property propagation).
         self.apply_produced(node_id, &processor_result, input_properties.as_ref());
+
+        // Mark node hash dirty. Processor state (including Working { progress })
+        // can change every tick even without state_changed being set.
+        self.hash_dirty_nodes.push(node_id);
     }
 
-    /// Gather available input items from a node's input inventory.
-    fn gather_available_inputs(&self, node_id: NodeId) -> Vec<(ItemTypeId, u32)> {
-        let Some(input_inv) = self.inputs.get(node_id) else {
-            return Vec::new();
+    /// Gather available input items from a node's input inventory into `self.input_buf`.
+    fn gather_available_inputs(&mut self, node_id: NodeId) {
+        self.input_buf.clear();
+        Self::gather_inputs_into(&self.inputs, node_id, &mut self.input_buf);
+    }
+
+    /// Gather available inputs into the provided buffer (static helper for
+    /// both serial and parallel paths).
+    fn gather_inputs_into(
+        inputs: &SecondaryMap<NodeId, Inventory>,
+        node_id: NodeId,
+        buf: &mut Vec<(ItemTypeId, u32)>,
+    ) {
+        let Some(input_inv) = inputs.get(node_id) else {
+            return;
         };
 
-        let mut result: Vec<(ItemTypeId, u32)> = Vec::new();
         for slot in &input_inv.input_slots {
             for stack in &slot.stacks {
                 if stack.quantity > 0 {
-                    if let Some(entry) = result.iter_mut().find(|(id, _)| *id == stack.item_type) {
+                    if let Some(entry) = buf.iter_mut().find(|(id, _)| *id == stack.item_type) {
                         entry.1 += stack.quantity;
                     } else {
-                        result.push((stack.item_type, stack.quantity));
+                        buf.push((stack.item_type, stack.quantity));
                     }
                 }
             }
         }
-        result
     }
 
     /// Calculate total free space in a node's output inventory.
@@ -1162,8 +1457,8 @@ impl Engine {
 
     fn phase_component(&mut self) {
         // 1. Process junctions in topo order.
-        if let Ok(order) = self.graph.topological_order() {
-            let order_vec = order.to_vec();
+        if self.graph.topological_order().is_ok() {
+            let order_vec = self.graph.take_topo_cache();
             for &node_id in &order_vec {
                 if let Some(junction) = self.junctions.get(node_id).cloned() {
                     let Some(entry) = self.junction_states.entry(node_id) else {
@@ -1235,6 +1530,7 @@ impl Engine {
                     }
                 }
             }
+            self.graph.restore_topo_cache(order_vec);
         }
 
         // 2. Run module on_tick() (std::mem::take pattern for borrow safety).
@@ -1286,53 +1582,49 @@ impl Engine {
     }
 
     /// Compute a deterministic hash of the current simulation state.
-    fn compute_state_hash(&self) -> u64 {
-        let mut hasher = StateHash::new();
-
-        // Hash the tick counter.
-        hasher.write_u64(self.sim_state.tick);
-
-        // Hash inventory contents in a deterministic order.
-        // We iterate over nodes in the graph's SlotMap iteration order,
-        // which is deterministic (insertion order within the SlotMap).
-        for (node_id, _) in self.graph.nodes() {
-            // Hash input inventory.
-            if let Some(inv) = self.inputs.get(node_id) {
-                for slot in &inv.input_slots {
-                    for stack in &slot.stacks {
-                        hasher.write_u32(stack.item_type.0);
-                        hasher.write_u32(stack.quantity);
-                    }
-                }
+    ///
+    /// Uses incremental hashing: only nodes marked dirty since the last tick
+    /// are rehashed. Falls back to full recomputation when the cache is cold
+    /// (after deserialization or graph mutations).
+    fn compute_state_hash(&mut self) -> u64 {
+        // When most nodes are dirty, a full linear rebuild is cheaper than
+        // sort + dedup + per-node sub/add. Use incremental only when it
+        // actually saves work.
+        let node_count = self.graph.node_count();
+        if self.hash_cache_cold || self.hash_dirty_nodes.len() > node_count / 2 {
+            // Full rebuild: recompute every node hash.
+            self.node_hash_cache.clear();
+            self.combined_node_hash = 0;
+            for (nid, _) in self.graph.nodes() {
+                let h = hash_node_state(nid, &self.inputs, &self.outputs, &self.processor_states);
+                self.node_hash_cache.insert(nid, h);
+                self.combined_node_hash = self.combined_node_hash.wrapping_add(h);
             }
+            self.hash_dirty_nodes.clear();
+            self.hash_cache_cold = false;
+        } else {
+            // Incremental: only recompute dirty nodes.
+            // Dedup via sort (cheaper than a HashSet for typical dirty counts).
+            self.hash_dirty_nodes.sort_unstable();
+            self.hash_dirty_nodes.dedup();
 
-            // Hash output inventory.
-            if let Some(inv) = self.outputs.get(node_id) {
-                for slot in &inv.output_slots {
-                    for stack in &slot.stacks {
-                        hasher.write_u32(stack.item_type.0);
-                        hasher.write_u32(stack.quantity);
-                    }
-                }
+            for &nid in &self.hash_dirty_nodes {
+                let old = self.node_hash_cache.get(nid).copied().unwrap_or(0);
+                let new = hash_node_state(nid, &self.inputs, &self.outputs, &self.processor_states);
+                self.node_hash_cache.insert(nid, new);
+                self.combined_node_hash =
+                    self.combined_node_hash.wrapping_sub(old).wrapping_add(new);
             }
-
-            // Hash processor state.
-            if let Some(ps) = self.processor_states.get(node_id) {
-                match ps {
-                    ProcessorState::Idle => hasher.write_u32(0),
-                    ProcessorState::Working { progress } => {
-                        hasher.write_u32(1);
-                        hasher.write_u32(*progress);
-                    }
-                    ProcessorState::Stalled { reason } => {
-                        hasher.write_u32(2);
-                        hasher.write_u32(*reason as u32);
-                    }
-                }
-            }
+            self.hash_dirty_nodes.clear();
         }
 
-        hasher.finish()
+        // Combine per-node hash with tick counter.
+        let tick_hash = {
+            let mut h = StateHash::new();
+            h.write_u64(self.sim_state.tick);
+            h.finish()
+        };
+        tick_hash.wrapping_add(self.combined_node_hash)
     }
 
     // -----------------------------------------------------------------------
@@ -1492,7 +1784,8 @@ impl Engine {
     /// Build input summary for diagnostics. For FixedRecipe processors,
     /// shows (item_type, have, need) for each required input.
     fn build_input_summary(&self, node: NodeId) -> Vec<(ItemTypeId, u32, u32)> {
-        let available = self.gather_available_inputs(node);
+        let mut available = Vec::new();
+        Self::gather_inputs_into(&self.inputs, node, &mut available);
 
         if let Some(Processor::Fixed(recipe)) = self.processors.get(node) {
             recipe
@@ -4222,5 +4515,74 @@ mod tests {
         assert!(engine.get_input_inventory(fake_id).is_none());
         assert!(engine.get_output_inventory(fake_id).is_none());
         assert!(engine.get_processor_state(fake_id).is_none());
+    }
+
+    /// Verify that hash_node_state produces the same combined result
+    /// as the engine's compute_state_hash on various topologies.
+    #[test]
+    fn hash_node_state_matches_engine_hash() {
+        // Build different topologies and verify the extracted hash function
+        // produces results consistent with the engine.
+        for factory_fn in [
+            || test_utils::build_chain_factory(50),
+            || test_utils::build_wide_factory(50),
+            || test_utils::build_grid_factory(5, 10),
+            || test_utils::build_large_factory(200),
+        ] {
+            let mut engine = factory_fn();
+            for _ in 0..10 {
+                engine.step();
+            }
+
+            // Manually compute what compute_state_hash should produce.
+            let tick_hash = {
+                let mut h = StateHash::new();
+                h.write_u64(engine.sim_state.tick);
+                h.finish()
+            };
+            let manual_combined: u64 = engine
+                .graph
+                .nodes()
+                .map(|(nid, _)| {
+                    hash_node_state(
+                        nid,
+                        &engine.inputs,
+                        &engine.outputs,
+                        &engine.processor_states,
+                    )
+                })
+                .fold(0u64, u64::wrapping_add);
+            let manual_hash = tick_hash.wrapping_add(manual_combined);
+
+            assert_eq!(
+                engine.state_hash(),
+                manual_hash,
+                "hash_node_state should match engine's compute_state_hash"
+            );
+        }
+    }
+
+    /// Verify determinism: two identical engines produce the same hash
+    /// regardless of whether the parallel feature is enabled.
+    #[test]
+    fn determinism_across_topologies() {
+        for factory_fn in [
+            || test_utils::build_chain_factory(100),
+            || test_utils::build_wide_factory(100),
+            || test_utils::build_grid_factory(10, 10),
+        ] {
+            let mut engine_a = factory_fn();
+            let mut engine_b = factory_fn();
+
+            for _ in 0..50 {
+                engine_a.step();
+                engine_b.step();
+                assert_eq!(
+                    engine_a.state_hash(),
+                    engine_b.state_hash(),
+                    "engines should produce identical hashes"
+                );
+            }
+        }
     }
 }

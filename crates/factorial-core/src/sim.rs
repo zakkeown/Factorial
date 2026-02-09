@@ -106,19 +106,21 @@ impl StateHash {
         }
     }
 
-    /// Feed a u64 into the hash.
+    /// Feed a u64 into the hash (single XOR + multiply, faster than byte-at-a-time).
     pub fn write_u64(&mut self, v: u64) {
-        self.write(&v.to_le_bytes());
+        self.0 ^= v;
+        self.0 = self.0.wrapping_mul(Self::FNV_PRIME);
     }
 
-    /// Feed a u32 into the hash.
+    /// Feed a u32 into the hash (single XOR + multiply, faster than byte-at-a-time).
     pub fn write_u32(&mut self, v: u32) {
-        self.write(&v.to_le_bytes());
+        self.0 ^= v as u64;
+        self.0 = self.0.wrapping_mul(Self::FNV_PRIME);
     }
 
     /// Feed a Fixed64 into the hash.
     pub fn write_fixed64(&mut self, v: Fixed64) {
-        self.write(&v.to_bits().to_le_bytes());
+        self.write_u64(v.to_bits() as u64);
     }
 
     /// Finalize and return the hash value.

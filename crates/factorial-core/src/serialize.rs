@@ -7,6 +7,12 @@
 use crate::engine::Engine;
 use crate::event::EventBus;
 use crate::graph::ProductionGraph;
+
+/// Serde default function returning `true`. Used for `#[serde(skip, default)]`
+/// on cold-cache flags that should start as `true` after deserialization.
+pub fn default_true() -> bool {
+    true
+}
 use crate::id::{EdgeId, NodeId};
 use crate::item::Inventory;
 use crate::processor::{Modifier, Processor, ProcessorState};
@@ -312,7 +318,7 @@ impl Engine {
         // Validate the header.
         snapshot.header.validate()?;
 
-        Ok(Engine {
+        let mut engine = Engine {
             graph: snapshot.graph,
             strategy: snapshot.strategy,
             sim_state: snapshot.sim_state,
@@ -331,9 +337,18 @@ impl Engine {
             junctions: snapshot.junctions,
             junction_states: snapshot.junction_states,
             edge_budgets: SecondaryMap::new(),
+            transport_edge_buf: Vec::new(),
+            input_buf: Vec::new(),
+            node_item_type_cache: SecondaryMap::new(),
+            node_hash_cache: SecondaryMap::new(),
+            combined_node_hash: 0,
+            hash_dirty_nodes: Vec::new(),
+            hash_cache_cold: true,
             #[cfg(feature = "profiling")]
             last_profile: None,
-        })
+        };
+        engine.rebuild_item_type_cache();
+        Ok(engine)
     }
 
     /// Deserialize an engine from a binary blob, applying migrations if needed.
@@ -843,7 +858,7 @@ impl Engine {
                 }
             })?;
 
-        Ok(Engine {
+        let mut engine = Engine {
             graph: graph_p.graph,
             strategy: graph_p.strategy,
             sim_state: graph_p.sim_state,
@@ -862,9 +877,18 @@ impl Engine {
             junctions: junc_p.junctions,
             junction_states: junc_p.junction_states,
             edge_budgets: SecondaryMap::new(),
+            transport_edge_buf: Vec::new(),
+            input_buf: Vec::new(),
+            node_item_type_cache: SecondaryMap::new(),
+            node_hash_cache: SecondaryMap::new(),
+            combined_node_hash: 0,
+            hash_dirty_nodes: Vec::new(),
+            hash_cache_cold: true,
             #[cfg(feature = "profiling")]
             last_profile: None,
-        })
+        };
+        engine.rebuild_item_type_cache();
+        Ok(engine)
     }
 }
 
