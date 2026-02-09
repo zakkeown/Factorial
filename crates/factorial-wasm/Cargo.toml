@@ -1,0 +1,15 @@
+[package]
+name = "factorial-wasm"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+factorial-core = { path = "../factorial-core" }
+factorial-logic = { path = "../factorial-logic" }
+slotmap = { workspace = true }
+
+[dev-dependencies]
+factorial-core = { path = "../factorial-core", features = ["test-utils"] }

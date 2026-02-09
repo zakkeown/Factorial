@@ -1,0 +1,1 @@
+//! Processor configuration WASM exports.
