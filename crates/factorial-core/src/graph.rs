@@ -123,13 +123,24 @@ pub struct ProductionGraph {
     edges: SlotMap<EdgeId, EdgeData>,
     adjacency: SecondaryMap<NodeId, NodeAdjacency>,
 
-    /// Cached topological order. Recomputed lazily when `dirty` is true.
+    /// Cached topological order (strict, errors on cycles).
+    /// Recomputed lazily when `dirty` is true.
     #[serde(skip)]
     topo_cache: Vec<NodeId>,
     /// Whether the cached topological order needs recomputation.
     /// Defaults to `true` on deserialize so the cache is recomputed.
     #[serde(skip, default = "default_dirty")]
     dirty: bool,
+
+    /// Cached feedback-aware topological order (tolerates cycles).
+    #[serde(skip)]
+    feedback_order_cache: Vec<NodeId>,
+    /// Cached back-edges from the feedback-aware ordering.
+    #[serde(skip)]
+    back_edge_cache: Vec<EdgeId>,
+    /// Whether the feedback cache needs recomputation.
+    #[serde(skip, default = "default_dirty")]
+    feedback_dirty: bool,
 
     /// Queued mutations to be applied atomically.
     #[serde(skip)]
@@ -153,7 +164,10 @@ impl Clone for ProductionGraph {
             adjacency: self.adjacency.clone(),
             topo_cache: Vec::new(), // Cache will be recomputed.
             dirty: true,            // Force recomputation.
-            mutations: Vec::new(),  // Don't clone queued mutations.
+            feedback_order_cache: Vec::new(),
+            back_edge_cache: Vec::new(),
+            feedback_dirty: true,
+            mutations: Vec::new(), // Don't clone queued mutations.
             next_pending_node: self.next_pending_node,
             next_pending_edge: self.next_pending_edge,
         }
@@ -175,10 +189,19 @@ impl ProductionGraph {
             adjacency: SecondaryMap::new(),
             topo_cache: Vec::new(),
             dirty: true,
+            feedback_order_cache: Vec::new(),
+            back_edge_cache: Vec::new(),
+            feedback_dirty: true,
             mutations: Vec::new(),
             next_pending_node: 0,
             next_pending_edge: 0,
         }
+    }
+
+    /// Invalidate all topological order caches.
+    fn invalidate_caches(&mut self) {
+        self.dirty = true;
+        self.feedback_dirty = true;
     }
 
     // -----------------------------------------------------------------------
@@ -189,7 +212,7 @@ impl ProductionGraph {
     fn add_node_immediate(&mut self, building_type: BuildingTypeId) -> NodeId {
         let node_id = self.nodes.insert(NodeData { building_type });
         self.adjacency.insert(node_id, NodeAdjacency::default());
-        self.dirty = true;
+        self.invalidate_caches();
         node_id
     }
 
@@ -213,7 +236,7 @@ impl ProductionGraph {
 
         self.nodes.remove(node);
         self.adjacency.remove(node);
-        self.dirty = true;
+        self.invalidate_caches();
     }
 
     /// Connect two nodes immediately. Returns the assigned `EdgeId`.
@@ -241,7 +264,7 @@ impl ProductionGraph {
             adj.inputs.push(edge_id);
         }
 
-        self.dirty = true;
+        self.invalidate_caches();
         edge_id
     }
 
@@ -256,7 +279,7 @@ impl ProductionGraph {
             if let Some(adj) = self.adjacency.get_mut(edge_data.to) {
                 adj.inputs.retain(|&e| e != edge);
             }
-            self.dirty = true;
+            self.invalidate_caches();
         }
     }
 
@@ -457,6 +480,32 @@ impl ProductionGraph {
     }
 
     // -----------------------------------------------------------------------
+    // Topo cache borrowing helpers
+    // -----------------------------------------------------------------------
+
+    /// Temporarily take ownership of the strict topo cache.
+    /// The cache Vec is left empty; call `restore_topo_cache` to put it back.
+    pub(crate) fn take_topo_cache(&mut self) -> Vec<NodeId> {
+        std::mem::take(&mut self.topo_cache)
+    }
+
+    /// Restore the strict topo cache after a `take_topo_cache` call.
+    pub(crate) fn restore_topo_cache(&mut self, cache: Vec<NodeId>) {
+        self.topo_cache = cache;
+    }
+
+    /// Temporarily take ownership of the feedback-order cache.
+    /// The cache Vec is left empty; call `restore_feedback_cache` to put it back.
+    pub(crate) fn take_feedback_cache(&mut self) -> Vec<NodeId> {
+        std::mem::take(&mut self.feedback_order_cache)
+    }
+
+    /// Restore the feedback-order cache after a `take_feedback_cache` call.
+    pub(crate) fn restore_feedback_cache(&mut self, cache: Vec<NodeId>) {
+        self.feedback_order_cache = cache;
+    }
+
+    // -----------------------------------------------------------------------
     // Topological sort (Kahn's algorithm)
     // -----------------------------------------------------------------------
 
@@ -477,7 +526,18 @@ impl ProductionGraph {
     /// -- edges where `to` appears before `from` in the final order -- are
     /// returned separately.  Callers can use the back-edge set to understand
     /// which connections carry a one-tick delay.
-    pub fn topological_order_with_feedback(&self) -> (Vec<NodeId>, Vec<EdgeId>) {
+    ///
+    /// The result is cached and only recomputed when the graph is mutated.
+    pub fn topological_order_with_feedback(&mut self) -> (&[NodeId], &[EdgeId]) {
+        if self.feedback_dirty {
+            self.recompute_feedback_order();
+            self.feedback_dirty = false;
+        }
+        (&self.feedback_order_cache, &self.back_edge_cache)
+    }
+
+    /// Recompute the feedback-aware topological order and back-edges.
+    fn recompute_feedback_order(&mut self) {
         let node_count = self.nodes.len();
 
         // Compute in-degree for each node.
@@ -556,7 +616,133 @@ impl ProductionGraph {
             })
             .collect();
 
-        (order, back_edges)
+        self.feedback_order_cache = order;
+        self.back_edge_cache = back_edges;
+    }
+
+    /// Returns nodes grouped by topological level, plus back-edges.
+    ///
+    /// Modified Kahn's algorithm that tracks depth: when a node's in-degree
+    /// hits 0, its depth = max(predecessor depths) + 1. Nodes within each
+    /// level are sorted by `NodeId` for determinism.
+    ///
+    /// Cycle nodes are placed in a final catch-all level. Back-edges are
+    /// edges where `to` appears at an equal or earlier level than `from`.
+    pub fn topological_order_by_level(&self) -> (Vec<Vec<NodeId>>, Vec<EdgeId>) {
+        let node_count = self.nodes.len();
+
+        // Compute in-degree and track depth.
+        let mut in_degree: SecondaryMap<NodeId, usize> = SecondaryMap::new();
+        let mut depth: SecondaryMap<NodeId, usize> = SecondaryMap::new();
+        for (nid, _) in &self.nodes {
+            in_degree.insert(nid, 0);
+            depth.insert(nid, 0);
+        }
+        for (_, edge) in &self.edges {
+            if let Some(deg) = in_degree.get_mut(edge.to) {
+                *deg += 1;
+            }
+        }
+
+        // Seed queue with zero-in-degree nodes (level 0).
+        let mut queue: VecDeque<NodeId> = VecDeque::new();
+        for (nid, &deg) in &in_degree {
+            if deg == 0 {
+                queue.push_back(nid);
+            }
+        }
+
+        let mut processed = 0usize;
+        let mut max_depth = 0usize;
+
+        while let Some(node) = queue.pop_front() {
+            processed += 1;
+            let node_depth = depth.get(node).copied().unwrap_or(0);
+            if node_depth > max_depth {
+                max_depth = node_depth;
+            }
+
+            // For each outgoing edge, update destination depth and decrement in-degree.
+            let destinations: Vec<NodeId> = self
+                .adjacency
+                .get(node)
+                .map(|adj| {
+                    adj.outputs
+                        .iter()
+                        .filter_map(|&eid| self.edges.get(eid).map(|e| e.to))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            for dest in destinations {
+                // Update dest depth to be at least node_depth + 1.
+                if let Some(d) = depth.get_mut(dest) {
+                    *d = (*d).max(node_depth + 1);
+                }
+                if let Some(deg) = in_degree.get_mut(dest) {
+                    *deg -= 1;
+                    if *deg == 0 {
+                        queue.push_back(dest);
+                    }
+                }
+            }
+        }
+
+        // Group nodes by depth level.
+        let mut levels: Vec<Vec<NodeId>> = vec![Vec::new(); max_depth + 1];
+        let mut in_order: std::collections::HashSet<NodeId> =
+            std::collections::HashSet::with_capacity(processed);
+
+        for (nid, _) in &self.nodes {
+            if let Some(&deg) = in_degree.get(nid)
+                && deg == 0
+            {
+                // This node was processed by Kahn's.
+                let d = depth.get(nid).copied().unwrap_or(0);
+                levels[d].push(nid);
+                in_order.insert(nid);
+            }
+        }
+
+        // Cycle nodes: any node not processed goes in a final level.
+        if processed < node_count {
+            let mut cycle_nodes: Vec<NodeId> = self
+                .nodes
+                .keys()
+                .filter(|nid| !in_order.contains(nid))
+                .collect();
+            cycle_nodes.sort();
+            levels.push(cycle_nodes);
+        }
+
+        // Sort within each level for determinism.
+        for level in &mut levels {
+            level.sort();
+        }
+
+        // Remove empty levels.
+        levels.retain(|l| !l.is_empty());
+
+        // Build position map for back-edge detection.
+        let mut level_of: SecondaryMap<NodeId, usize> = SecondaryMap::new();
+        for (lvl_idx, level) in levels.iter().enumerate() {
+            for &nid in level {
+                level_of.insert(nid, lvl_idx);
+            }
+        }
+
+        // Back-edges: edges where to is at same or earlier level than from.
+        let back_edges: Vec<EdgeId> = self
+            .edges
+            .iter()
+            .filter_map(|(eid, edge)| {
+                let from_lvl = level_of.get(edge.from).copied().unwrap_or(0);
+                let to_lvl = level_of.get(edge.to).copied().unwrap_or(0);
+                if to_lvl <= from_lvl { Some(eid) } else { None }
+            })
+            .collect();
+
+        (levels, back_edges)
     }
 
     /// Recompute the topological order using Kahn's algorithm.
@@ -1176,5 +1362,128 @@ mod tests {
         assert_eq!(order.len(), 3);
         assert_eq!(order[0], a);
         assert_eq!(order[2], c);
+    }
+
+    // -----------------------------------------------------------------------
+    // topological_order_by_level tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn topo_by_level_linear_chain() {
+        // A -> B -> C: each level has exactly 1 node.
+        let (mut graph, nodes) = make_graph_with_nodes(3);
+        let [a, b, c] = [nodes[0], nodes[1], nodes[2]];
+        graph.queue_connect(a, b);
+        graph.queue_connect(b, c);
+        graph.apply_mutations();
+
+        let (levels, back_edges) = graph.topological_order_by_level();
+        assert_eq!(levels.len(), 3);
+        assert_eq!(levels[0], vec![a]);
+        assert_eq!(levels[1], vec![b]);
+        assert_eq!(levels[2], vec![c]);
+        assert!(back_edges.is_empty());
+    }
+
+    #[test]
+    fn topo_by_level_diamond() {
+        // A -> B, A -> C, B -> D, C -> D
+        // Levels: [[A], [B, C], [D]]
+        let (mut graph, nodes) = make_graph_with_nodes(4);
+        let [a, b, c, d] = [nodes[0], nodes[1], nodes[2], nodes[3]];
+        graph.queue_connect(a, b);
+        graph.queue_connect(a, c);
+        graph.queue_connect(b, d);
+        graph.queue_connect(c, d);
+        graph.apply_mutations();
+
+        let (levels, back_edges) = graph.topological_order_by_level();
+        assert_eq!(levels.len(), 3);
+        assert_eq!(levels[0], vec![a]);
+        // B and C are at level 1 (sorted by NodeId).
+        assert_eq!(levels[1].len(), 2);
+        assert!(levels[1].contains(&b));
+        assert!(levels[1].contains(&c));
+        assert_eq!(levels[2], vec![d]);
+        assert!(back_edges.is_empty());
+    }
+
+    #[test]
+    fn topo_by_level_wide_fan_out() {
+        // A -> B, A -> C, A -> D: 1 source at level 0, 3 consumers at level 1.
+        let (mut graph, nodes) = make_graph_with_nodes(4);
+        let [a, b, c, d] = [nodes[0], nodes[1], nodes[2], nodes[3]];
+        graph.queue_connect(a, b);
+        graph.queue_connect(a, c);
+        graph.queue_connect(a, d);
+        graph.apply_mutations();
+
+        let (levels, back_edges) = graph.topological_order_by_level();
+        assert_eq!(levels.len(), 2);
+        assert_eq!(levels[0], vec![a]);
+        assert_eq!(levels[1].len(), 3);
+        assert!(back_edges.is_empty());
+    }
+
+    #[test]
+    fn topo_by_level_disconnected_components() {
+        // A -> B, C -> D (two disconnected pairs).
+        // All roots (A, C) at level 0.
+        let (mut graph, nodes) = make_graph_with_nodes(4);
+        let [a, b, c, d] = [nodes[0], nodes[1], nodes[2], nodes[3]];
+        graph.queue_connect(a, b);
+        graph.queue_connect(c, d);
+        graph.apply_mutations();
+
+        let (levels, back_edges) = graph.topological_order_by_level();
+        assert_eq!(levels.len(), 2);
+        assert_eq!(levels[0].len(), 2); // A and C.
+        assert!(levels[0].contains(&a));
+        assert!(levels[0].contains(&c));
+        assert_eq!(levels[1].len(), 2); // B and D.
+        assert!(levels[1].contains(&b));
+        assert!(levels[1].contains(&d));
+        assert!(back_edges.is_empty());
+    }
+
+    #[test]
+    fn topo_by_level_cycle() {
+        // A -> B -> C -> A (cycle). Cycle nodes in final level.
+        let (mut graph, nodes) = make_graph_with_nodes(3);
+        let [a, b, c] = [nodes[0], nodes[1], nodes[2]];
+        graph.queue_connect(a, b);
+        graph.queue_connect(b, c);
+        graph.queue_connect(c, a);
+        graph.apply_mutations();
+
+        let (levels, back_edges) = graph.topological_order_by_level();
+        // All nodes are in a cycle, so they should be in the catch-all level.
+        assert_eq!(levels.len(), 1);
+        assert_eq!(levels[0].len(), 3);
+        assert!(!back_edges.is_empty());
+    }
+
+    #[test]
+    fn topo_by_level_mixed_cycle_and_acyclic() {
+        // A -> B -> C -> B (cycle on B-C), A -> D (acyclic).
+        let (mut graph, nodes) = make_graph_with_nodes(4);
+        let [a, b, c, d] = [nodes[0], nodes[1], nodes[2], nodes[3]];
+        graph.queue_connect(a, b);
+        graph.queue_connect(b, c);
+        graph.queue_connect(c, b); // cycle
+        graph.queue_connect(a, d);
+        graph.apply_mutations();
+
+        let (levels, back_edges) = graph.topological_order_by_level();
+        // A should be at level 0, D at level 1.
+        // B and C are in the cycle catch-all level.
+        let total_nodes: usize = levels.iter().map(|l| l.len()).sum();
+        assert_eq!(total_nodes, 4);
+        // A must be in the earliest level.
+        assert!(levels[0].contains(&a));
+        // D should be processed (not in cycle).
+        let d_level = levels.iter().position(|l| l.contains(&d));
+        assert!(d_level.is_some());
+        assert!(!back_edges.is_empty());
     }
 }
