@@ -1133,7 +1133,10 @@ mod tests {
 
         let (order, back_edges) = graph.topological_order_with_feedback();
         assert_eq!(order.len(), 4);
-        assert!(back_edges.is_empty(), "acyclic diamond should have no back edges");
+        assert!(
+            back_edges.is_empty(),
+            "acyclic diamond should have no back edges"
+        );
 
         // A must be first (only node with in-degree 0).
         assert_eq!(order[0], a);

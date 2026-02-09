@@ -83,6 +83,55 @@ typedef enum FfiEventKind {
 } FfiEventKind;
 
 /**
+ * C-compatible wire color.
+ */
+typedef enum FfiWireColor {
+  RED = 0,
+  GREEN = 1,
+} FfiWireColor;
+
+/**
+ * C-compatible signal selector kind.
+ */
+typedef enum FfiSelectorKind {
+  SIGNAL = 0,
+  CONSTANT = 1,
+  EACH = 2,
+} FfiSelectorKind;
+
+/**
+ * C-compatible arithmetic operation.
+ */
+typedef enum FfiArithmeticOp {
+  ADD = 0,
+  SUB = 1,
+  MUL = 2,
+  DIV = 3,
+  MOD = 4,
+} FfiArithmeticOp;
+
+/**
+ * C-compatible comparison operation.
+ */
+typedef enum FfiComparisonOp {
+  GT = 0,
+  LT = 1,
+  EQ = 2,
+  GTE = 3,
+  LTE = 4,
+  NE = 5,
+} FfiComparisonOp;
+
+/**
+ * C-compatible decider output kind.
+ */
+typedef enum FfiDeciderOutputKind {
+  ONE = 0,
+  INPUT_COUNT = 1,
+  EVERYTHING = 2,
+} FfiDeciderOutputKind;
+
+/**
  * C-compatible representation of a PendingNodeId.
  */
 typedef uint64_t FfiPendingNodeId;
@@ -221,6 +270,11 @@ typedef struct FfiRecipe {
   const struct FfiItemStack *outputs;
   uint32_t duration;
 } FfiRecipe;
+
+/**
+ * C-compatible wire network ID.
+ */
+typedef uint32_t FfiWireNetworkId;
 
 /**
  * Create a new engine with `Tick` simulation strategy.
@@ -564,5 +618,195 @@ bool factorial_is_poisoned(const FactorialEngine *engine);
  * `engine` must be a valid engine pointer.
  */
 enum FactorialResult factorial_clear_poison(FactorialEngine *engine);
+
+/**
+ * Register the logic module with the engine.
+ *
+ * Must be called before any other `factorial_logic_*` function. Calling
+ * this more than once on the same engine is a no-op (the second bridge
+ * is simply added; prefer calling only once).
+ *
+ * # Safety
+ *
+ * `engine` must be a valid engine pointer.
+ */
+enum FactorialResult factorial_logic_register(FactorialEngine *engine);
+
+/**
+ * Create a wire network with the given color. The new network ID is
+ * written to `out_id`.
+ *
+ * # Safety
+ *
+ * `engine` and `out_id` must be valid pointers.
+ */
+enum FactorialResult factorial_logic_create_network(FactorialEngine *engine,
+                                                    enum FfiWireColor color,
+                                                    FfiWireNetworkId *out_id);
+
+/**
+ * Remove a wire network.
+ *
+ * # Safety
+ *
+ * `engine` must be a valid engine pointer.
+ */
+enum FactorialResult factorial_logic_remove_network(FactorialEngine *engine,
+                                                    FfiWireNetworkId network_id);
+
+/**
+ * Add a node to a wire network.
+ *
+ * # Safety
+ *
+ * `engine` must be a valid engine pointer.
+ */
+enum FactorialResult factorial_logic_add_to_network(FactorialEngine *engine,
+                                                    FfiWireNetworkId network_id,
+                                                    FfiNodeId node_id);
+
+/**
+ * Remove a node from a wire network.
+ *
+ * # Safety
+ *
+ * `engine` must be a valid engine pointer.
+ */
+enum FactorialResult factorial_logic_remove_from_network(FactorialEngine *engine,
+                                                         FfiWireNetworkId network_id,
+                                                         FfiNodeId node_id);
+
+/**
+ * Set a constant combinator on a node.
+ *
+ * `item_ids_ptr` and `values_ptr` are parallel arrays of length `count`.
+ * Each pair defines a signal: `item_ids[i]` -> `values[i]` (raw Fixed64 bits).
+ * `enabled` is non-zero for enabled.
+ *
+ * # Safety
+ *
+ * `engine` must be a valid engine pointer. `item_ids_ptr` and `values_ptr`
+ * must point to arrays of at least `count` elements.
+ */
+enum FactorialResult factorial_logic_set_constant(FactorialEngine *engine,
+                                                  FfiNodeId node_id,
+                                                  const uint32_t *item_ids_ptr,
+                                                  const int64_t *values_ptr,
+                                                  uint32_t count,
+                                                  uint8_t enabled);
+
+/**
+ * Set an arithmetic combinator on a node.
+ *
+ * Left/right operands are specified as (kind, value) pairs where `value`
+ * is the item ID for `Signal`, raw Fixed64 bits for `Constant`, or
+ * ignored for `Each`.
+ *
+ * # Safety
+ *
+ * `engine` must be a valid engine pointer.
+ */
+enum FactorialResult factorial_logic_set_arithmetic(FactorialEngine *engine,
+                                                    FfiNodeId node_id,
+                                                    enum FfiSelectorKind left_kind,
+                                                    uint64_t left_value,
+                                                    enum FfiArithmeticOp op,
+                                                    enum FfiSelectorKind right_kind,
+                                                    uint64_t right_value,
+                                                    uint32_t output_item);
+
+/**
+ * Set a decider combinator on a node.
+ *
+ * Left/right operands are specified as (kind, value) pairs. The output
+ * kind determines what is emitted when the condition is true.
+ *
+ * # Safety
+ *
+ * `engine` must be a valid engine pointer.
+ */
+enum FactorialResult factorial_logic_set_decider(FactorialEngine *engine,
+                                                 FfiNodeId node_id,
+                                                 enum FfiSelectorKind left_kind,
+                                                 uint64_t left_value,
+                                                 enum FfiComparisonOp cmp_op,
+                                                 enum FfiSelectorKind right_kind,
+                                                 uint64_t right_value,
+                                                 enum FfiDeciderOutputKind output_kind,
+                                                 uint32_t output_item);
+
+/**
+ * Set circuit control on a node.
+ *
+ * The condition is specified as left/right (kind, value) pairs and a
+ * comparison operator. The wire color determines which network to read
+ * signals from.
+ *
+ * # Safety
+ *
+ * `engine` must be a valid engine pointer.
+ */
+enum FactorialResult factorial_logic_set_circuit_control(FactorialEngine *engine,
+                                                         FfiNodeId node_id,
+                                                         enum FfiSelectorKind left_kind,
+                                                         uint64_t left_value,
+                                                         enum FfiComparisonOp cmp_op,
+                                                         enum FfiSelectorKind right_kind,
+                                                         uint64_t right_value,
+                                                         enum FfiWireColor wire_color);
+
+/**
+ * Query whether a node's circuit control condition is active.
+ *
+ * Writes `1` to `out_active` if active, `0` if inactive. Returns
+ * `NodeNotFound` if the node has no circuit control.
+ *
+ * # Safety
+ *
+ * `engine` and `out_active` must be valid pointers.
+ */
+enum FactorialResult factorial_logic_is_active(FactorialEngine *engine,
+                                               FfiNodeId node_id,
+                                               uint8_t *out_active);
+
+/**
+ * Query a signal value from a wire network.
+ *
+ * Writes the raw Fixed64 bits to `out_value`. If the signal is not
+ * present, writes 0.
+ *
+ * # Safety
+ *
+ * `engine` and `out_value` must be valid pointers.
+ */
+enum FactorialResult factorial_logic_get_network_signal(FactorialEngine *engine,
+                                                        FfiWireNetworkId network_id,
+                                                        uint32_t item_id,
+                                                        int64_t *out_value);
+
+/**
+ * Remove all logic state for a node (constant, combinators, circuit
+ * control, and network memberships).
+ *
+ * # Safety
+ *
+ * `engine` must be a valid engine pointer.
+ */
+enum FactorialResult factorial_logic_remove_node(FactorialEngine *engine, FfiNodeId node_id);
+
+/**
+ * Set an inventory reader on a node. The reader watches `target_node_id`
+ * and emits signals based on its inventory contents.
+ *
+ * `source` is `0` for Input, `1` for Output.
+ *
+ * # Safety
+ *
+ * `engine` must be a valid engine pointer.
+ */
+enum FactorialResult factorial_logic_set_inventory_reader(FactorialEngine *engine,
+                                                          FfiNodeId node_id,
+                                                          FfiNodeId target_node_id,
+                                                          uint8_t source);
 
 #endif  /* FACTORIAL_H */

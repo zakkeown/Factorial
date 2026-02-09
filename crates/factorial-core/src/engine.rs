@@ -312,6 +312,20 @@ impl Engine {
         self.modules.get_mut(index)
     }
 
+    /// Find a registered module by concrete type.
+    pub fn find_module<T: crate::module::Module + 'static>(&self) -> Option<&T> {
+        self.modules
+            .iter()
+            .find_map(|m| m.as_any().downcast_ref::<T>())
+    }
+
+    /// Find a registered module by concrete type (mutable).
+    pub fn find_module_mut<T: crate::module::Module + 'static>(&mut self) -> Option<&mut T> {
+        self.modules
+            .iter_mut()
+            .find_map(|m| m.as_any_mut().downcast_mut::<T>())
+    }
+
     // -----------------------------------------------------------------------
     // Junction management
     // -----------------------------------------------------------------------
@@ -3446,6 +3460,12 @@ mod tests {
             }
             fn on_tick(&mut self, _ctx: &mut crate::module::ModuleContext<'_>) {
                 *self.call_count.lock().unwrap() += 1;
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+            fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+                self
             }
         }
 

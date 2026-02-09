@@ -9,6 +9,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 factorial-core = { path = "../factorial-core" }
+factorial-logic = { path = "../factorial-logic" }
 slotmap = { workspace = true }
 
 [dev-dependencies]

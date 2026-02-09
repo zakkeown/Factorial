@@ -5,9 +5,7 @@ edition = "2024"
 
 [dependencies]
 factorial-core = { path = "../factorial-core" }
+bitcode = { workspace = true }
 fixed = { workspace = true }
 serde = { workspace = true }
 slotmap = { workspace = true }
-
-[dev-dependencies]
-bitcode = { workspace = true }

@@ -42,6 +42,12 @@ pub trait Module: std::fmt::Debug {
     fn load_state(&mut self, _data: &[u8]) -> Result<(), ModuleError> {
         Ok(())
     }
+
+    /// Downcast to `&dyn Any` for type-safe access to concrete module types.
+    fn as_any(&self) -> &dyn std::any::Any;
+
+    /// Downcast to `&mut dyn Any` for type-safe mutable access to concrete module types.
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any;
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +125,13 @@ mod tests {
         fn on_tick(&mut self, _ctx: &mut ModuleContext<'_>) {
             self.count += 1;
         }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -143,6 +156,13 @@ mod tests {
 
         fn on_tick(&mut self, ctx: &mut ModuleContext<'_>) {
             self.last_node_count = ctx.graph.node_count();
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
         }
     }
 
@@ -176,6 +196,13 @@ mod tests {
                     let _ = slot.add(self.item_type, self.quantity);
                 }
             }
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
         }
     }
 
@@ -217,6 +244,13 @@ mod tests {
             let bytes: [u8; 8] = data.try_into().unwrap();
             self.value = u64::from_le_bytes(bytes);
             Ok(())
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+            self
         }
     }
 

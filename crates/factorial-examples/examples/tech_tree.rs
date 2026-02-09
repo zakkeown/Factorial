@@ -23,7 +23,7 @@ fn main() {
         cost: ResearchCost::Points(100),
         unlocks: vec![
             Unlock::Building(BuildingTypeId(1)), // stone furnace
-            Unlock::Recipe(RecipeId(0)),          // iron plate recipe
+            Unlock::Recipe(RecipeId(0)),         // iron plate recipe
         ],
         repeatable: false,
         cost_scaling: None,
@@ -39,7 +39,7 @@ fn main() {
         cost: ResearchCost::Points(200),
         unlocks: vec![
             Unlock::Building(BuildingTypeId(2)), // electric furnace
-            Unlock::Recipe(RecipeId(1)),          // steel plate recipe
+            Unlock::Recipe(RecipeId(1)),         // steel plate recipe
         ],
         repeatable: false,
         cost_scaling: None,

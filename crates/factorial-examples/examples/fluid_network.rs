@@ -34,26 +34,42 @@ fn main() {
     let net = fluid.create_network(water_type);
 
     // Pump: produces 50 units of water per tick.
-    fluid.add_producer(net, pump, FluidProducer {
-        rate: Fixed64::from_num(50),
-    });
+    fluid.add_producer(
+        net,
+        pump,
+        FluidProducer {
+            rate: Fixed64::from_num(50),
+        },
+    );
 
     // Boiler: consumes 30 units of water per tick.
-    fluid.add_consumer(net, boiler, FluidConsumer {
-        rate: Fixed64::from_num(30),
-    });
+    fluid.add_consumer(
+        net,
+        boiler,
+        FluidConsumer {
+            rate: Fixed64::from_num(30),
+        },
+    );
 
     // Storage tank: holds up to 500 units, fill/drain rate 100/tick.
-    fluid.add_storage(net, tank, FluidStorage {
-        capacity: Fixed64::from_num(500),
-        current: Fixed64::from_num(0),
-        fill_rate: Fixed64::from_num(100),
-    });
+    fluid.add_storage(
+        net,
+        tank,
+        FluidStorage {
+            capacity: Fixed64::from_num(500),
+            current: Fixed64::from_num(0),
+            fill_rate: Fixed64::from_num(100),
+        },
+    );
 
     // Pipe: capacity 200 units throughput.
-    fluid.add_pipe(net, pipe, FluidPipe {
-        capacity: Fixed64::from_num(200),
-    });
+    fluid.add_pipe(
+        net,
+        pipe,
+        FluidPipe {
+            capacity: Fixed64::from_num(200),
+        },
+    );
 
     // --- Scenario 1: Normal operation (production > consumption) ---
 
@@ -83,9 +99,13 @@ fn main() {
     let r = engine.graph.apply_mutations();
     let boiler2 = r.resolve_node(p_boiler2).unwrap();
 
-    fluid.add_consumer(net, boiler2, FluidConsumer {
-        rate: Fixed64::from_num(80),
-    });
+    fluid.add_consumer(
+        net,
+        boiler2,
+        FluidConsumer {
+            rate: Fixed64::from_num(80),
+        },
+    );
 
     println!("Added second boiler consuming 80/tick.");
     println!("Total demand: 110/tick, production: 50/tick.\n");

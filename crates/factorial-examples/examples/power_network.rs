@@ -36,33 +36,50 @@ fn main() {
     let net = power.create_network();
 
     // Add a producer: 100W power plant.
-    power.add_producer(net, power_plant, PowerProducer {
-        capacity: Fixed64::from_num(100),
-    });
+    power.add_producer(
+        net,
+        power_plant,
+        PowerProducer {
+            capacity: Fixed64::from_num(100),
+        },
+    );
 
     // Add consumers with different priorities.
     power.add_consumer_with_priority(
-        net, assembler,
-        PowerConsumer { demand: Fixed64::from_num(40) },
+        net,
+        assembler,
+        PowerConsumer {
+            demand: Fixed64::from_num(40),
+        },
         PowerPriority::High,
     );
     power.add_consumer_with_priority(
-        net, smelter,
-        PowerConsumer { demand: Fixed64::from_num(40) },
+        net,
+        smelter,
+        PowerConsumer {
+            demand: Fixed64::from_num(40),
+        },
         PowerPriority::Medium,
     );
     power.add_consumer_with_priority(
-        net, lamp,
-        PowerConsumer { demand: Fixed64::from_num(40) },
+        net,
+        lamp,
+        PowerConsumer {
+            demand: Fixed64::from_num(40),
+        },
         PowerPriority::Low,
     );
 
     // Add a battery with 200J capacity, 50W charge/discharge rate.
-    power.add_storage(net, battery, PowerStorage {
-        capacity: Fixed64::from_num(200),
-        charge: Fixed64::from_num(100),
-        charge_rate: Fixed64::from_num(50),
-    });
+    power.add_storage(
+        net,
+        battery,
+        PowerStorage {
+            capacity: Fixed64::from_num(200),
+            charge: Fixed64::from_num(100),
+            charge_rate: Fixed64::from_num(50),
+        },
+    );
 
     // --- Scenario 1: Demand slightly exceeds production ---
     // Total demand: 120W, production: 100W, deficit: 20W.
@@ -99,9 +116,15 @@ fn main() {
         let charge = power.storage.get(&battery).unwrap().charge;
 
         // Check per-consumer satisfaction.
-        let asm_sat = power.get_consumer_satisfaction(net, assembler).unwrap_or(Fixed64::ZERO);
-        let smelt_sat = power.get_consumer_satisfaction(net, smelter).unwrap_or(Fixed64::ZERO);
-        let lamp_sat = power.get_consumer_satisfaction(net, lamp).unwrap_or(Fixed64::ZERO);
+        let asm_sat = power
+            .get_consumer_satisfaction(net, assembler)
+            .unwrap_or(Fixed64::ZERO);
+        let smelt_sat = power
+            .get_consumer_satisfaction(net, smelter)
+            .unwrap_or(Fixed64::ZERO);
+        let lamp_sat = power
+            .get_consumer_satisfaction(net, lamp)
+            .unwrap_or(Fixed64::ZERO);
 
         println!(
             "Tick {}: network={:.2}, asm={:.2}, smelt={:.2}, lamp={:.2}, battery={:.1}",

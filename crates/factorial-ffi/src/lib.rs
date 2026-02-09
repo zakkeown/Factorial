@@ -31,6 +31,12 @@ use factorial_core::transport::{
     BatchTransport, FlowTransport, ItemTransport, Transport, VehicleTransport,
 };
 
+use factorial_logic::combinator::{
+    ArithmeticCombinator, ArithmeticOp, DeciderCombinator, DeciderOutput, SignalSelector,
+};
+use factorial_logic::condition::{ComparisonOp, Condition, InventorySource};
+use factorial_logic::{LogicModuleBridge, SignalSet, WireColor, WireNetworkId};
+
 use slotmap::{Key, KeyData};
 
 // ---------------------------------------------------------------------------
@@ -1590,6 +1596,673 @@ pub unsafe extern "C" fn factorial_clear_poison(engine: *mut FactorialEngine) ->
     FactorialResult::Ok
 }
 
+// ---------------------------------------------------------------------------
+// FFI-safe logic network types
+// ---------------------------------------------------------------------------
+
+/// C-compatible wire color.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiWireColor {
+    Red = 0,
+    Green = 1,
+}
+
+/// C-compatible signal selector kind.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiSelectorKind {
+    Signal = 0,
+    Constant = 1,
+    Each = 2,
+}
+
+/// C-compatible arithmetic operation.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiArithmeticOp {
+    Add = 0,
+    Sub = 1,
+    Mul = 2,
+    Div = 3,
+    Mod = 4,
+}
+
+/// C-compatible comparison operation.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiComparisonOp {
+    Gt = 0,
+    Lt = 1,
+    Eq = 2,
+    Gte = 3,
+    Lte = 4,
+    Ne = 5,
+}
+
+/// C-compatible decider output kind.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiDeciderOutputKind {
+    One = 0,
+    InputCount = 1,
+    Everything = 2,
+}
+
+/// C-compatible wire network ID.
+pub type FfiWireNetworkId = u32;
+
+// ---------------------------------------------------------------------------
+// Logic FFI helpers
+// ---------------------------------------------------------------------------
+
+fn ffi_to_wire_color(color: FfiWireColor) -> WireColor {
+    match color {
+        FfiWireColor::Red => WireColor::Red,
+        FfiWireColor::Green => WireColor::Green,
+    }
+}
+
+fn ffi_to_selector(kind: FfiSelectorKind, value: u64) -> SignalSelector {
+    match kind {
+        FfiSelectorKind::Signal => SignalSelector::Signal(ItemTypeId(value as u32)),
+        FfiSelectorKind::Constant => SignalSelector::Constant(Fixed64::from_bits(value as i64)),
+        FfiSelectorKind::Each => SignalSelector::Each,
+    }
+}
+
+fn ffi_to_arithmetic_op(op: FfiArithmeticOp) -> ArithmeticOp {
+    match op {
+        FfiArithmeticOp::Add => ArithmeticOp::Add,
+        FfiArithmeticOp::Sub => ArithmeticOp::Subtract,
+        FfiArithmeticOp::Mul => ArithmeticOp::Multiply,
+        FfiArithmeticOp::Div => ArithmeticOp::Divide,
+        FfiArithmeticOp::Mod => ArithmeticOp::Modulo,
+    }
+}
+
+fn ffi_to_comparison_op(op: FfiComparisonOp) -> ComparisonOp {
+    match op {
+        FfiComparisonOp::Gt => ComparisonOp::Gt,
+        FfiComparisonOp::Lt => ComparisonOp::Lt,
+        FfiComparisonOp::Eq => ComparisonOp::Eq,
+        FfiComparisonOp::Gte => ComparisonOp::Gte,
+        FfiComparisonOp::Lte => ComparisonOp::Lte,
+        FfiComparisonOp::Ne => ComparisonOp::Ne,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Logic network FFI functions
+// ---------------------------------------------------------------------------
+
+/// Register the logic module with the engine.
+///
+/// Must be called before any other `factorial_logic_*` function. Calling
+/// this more than once on the same engine is a no-op (the second bridge
+/// is simply added; prefer calling only once).
+///
+/// # Safety
+///
+/// `engine` must be a valid engine pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_logic_register(engine: *mut FactorialEngine) -> FactorialResult {
+    if engine.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        engine
+            .inner
+            .register_module(Box::new(LogicModuleBridge::new()));
+        FactorialResult::Ok
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
+    }
+}
+
+/// Create a wire network with the given color. The new network ID is
+/// written to `out_id`.
+///
+/// # Safety
+///
+/// `engine` and `out_id` must be valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_logic_create_network(
+    engine: *mut FactorialEngine,
+    color: FfiWireColor,
+    out_id: *mut FfiWireNetworkId,
+) -> FactorialResult {
+    if engine.is_null() || out_id.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let bridge = match engine.inner.find_module_mut::<LogicModuleBridge>() {
+            Some(b) => b,
+            None => return FactorialResult::InternalError,
+        };
+        let net_id = bridge.logic_mut().create_network(ffi_to_wire_color(color));
+        unsafe { *out_id = net_id.0 };
+        FactorialResult::Ok
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
+    }
+}
+
+/// Remove a wire network.
+///
+/// # Safety
+///
+/// `engine` must be a valid engine pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_logic_remove_network(
+    engine: *mut FactorialEngine,
+    network_id: FfiWireNetworkId,
+) -> FactorialResult {
+    if engine.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let bridge = match engine.inner.find_module_mut::<LogicModuleBridge>() {
+            Some(b) => b,
+            None => return FactorialResult::InternalError,
+        };
+        bridge.logic_mut().remove_network(WireNetworkId(network_id));
+        FactorialResult::Ok
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
+    }
+}
+
+/// Add a node to a wire network.
+///
+/// # Safety
+///
+/// `engine` must be a valid engine pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_logic_add_to_network(
+    engine: *mut FactorialEngine,
+    network_id: FfiWireNetworkId,
+    node_id: FfiNodeId,
+) -> FactorialResult {
+    if engine.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let bridge = match engine.inner.find_module_mut::<LogicModuleBridge>() {
+            Some(b) => b,
+            None => return FactorialResult::InternalError,
+        };
+        bridge
+            .logic_mut()
+            .add_to_network(WireNetworkId(network_id), ffi_to_node_id(node_id));
+        FactorialResult::Ok
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
+    }
+}
+
+/// Remove a node from a wire network.
+///
+/// # Safety
+///
+/// `engine` must be a valid engine pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_logic_remove_from_network(
+    engine: *mut FactorialEngine,
+    network_id: FfiWireNetworkId,
+    node_id: FfiNodeId,
+) -> FactorialResult {
+    if engine.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let bridge = match engine.inner.find_module_mut::<LogicModuleBridge>() {
+            Some(b) => b,
+            None => return FactorialResult::InternalError,
+        };
+        bridge
+            .logic_mut()
+            .remove_from_network(WireNetworkId(network_id), ffi_to_node_id(node_id));
+        FactorialResult::Ok
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
+    }
+}
+
+/// Set a constant combinator on a node.
+///
+/// `item_ids_ptr` and `values_ptr` are parallel arrays of length `count`.
+/// Each pair defines a signal: `item_ids[i]` -> `values[i]` (raw Fixed64 bits).
+/// `enabled` is non-zero for enabled.
+///
+/// # Safety
+///
+/// `engine` must be a valid engine pointer. `item_ids_ptr` and `values_ptr`
+/// must point to arrays of at least `count` elements.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_logic_set_constant(
+    engine: *mut FactorialEngine,
+    node_id: FfiNodeId,
+    item_ids_ptr: *const u32,
+    values_ptr: *const i64,
+    count: u32,
+    enabled: u8,
+) -> FactorialResult {
+    if engine.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    if count > 0 && (item_ids_ptr.is_null() || values_ptr.is_null()) {
+        return FactorialResult::NullPointer;
+    }
+    match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let bridge = match engine.inner.find_module_mut::<LogicModuleBridge>() {
+            Some(b) => b,
+            None => return FactorialResult::InternalError,
+        };
+        let mut signals = SignalSet::new();
+        if count > 0 {
+            let item_ids = unsafe { std::slice::from_raw_parts(item_ids_ptr, count as usize) };
+            let values = unsafe { std::slice::from_raw_parts(values_ptr, count as usize) };
+            for i in 0..count as usize {
+                signals.insert(ItemTypeId(item_ids[i]), Fixed64::from_bits(values[i]));
+            }
+        }
+        bridge
+            .logic_mut()
+            .set_constant(ffi_to_node_id(node_id), signals, enabled != 0);
+        FactorialResult::Ok
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
+    }
+}
+
+/// Set an arithmetic combinator on a node.
+///
+/// Left/right operands are specified as (kind, value) pairs where `value`
+/// is the item ID for `Signal`, raw Fixed64 bits for `Constant`, or
+/// ignored for `Each`.
+///
+/// # Safety
+///
+/// `engine` must be a valid engine pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_logic_set_arithmetic(
+    engine: *mut FactorialEngine,
+    node_id: FfiNodeId,
+    left_kind: FfiSelectorKind,
+    left_value: u64,
+    op: FfiArithmeticOp,
+    right_kind: FfiSelectorKind,
+    right_value: u64,
+    output_item: u32,
+) -> FactorialResult {
+    if engine.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let bridge = match engine.inner.find_module_mut::<LogicModuleBridge>() {
+            Some(b) => b,
+            None => return FactorialResult::InternalError,
+        };
+        let combinator = ArithmeticCombinator {
+            left: ffi_to_selector(left_kind, left_value),
+            op: ffi_to_arithmetic_op(op),
+            right: ffi_to_selector(right_kind, right_value),
+            output: ItemTypeId(output_item),
+        };
+        bridge
+            .logic_mut()
+            .set_arithmetic(ffi_to_node_id(node_id), combinator);
+        FactorialResult::Ok
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
+    }
+}
+
+/// Set a decider combinator on a node.
+///
+/// Left/right operands are specified as (kind, value) pairs. The output
+/// kind determines what is emitted when the condition is true.
+///
+/// # Safety
+///
+/// `engine` must be a valid engine pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_logic_set_decider(
+    engine: *mut FactorialEngine,
+    node_id: FfiNodeId,
+    left_kind: FfiSelectorKind,
+    left_value: u64,
+    cmp_op: FfiComparisonOp,
+    right_kind: FfiSelectorKind,
+    right_value: u64,
+    output_kind: FfiDeciderOutputKind,
+    output_item: u32,
+) -> FactorialResult {
+    if engine.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let bridge = match engine.inner.find_module_mut::<LogicModuleBridge>() {
+            Some(b) => b,
+            None => return FactorialResult::InternalError,
+        };
+        let condition = Condition {
+            left: ffi_to_selector(left_kind, left_value),
+            op: ffi_to_comparison_op(cmp_op),
+            right: ffi_to_selector(right_kind, right_value),
+        };
+        let output = match output_kind {
+            FfiDeciderOutputKind::One => DeciderOutput::One(ItemTypeId(output_item)),
+            FfiDeciderOutputKind::InputCount => DeciderOutput::InputCount(ItemTypeId(output_item)),
+            FfiDeciderOutputKind::Everything => DeciderOutput::Everything,
+        };
+        let combinator = DeciderCombinator { condition, output };
+        bridge
+            .logic_mut()
+            .set_decider(ffi_to_node_id(node_id), combinator);
+        FactorialResult::Ok
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
+    }
+}
+
+/// Set circuit control on a node.
+///
+/// The condition is specified as left/right (kind, value) pairs and a
+/// comparison operator. The wire color determines which network to read
+/// signals from.
+///
+/// # Safety
+///
+/// `engine` must be a valid engine pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_logic_set_circuit_control(
+    engine: *mut FactorialEngine,
+    node_id: FfiNodeId,
+    left_kind: FfiSelectorKind,
+    left_value: u64,
+    cmp_op: FfiComparisonOp,
+    right_kind: FfiSelectorKind,
+    right_value: u64,
+    wire_color: FfiWireColor,
+) -> FactorialResult {
+    if engine.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let bridge = match engine.inner.find_module_mut::<LogicModuleBridge>() {
+            Some(b) => b,
+            None => return FactorialResult::InternalError,
+        };
+        let condition = Condition {
+            left: ffi_to_selector(left_kind, left_value),
+            op: ffi_to_comparison_op(cmp_op),
+            right: ffi_to_selector(right_kind, right_value),
+        };
+        bridge.logic_mut().set_circuit_control(
+            ffi_to_node_id(node_id),
+            condition,
+            ffi_to_wire_color(wire_color),
+        );
+        FactorialResult::Ok
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
+    }
+}
+
+/// Query whether a node's circuit control condition is active.
+///
+/// Writes `1` to `out_active` if active, `0` if inactive. Returns
+/// `NodeNotFound` if the node has no circuit control.
+///
+/// # Safety
+///
+/// `engine` and `out_active` must be valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_logic_is_active(
+    engine: *mut FactorialEngine,
+    node_id: FfiNodeId,
+    out_active: *mut u8,
+) -> FactorialResult {
+    if engine.is_null() || out_active.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let bridge = match engine.inner.find_module::<LogicModuleBridge>() {
+            Some(b) => b,
+            None => return FactorialResult::InternalError,
+        };
+        match bridge.logic().is_active(ffi_to_node_id(node_id)) {
+            Some(active) => {
+                unsafe { *out_active = u8::from(active) };
+                FactorialResult::Ok
+            }
+            None => FactorialResult::NodeNotFound,
+        }
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
+    }
+}
+
+/// Query a signal value from a wire network.
+///
+/// Writes the raw Fixed64 bits to `out_value`. If the signal is not
+/// present, writes 0.
+///
+/// # Safety
+///
+/// `engine` and `out_value` must be valid pointers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_logic_get_network_signal(
+    engine: *mut FactorialEngine,
+    network_id: FfiWireNetworkId,
+    item_id: u32,
+    out_value: *mut i64,
+) -> FactorialResult {
+    if engine.is_null() || out_value.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let bridge = match engine.inner.find_module::<LogicModuleBridge>() {
+            Some(b) => b,
+            None => return FactorialResult::InternalError,
+        };
+        let zero = Fixed64::from_num(0);
+        let value = bridge
+            .logic()
+            .network_signals(WireNetworkId(network_id))
+            .and_then(|signals| signals.get(&ItemTypeId(item_id)).copied())
+            .unwrap_or(zero);
+        unsafe { *out_value = value.to_bits() };
+        FactorialResult::Ok
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
+    }
+}
+
+/// Remove all logic state for a node (constant, combinators, circuit
+/// control, and network memberships).
+///
+/// # Safety
+///
+/// `engine` must be a valid engine pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_logic_remove_node(
+    engine: *mut FactorialEngine,
+    node_id: FfiNodeId,
+) -> FactorialResult {
+    if engine.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let bridge = match engine.inner.find_module_mut::<LogicModuleBridge>() {
+            Some(b) => b,
+            None => return FactorialResult::InternalError,
+        };
+        bridge.logic_mut().remove_node(ffi_to_node_id(node_id));
+        FactorialResult::Ok
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
+    }
+}
+
+/// Set an inventory reader on a node. The reader watches `target_node_id`
+/// and emits signals based on its inventory contents.
+///
+/// `source` is `0` for Input, `1` for Output.
+///
+/// # Safety
+///
+/// `engine` must be a valid engine pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn factorial_logic_set_inventory_reader(
+    engine: *mut FactorialEngine,
+    node_id: FfiNodeId,
+    target_node_id: FfiNodeId,
+    source: u8,
+) -> FactorialResult {
+    if engine.is_null() {
+        return FactorialResult::NullPointer;
+    }
+    match catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let engine = unsafe { &mut *engine };
+        if engine.poisoned {
+            return FactorialResult::Poisoned;
+        }
+        let bridge = match engine.inner.find_module_mut::<LogicModuleBridge>() {
+            Some(b) => b,
+            None => return FactorialResult::InternalError,
+        };
+        let inv_source = if source == 0 {
+            InventorySource::Input
+        } else {
+            InventorySource::Output
+        };
+        bridge.logic_mut().set_inventory_reader(
+            ffi_to_node_id(node_id),
+            ffi_to_node_id(target_node_id),
+            inv_source,
+        );
+        FactorialResult::Ok
+    })) {
+        Ok(result) => result,
+        Err(_) => {
+            let engine = unsafe { &mut *engine };
+            engine.poisoned = true;
+            FactorialResult::InternalError
+        }
+    }
+}
+
 // ===========================================================================
 // Tests
 // ===========================================================================
@@ -3079,5 +3752,422 @@ mod tests {
         unsafe { factorial_free_buffer(buf) };
         unsafe { factorial_destroy(restored) };
         unsafe { factorial_destroy(engine_ptr) };
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 37: Logic -- register, create network, set constant, step, query
+    // -----------------------------------------------------------------------
+    #[test]
+    fn logic_constant_signal_round_trip() {
+        let engine = factorial_create();
+
+        // Register logic module.
+        let result = unsafe { factorial_logic_register(engine) };
+        assert_eq!(result, FactorialResult::Ok);
+
+        // Add a node via FFI.
+        let node_ffi = ffi_add_node_and_apply(engine, 0);
+
+        // Create a red wire network.
+        let mut net_id: FfiWireNetworkId = 0;
+        let result =
+            unsafe { factorial_logic_create_network(engine, FfiWireColor::Red, &mut net_id) };
+        assert_eq!(result, FactorialResult::Ok);
+
+        // Add node to network.
+        let result = unsafe { factorial_logic_add_to_network(engine, net_id, node_ffi) };
+        assert_eq!(result, FactorialResult::Ok);
+
+        // Set constant combinator: iron(0) = 42.
+        let item_ids: [u32; 1] = [0];
+        let values: [i64; 1] = [Fixed64::from_num(42).to_bits()];
+        let result = unsafe {
+            factorial_logic_set_constant(
+                engine,
+                node_ffi,
+                item_ids.as_ptr(),
+                values.as_ptr(),
+                1,
+                1, // enabled
+            )
+        };
+        assert_eq!(result, FactorialResult::Ok);
+
+        // Step to propagate signals.
+        let result = unsafe { factorial_step(engine) };
+        assert_eq!(result, FactorialResult::Ok);
+
+        // Query the signal value.
+        let mut signal_value: i64 = 0;
+        let result =
+            unsafe { factorial_logic_get_network_signal(engine, net_id, 0, &mut signal_value) };
+        assert_eq!(result, FactorialResult::Ok);
+        assert_eq!(
+            signal_value,
+            Fixed64::from_num(42).to_bits(),
+            "constant combinator should output 42 for iron"
+        );
+
+        unsafe { factorial_destroy(engine) };
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 38: Logic -- circuit control activation
+    // -----------------------------------------------------------------------
+    #[test]
+    fn logic_circuit_control_activation() {
+        let engine = factorial_create();
+
+        // Register logic module.
+        let result = unsafe { factorial_logic_register(engine) };
+        assert_eq!(result, FactorialResult::Ok);
+
+        // Add two nodes: one for constant, one for circuit control.
+        let const_node = ffi_add_node_and_apply(engine, 0);
+        let ctrl_node = ffi_add_node_and_apply(engine, 1);
+
+        // Create a red network with both nodes.
+        let mut net_id: FfiWireNetworkId = 0;
+        unsafe { factorial_logic_create_network(engine, FfiWireColor::Red, &mut net_id) };
+        unsafe { factorial_logic_add_to_network(engine, net_id, const_node) };
+        unsafe { factorial_logic_add_to_network(engine, net_id, ctrl_node) };
+
+        // Set constant: iron(0) = 100.
+        let item_ids: [u32; 1] = [0];
+        let values: [i64; 1] = [Fixed64::from_num(100).to_bits()];
+        unsafe {
+            factorial_logic_set_constant(
+                engine,
+                const_node,
+                item_ids.as_ptr(),
+                values.as_ptr(),
+                1,
+                1,
+            )
+        };
+
+        // Set circuit control on ctrl_node: iron(0) > 50 on red wire.
+        let result = unsafe {
+            factorial_logic_set_circuit_control(
+                engine,
+                ctrl_node,
+                FfiSelectorKind::Signal,
+                0, // iron item ID
+                FfiComparisonOp::Gt,
+                FfiSelectorKind::Constant,
+                Fixed64::from_num(50).to_bits() as u64,
+                FfiWireColor::Red,
+            )
+        };
+        assert_eq!(result, FactorialResult::Ok);
+
+        // Step to evaluate.
+        unsafe { factorial_step(engine) };
+
+        // Query is_active -- should be true (100 > 50).
+        let mut active: u8 = 0;
+        let result = unsafe { factorial_logic_is_active(engine, ctrl_node, &mut active) };
+        assert_eq!(result, FactorialResult::Ok);
+        assert_eq!(active, 1, "circuit control should be active (100 > 50)");
+
+        unsafe { factorial_destroy(engine) };
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 39: Logic -- null pointer handling
+    // -----------------------------------------------------------------------
+    #[test]
+    fn logic_null_pointer_handling() {
+        // All logic functions should return NullPointer when engine is null.
+        assert_eq!(
+            unsafe { factorial_logic_register(ptr::null_mut()) },
+            FactorialResult::NullPointer
+        );
+        assert_eq!(
+            unsafe {
+                factorial_logic_create_network(ptr::null_mut(), FfiWireColor::Red, &mut 0u32)
+            },
+            FactorialResult::NullPointer
+        );
+        assert_eq!(
+            unsafe { factorial_logic_remove_network(ptr::null_mut(), 0) },
+            FactorialResult::NullPointer
+        );
+        assert_eq!(
+            unsafe { factorial_logic_add_to_network(ptr::null_mut(), 0, 0) },
+            FactorialResult::NullPointer
+        );
+        assert_eq!(
+            unsafe { factorial_logic_remove_from_network(ptr::null_mut(), 0, 0) },
+            FactorialResult::NullPointer
+        );
+        assert_eq!(
+            unsafe {
+                factorial_logic_set_constant(ptr::null_mut(), 0, ptr::null(), ptr::null(), 0, 1)
+            },
+            FactorialResult::NullPointer
+        );
+        assert_eq!(
+            unsafe {
+                factorial_logic_set_arithmetic(
+                    ptr::null_mut(),
+                    0,
+                    FfiSelectorKind::Constant,
+                    0,
+                    FfiArithmeticOp::Add,
+                    FfiSelectorKind::Constant,
+                    0,
+                    0,
+                )
+            },
+            FactorialResult::NullPointer
+        );
+        assert_eq!(
+            unsafe {
+                factorial_logic_set_decider(
+                    ptr::null_mut(),
+                    0,
+                    FfiSelectorKind::Constant,
+                    0,
+                    FfiComparisonOp::Gt,
+                    FfiSelectorKind::Constant,
+                    0,
+                    FfiDeciderOutputKind::One,
+                    0,
+                )
+            },
+            FactorialResult::NullPointer
+        );
+        assert_eq!(
+            unsafe {
+                factorial_logic_set_circuit_control(
+                    ptr::null_mut(),
+                    0,
+                    FfiSelectorKind::Constant,
+                    0,
+                    FfiComparisonOp::Gt,
+                    FfiSelectorKind::Constant,
+                    0,
+                    FfiWireColor::Red,
+                )
+            },
+            FactorialResult::NullPointer
+        );
+        assert_eq!(
+            unsafe { factorial_logic_is_active(ptr::null_mut(), 0, &mut 0u8) },
+            FactorialResult::NullPointer
+        );
+        assert_eq!(
+            unsafe { factorial_logic_get_network_signal(ptr::null_mut(), 0, 0, &mut 0i64) },
+            FactorialResult::NullPointer
+        );
+        assert_eq!(
+            unsafe { factorial_logic_remove_node(ptr::null_mut(), 0) },
+            FactorialResult::NullPointer
+        );
+        assert_eq!(
+            unsafe { factorial_logic_set_inventory_reader(ptr::null_mut(), 0, 0, 0) },
+            FactorialResult::NullPointer
+        );
+
+        // Test null output pointer variants.
+        let engine = factorial_create();
+        unsafe { factorial_logic_register(engine) };
+
+        assert_eq!(
+            unsafe { factorial_logic_create_network(engine, FfiWireColor::Red, ptr::null_mut()) },
+            FactorialResult::NullPointer
+        );
+        assert_eq!(
+            unsafe { factorial_logic_is_active(engine, 0, ptr::null_mut()) },
+            FactorialResult::NullPointer
+        );
+        assert_eq!(
+            unsafe { factorial_logic_get_network_signal(engine, 0, 0, ptr::null_mut()) },
+            FactorialResult::NullPointer
+        );
+
+        unsafe { factorial_destroy(engine) };
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 40: Logic -- remove network and remove node
+    // -----------------------------------------------------------------------
+    #[test]
+    fn logic_remove_network_and_node() {
+        let engine = factorial_create();
+        unsafe { factorial_logic_register(engine) };
+
+        let node_ffi = ffi_add_node_and_apply(engine, 0);
+
+        // Create network and add node.
+        let mut net_id: FfiWireNetworkId = 0;
+        unsafe { factorial_logic_create_network(engine, FfiWireColor::Red, &mut net_id) };
+        unsafe { factorial_logic_add_to_network(engine, net_id, node_ffi) };
+
+        // Set constant.
+        let item_ids: [u32; 1] = [0];
+        let values: [i64; 1] = [Fixed64::from_num(10).to_bits()];
+        unsafe {
+            factorial_logic_set_constant(engine, node_ffi, item_ids.as_ptr(), values.as_ptr(), 1, 1)
+        };
+
+        // Step to populate signals.
+        unsafe { factorial_step(engine) };
+
+        // Verify signal is present.
+        let mut val: i64 = 0;
+        unsafe { factorial_logic_get_network_signal(engine, net_id, 0, &mut val) };
+        assert_eq!(val, Fixed64::from_num(10).to_bits());
+
+        // Remove node from logic.
+        let result = unsafe { factorial_logic_remove_node(engine, node_ffi) };
+        assert_eq!(result, FactorialResult::Ok);
+
+        // Step again -- signal should be gone since node was removed.
+        unsafe { factorial_step(engine) };
+        unsafe { factorial_logic_get_network_signal(engine, net_id, 0, &mut val) };
+        assert_eq!(val, Fixed64::from_num(0).to_bits());
+
+        // Remove the network itself.
+        let result = unsafe { factorial_logic_remove_network(engine, net_id) };
+        assert_eq!(result, FactorialResult::Ok);
+
+        unsafe { factorial_destroy(engine) };
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 41: Logic -- module not registered returns InternalError
+    // -----------------------------------------------------------------------
+    #[test]
+    fn logic_module_not_registered() {
+        let engine = factorial_create();
+
+        // Do NOT register logic module. All logic calls should return InternalError.
+        let mut net_id: FfiWireNetworkId = 0;
+        assert_eq!(
+            unsafe { factorial_logic_create_network(engine, FfiWireColor::Red, &mut net_id) },
+            FactorialResult::InternalError
+        );
+
+        unsafe { factorial_destroy(engine) };
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 42: Logic -- set arithmetic combinator
+    // -----------------------------------------------------------------------
+    #[test]
+    fn logic_arithmetic_combinator() {
+        let engine = factorial_create();
+        unsafe { factorial_logic_register(engine) };
+
+        let const_node = ffi_add_node_and_apply(engine, 0);
+        let arith_node = ffi_add_node_and_apply(engine, 1);
+
+        // Create network.
+        let mut net_id: FfiWireNetworkId = 0;
+        unsafe { factorial_logic_create_network(engine, FfiWireColor::Red, &mut net_id) };
+        unsafe { factorial_logic_add_to_network(engine, net_id, const_node) };
+        unsafe { factorial_logic_add_to_network(engine, net_id, arith_node) };
+
+        // Set constant: iron(0) = 10.
+        let item_ids: [u32; 1] = [0];
+        let values: [i64; 1] = [Fixed64::from_num(10).to_bits()];
+        unsafe {
+            factorial_logic_set_constant(
+                engine,
+                const_node,
+                item_ids.as_ptr(),
+                values.as_ptr(),
+                1,
+                1,
+            )
+        };
+
+        // Set arithmetic: iron(0) * 3 -> steel(2).
+        let result = unsafe {
+            factorial_logic_set_arithmetic(
+                engine,
+                arith_node,
+                FfiSelectorKind::Signal,
+                0, // iron
+                FfiArithmeticOp::Mul,
+                FfiSelectorKind::Constant,
+                Fixed64::from_num(3).to_bits() as u64,
+                2, // steel output
+            )
+        };
+        assert_eq!(result, FactorialResult::Ok);
+
+        // Tick 1: combinator computes, output delayed.
+        unsafe { factorial_step(engine) };
+
+        // Tick 2: combinator output appears on network.
+        unsafe { factorial_step(engine) };
+
+        let mut val: i64 = 0;
+        unsafe { factorial_logic_get_network_signal(engine, net_id, 2, &mut val) };
+        assert_eq!(
+            val,
+            Fixed64::from_num(30).to_bits(),
+            "arithmetic combinator: 10 * 3 = 30 for steel"
+        );
+
+        unsafe { factorial_destroy(engine) };
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 43: Logic -- set inventory reader
+    // -----------------------------------------------------------------------
+    #[test]
+    fn logic_set_inventory_reader() {
+        let engine = factorial_create();
+        unsafe { factorial_logic_register(engine) };
+
+        let node_ffi = ffi_add_node_and_apply(engine, 0);
+
+        let result = unsafe { factorial_logic_set_inventory_reader(engine, node_ffi, node_ffi, 0) };
+        assert_eq!(result, FactorialResult::Ok);
+
+        unsafe { factorial_destroy(engine) };
+    }
+
+    // -----------------------------------------------------------------------
+    // Test 44: Logic -- remove from network
+    // -----------------------------------------------------------------------
+    #[test]
+    fn logic_remove_from_network() {
+        let engine = factorial_create();
+        unsafe { factorial_logic_register(engine) };
+
+        let node_ffi = ffi_add_node_and_apply(engine, 0);
+
+        let mut net_id: FfiWireNetworkId = 0;
+        unsafe { factorial_logic_create_network(engine, FfiWireColor::Red, &mut net_id) };
+        unsafe { factorial_logic_add_to_network(engine, net_id, node_ffi) };
+
+        // Set constant and step.
+        let item_ids: [u32; 1] = [0];
+        let values: [i64; 1] = [Fixed64::from_num(77).to_bits()];
+        unsafe {
+            factorial_logic_set_constant(engine, node_ffi, item_ids.as_ptr(), values.as_ptr(), 1, 1)
+        };
+        unsafe { factorial_step(engine) };
+
+        // Signal should be present.
+        let mut val: i64 = 0;
+        unsafe { factorial_logic_get_network_signal(engine, net_id, 0, &mut val) };
+        assert_eq!(val, Fixed64::from_num(77).to_bits());
+
+        // Remove node from network.
+        let result = unsafe { factorial_logic_remove_from_network(engine, net_id, node_ffi) };
+        assert_eq!(result, FactorialResult::Ok);
+
+        // Step again -- signal should be gone.
+        unsafe { factorial_step(engine) };
+        unsafe { factorial_logic_get_network_signal(engine, net_id, 0, &mut val) };
+        assert_eq!(val, Fixed64::from_num(0).to_bits());
+
+        unsafe { factorial_destroy(engine) };
     }
 }

@@ -35,7 +35,10 @@ fn main() {
     println!("=== Placing buildings ===\n");
 
     // Furnace: 2x2 at origin (0, 0).
-    let furnace_fp = BuildingFootprint { width: 2, height: 2 };
+    let furnace_fp = BuildingFootprint {
+        width: 2,
+        height: 2,
+    };
     spatial
         .place(furnace, GridPosition::new(0, 0), furnace_fp)
         .expect("place furnace");
@@ -48,7 +51,10 @@ fn main() {
     println!("Belt (1x1) placed at (2, 0)");
 
     // Assembler: 3x3 further right.
-    let asm_fp = BuildingFootprint { width: 3, height: 3 };
+    let asm_fp = BuildingFootprint {
+        width: 3,
+        height: 3,
+    };
     spatial
         .place(assembler, GridPosition::new(3, 0), asm_fp)
         .expect("place assembler");
@@ -69,16 +75,29 @@ fn main() {
     println!("\n=== Collision detection ===\n");
 
     // Try to place the lab on top of the furnace -- should fail.
-    let lab_fp = BuildingFootprint { width: 2, height: 3 };
+    let lab_fp = BuildingFootprint {
+        width: 2,
+        height: 3,
+    };
     let collision = spatial.place(lab, GridPosition::new(0, 0), lab_fp);
     println!(
         "Place lab (2x3) at (0,0): {}",
-        if collision.is_err() { "BLOCKED (collision)" } else { "OK" }
+        if collision.is_err() {
+            "BLOCKED (collision)"
+        } else {
+            "OK"
+        }
     );
 
     // Check if a position is occupied.
-    println!("Is (0,0) occupied? {}", spatial.is_occupied(GridPosition::new(0, 0)));
-    println!("Is (10,10) occupied? {}", spatial.is_occupied(GridPosition::new(10, 10)));
+    println!(
+        "Is (0,0) occupied? {}",
+        spatial.is_occupied(GridPosition::new(0, 0))
+    );
+    println!(
+        "Is (10,10) occupied? {}",
+        spatial.is_occupied(GridPosition::new(10, 10))
+    );
 
     // Can we place the lab at (0, 3)?
     let can_place = spatial.can_place(GridPosition::new(0, 3), lab_fp);
@@ -133,7 +152,10 @@ fn main() {
 
     println!("\n=== Rotation ===\n");
 
-    let original = BuildingFootprint { width: 2, height: 3 };
+    let original = BuildingFootprint {
+        width: 2,
+        height: 3,
+    };
     println!("Original footprint: {:?}", original);
 
     for rotation in Rotation::all() {

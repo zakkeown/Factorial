@@ -339,6 +339,7 @@ version = "0.1.0"
 dependencies = [
  "cbindgen",
  "factorial-core",
+ "factorial-logic",
  "slotmap",
 ]
 
@@ -358,6 +359,7 @@ version = "0.1.0"
 dependencies = [
  "factorial-core",
  "factorial-fluid",
+ "factorial-logic",
  "factorial-power",
  "factorial-stats",
  "factorial-tech-tree",

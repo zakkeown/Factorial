@@ -7,8 +7,11 @@
 //! Signal propagation uses a one-tick delay on combinator outputs to prevent
 //! infinite feedback loops and ensure deterministic evaluation order.
 
+pub mod bridge;
 pub mod combinator;
 pub mod condition;
+
+pub use bridge::LogicModuleBridge;
 
 use std::collections::BTreeMap;
 
