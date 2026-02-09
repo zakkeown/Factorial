@@ -1,0 +1,28 @@
+[package]
+name = "factorial-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+factorial-core = { path = "..", features = ["test-utils"] }
+
+[[bin]]
+name = "fuzz_deserialize"
+path = "fuzz_targets/fuzz_deserialize.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_deserialize_partitioned"
+path = "fuzz_targets/fuzz_deserialize_partitioned.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_mutations"
+path = "fuzz_targets/fuzz_mutations.rs"
+doc = false
