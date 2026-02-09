@@ -9,6 +9,7 @@ use crate::fixed::Fixed64;
 use crate::id::*;
 use crate::item::Inventory;
 use crate::processor::*;
+use crate::sim::SimulationStrategy;
 use crate::transport::*;
 
 // ===========================================================================
@@ -307,4 +308,160 @@ pub fn output_total(engine: &Engine, node: NodeId) -> u32 {
         .get_output_inventory(node)
         .map(|inv| inv.output_slots.iter().map(|s| s.total()).sum::<u32>())
         .unwrap_or(0)
+}
+
+// ===========================================================================
+// Factory builders (for benchmarks, stress tests, and proptests)
+// ===========================================================================
+
+/// Build a linear chain of N nodes: Source -> Assembler -> ... -> Assembler.
+/// Deep graph with 1 node per topological level.
+pub fn build_chain_factory(length: usize) -> Engine {
+    let mut engine = Engine::new(SimulationStrategy::Tick);
+
+    if length == 0 {
+        return engine;
+    }
+
+    // First node is a source.
+    let mut prev = add_node(&mut engine, make_source(iron(), 2.0), 100, 100);
+
+    // Remaining nodes are assemblers chained linearly.
+    for _ in 1..length {
+        let node = add_node(
+            &mut engine,
+            make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 5),
+            100,
+            100,
+        );
+        connect(&mut engine, prev, node, make_flow_transport(10.0));
+        prev = node;
+    }
+
+    engine
+}
+
+/// Build a wide factory: 1 source feeding N consumer assemblers.
+/// 2 topological levels — best case for level parallelism.
+pub fn build_wide_factory(fan_out: usize) -> Engine {
+    let mut engine = Engine::new(SimulationStrategy::Tick);
+
+    let source = add_node(&mut engine, make_source(iron(), 100.0), 1000, 1000);
+
+    for _ in 0..fan_out {
+        let consumer = add_node(
+            &mut engine,
+            make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 5),
+            100,
+            100,
+        );
+        connect(&mut engine, source, consumer, make_flow_transport(10.0));
+    }
+
+    engine
+}
+
+/// Build a grid factory: rows x cols mesh of assembler nodes.
+/// Each node connects to the one to its right and the one below it.
+pub fn build_grid_factory(rows: usize, cols: usize) -> Engine {
+    let mut engine = Engine::new(SimulationStrategy::Tick);
+
+    if rows == 0 || cols == 0 {
+        return engine;
+    }
+
+    // Create all nodes. First column are sources, rest are assemblers.
+    let mut grid: Vec<Vec<NodeId>> = Vec::with_capacity(rows);
+    for _ in 0..rows {
+        let mut row = Vec::with_capacity(cols);
+        // First node in each row is a source.
+        row.push(add_node(&mut engine, make_source(iron(), 2.0), 100, 100));
+        for _ in 1..cols {
+            row.push(add_node(
+                &mut engine,
+                make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 5),
+                100,
+                100,
+            ));
+        }
+        grid.push(row);
+    }
+
+    // Connect horizontally (left to right).
+    for row in &grid {
+        for c in 0..cols - 1 {
+            connect(&mut engine, row[c], row[c + 1], make_flow_transport(10.0));
+        }
+    }
+
+    // Connect vertically (top to bottom).
+    for pair in grid.windows(2) {
+        for (&src, &dst) in pair[0].iter().zip(pair[1].iter()) {
+            connect(&mut engine, src, dst, make_flow_transport(5.0));
+        }
+    }
+
+    engine
+}
+
+/// Build a large factory with the given node count.
+/// Chains of 20 nodes with cross-links between adjacent chains.
+pub fn build_large_factory(node_count: usize) -> Engine {
+    let mut engine = Engine::new(SimulationStrategy::Tick);
+
+    let chain_length = 20;
+    let chain_count = node_count.div_ceil(chain_length);
+    let mut chains: Vec<Vec<NodeId>> = Vec::with_capacity(chain_count);
+    let mut total = 0;
+
+    for _ in 0..chain_count {
+        let mut chain = Vec::with_capacity(chain_length);
+
+        // Source node.
+        let source = add_node(&mut engine, make_source(iron(), 2.0), 100, 100);
+        chain.push(source);
+        total += 1;
+
+        // Assembler chain.
+        for _ in 1..chain_length {
+            if total >= node_count {
+                break;
+            }
+            let assembler = add_node(
+                &mut engine,
+                make_recipe(vec![(iron(), 1)], vec![(gear(), 1)], 5),
+                100,
+                100,
+            );
+            chain.push(assembler);
+            total += 1;
+        }
+
+        // Connect chain linearly with alternating transports.
+        for i in 0..chain.len() - 1 {
+            let transport = match i % 3 {
+                0 => make_flow_transport(10.0),
+                1 => make_item_transport(10),
+                _ => make_batch_transport(10, 5),
+            };
+            connect(&mut engine, chain[i], chain[i + 1], transport);
+        }
+
+        chains.push(chain);
+    }
+
+    // Cross-links between adjacent chains at every other depth.
+    for i in 0..chains.len().saturating_sub(1) {
+        let max_depth = chains[i].len().min(chains[i + 1].len());
+        for depth in (1..max_depth).step_by(2) {
+            connect(
+                &mut engine,
+                chains[i][depth],
+                chains[i + 1][depth],
+                make_flow_transport(5.0),
+            );
+        }
+    }
+
+    engine
 }

@@ -315,11 +315,176 @@ fn bench_serialization(c: &mut Criterion) {
     group.finish();
 }
 
+// ===========================================================================
+// Large-scale benchmarks (using test_utils builders)
+// ===========================================================================
+
+fn bench_large_factory_50k(c: &mut Criterion) {
+    let mut group = c.benchmark_group("large_factory");
+    group.sample_size(10);
+
+    let mut engine = build_large_factory(50_000);
+    // Warm up.
+    for _ in 0..3 {
+        engine.step();
+    }
+
+    group.bench_function("50k_nodes_step", |b| {
+        b.iter(|| {
+            engine.step();
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_deep_chain_1000(c: &mut Criterion) {
+    let mut group = c.benchmark_group("deep_chain");
+    group.sample_size(30);
+
+    let mut engine = build_chain_factory(1000);
+    for _ in 0..3 {
+        engine.step();
+    }
+
+    group.bench_function("1000_node_chain_step", |b| {
+        b.iter(|| {
+            engine.step();
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_wide_fanout_1000(c: &mut Criterion) {
+    let mut group = c.benchmark_group("wide_fanout");
+    group.sample_size(30);
+
+    let mut engine = build_wide_factory(1000);
+    for _ in 0..3 {
+        engine.step();
+    }
+
+    group.bench_function("1_source_1000_consumers_step", |b| {
+        b.iter(|| {
+            engine.step();
+        });
+    });
+
+    group.finish();
+}
+
+// ===========================================================================
+// Isolated phase benchmarks
+// ===========================================================================
+
+fn bench_topo_sort(c: &mut Criterion) {
+    let mut group = c.benchmark_group("topo_sort");
+    group.sample_size(30);
+
+    let engine_5k = build_large_factory(5_000);
+    group.bench_function("5k_nodes", |b| {
+        b.iter_batched(
+            || engine_5k.graph.clone(),
+            |mut graph| {
+                let _ = graph.topological_order_with_feedback();
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+
+    let engine_50k = build_large_factory(50_000);
+    group.bench_function("50k_nodes", |b| {
+        b.iter_batched(
+            || engine_50k.graph.clone(),
+            |mut graph| {
+                let _ = graph.topological_order_with_feedback();
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+
+    group.finish();
+}
+
+fn bench_state_hash(c: &mut Criterion) {
+    let mut group = c.benchmark_group("state_hash");
+    group.sample_size(30);
+
+    // state hash is computed during step(), so we measure step overhead
+    // on a factory where we've already warmed up. The hash is a significant
+    // portion of the bookkeeping phase.
+    let mut engine_5k = build_large_factory(5_000);
+    for _ in 0..5 {
+        engine_5k.step();
+    }
+    group.bench_function("5k_nodes_step", |b| {
+        b.iter(|| {
+            engine_5k.step();
+        });
+    });
+
+    let mut engine_50k = build_large_factory(50_000);
+    for _ in 0..3 {
+        engine_50k.step();
+    }
+    group.bench_function("50k_nodes_step", |b| {
+        b.iter(|| {
+            engine_50k.step();
+        });
+    });
+
+    group.finish();
+}
+
+fn bench_event_bus_overhead(c: &mut Criterion) {
+    use factorial_core::event::{Event, EventKind};
+
+    let mut group = c.benchmark_group("event_bus");
+    group.sample_size(50);
+
+    // Build a small factory with subscribers, then measure emit+deliver cost.
+    let mut engine = build_wide_factory(100);
+    // Add a passive listener so events are actually delivered.
+    engine
+        .event_bus
+        .on_passive(EventKind::ItemProduced, Box::new(|_| {}));
+    for _ in 0..5 {
+        engine.step();
+    }
+
+    // Grab a real node ID from the graph to use in synthetic events.
+    let sample_node = engine.graph.nodes().next().unwrap().0;
+
+    group.bench_function("10k_events_emit_deliver", |b| {
+        b.iter(|| {
+            // Emit 10k events.
+            for i in 0..10_000u32 {
+                engine.event_bus.emit(Event::ItemProduced {
+                    node: sample_node,
+                    item_type: ItemTypeId(0),
+                    quantity: i,
+                    tick: 0,
+                });
+            }
+            engine.event_bus.deliver();
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_small_factory,
     bench_medium_factory,
     bench_belt_heavy,
-    bench_serialization
+    bench_serialization,
+    bench_large_factory_50k,
+    bench_deep_chain_1000,
+    bench_wide_fanout_1000,
+    bench_topo_sort,
+    bench_state_hash,
+    bench_event_bus_overhead,
 );
 criterion_main!(benches);
