@@ -16,10 +16,6 @@
 //! events via the event module. Events are cached in a thread-local buffer
 //! that is valid until the next step or destroy call.
 
-// Allow dead-code for helpers and imports that will be consumed by
-// submodules once they are fleshed out in later tasks.
-#![allow(dead_code)]
-
 pub mod engine;
 pub mod event;
 pub mod graph;
