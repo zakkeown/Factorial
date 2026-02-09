@@ -20,6 +20,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run tests
         run: cargo test --workspace
+      - name: Run tests with parallel feature
+        run: cargo test --package factorial-core --features parallel
 
   clippy:
     name: Clippy
