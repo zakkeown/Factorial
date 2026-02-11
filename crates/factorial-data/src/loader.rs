@@ -3,9 +3,17 @@
 //! Provides format detection (RON/JSON/TOML), file discovery, and deserialization
 //! helpers used by the higher-level loading pipeline.
 
+use factorial_core::fixed::Fixed64;
+use factorial_core::id::*;
+use factorial_core::processor::*;
+use factorial_core::registry::*;
+use factorial_spatial::BuildingFootprint;
 use serde::de::DeserializeOwned;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+
+use crate::module_config::*;
+use crate::schema::*;
 
 // ===========================================================================
 // Errors
@@ -208,6 +216,244 @@ pub fn check_duplicate<V>(
         })
     } else {
         Ok(())
+    }
+}
+
+// ===========================================================================
+// GameData and loading pipeline
+// ===========================================================================
+
+/// Aggregated game data loaded from data files. Contains the built
+/// registry plus per-building metadata (footprints, processors, inventories)
+/// and optional module configurations.
+pub struct GameData {
+    pub registry: Registry,
+    pub building_footprints: BTreeMap<BuildingTypeId, BuildingFootprint>,
+    pub building_processors: BTreeMap<BuildingTypeId, Processor>,
+    pub building_inventories: BTreeMap<BuildingTypeId, (u32, u32)>,
+    pub power_config: Option<PowerConfig>,
+    pub fluid_config: Option<FluidConfig>,
+    pub tech_tree_config: Option<TechTreeConfig>,
+    pub logic_config: Option<LogicConfig>,
+}
+
+/// Load all game data from a directory of data files.
+///
+/// The directory must contain `items`, `recipes`, and `buildings` files
+/// (in RON, JSON, or TOML format). It may optionally contain `power`,
+/// `fluids`, `tech_tree`, and `logic` files for module configuration.
+///
+/// # Errors
+///
+/// Returns `DataLoadError` if required files are missing, data cannot be
+/// parsed, or name references cannot be resolved.
+pub fn load_game_data(dir: &Path) -> Result<GameData, DataLoadError> {
+    // ------------------------------------------------------------------
+    // 1. Discover required and optional files
+    // ------------------------------------------------------------------
+    let items_path = require_data_file(dir, "items")?;
+    let recipes_path = require_data_file(dir, "recipes")?;
+    let buildings_path = require_data_file(dir, "buildings")?;
+
+    let power_path = find_data_file(dir, "power")?;
+    let fluids_path = find_data_file(dir, "fluids")?;
+    let tech_tree_path = find_data_file(dir, "tech_tree")?;
+    let logic_path = find_data_file(dir, "logic")?;
+
+    // ------------------------------------------------------------------
+    // 2. Load items -> build name-to-ID map, register in builder
+    // ------------------------------------------------------------------
+    let items_data: Vec<ItemData> = deserialize_list(&items_path, "items")?;
+    let mut builder = RegistryBuilder::new();
+    let mut item_names: HashMap<String, ItemTypeId> = HashMap::new();
+
+    for item in &items_data {
+        check_duplicate(&item_names, &item.name, &items_path)?;
+        let id = builder.register_item(&item.name, vec![]);
+        item_names.insert(item.name.clone(), id);
+    }
+
+    // ------------------------------------------------------------------
+    // 3. Load recipes -> resolve item names, register in builder
+    // ------------------------------------------------------------------
+    let recipes_data: Vec<RecipeData> = deserialize_list(&recipes_path, "recipes")?;
+    let mut recipe_names: HashMap<String, RecipeId> = HashMap::new();
+
+    for recipe in &recipes_data {
+        check_duplicate(&recipe_names, &recipe.name, &recipes_path)?;
+
+        let inputs: Vec<RecipeEntry> = recipe
+            .inputs
+            .iter()
+            .map(|(name, qty)| {
+                let id = resolve_name(&item_names, name, &recipes_path, "item")?;
+                Ok(RecipeEntry {
+                    item: *id,
+                    quantity: *qty,
+                })
+            })
+            .collect::<Result<Vec<_>, DataLoadError>>()?;
+
+        let outputs: Vec<RecipeEntry> = recipe
+            .outputs
+            .iter()
+            .map(|(name, qty)| {
+                let id = resolve_name(&item_names, name, &recipes_path, "item")?;
+                Ok(RecipeEntry {
+                    item: *id,
+                    quantity: *qty,
+                })
+            })
+            .collect::<Result<Vec<_>, DataLoadError>>()?;
+
+        let id = builder.register_recipe(&recipe.name, inputs, outputs, recipe.duration);
+        recipe_names.insert(recipe.name.clone(), id);
+    }
+
+    // ------------------------------------------------------------------
+    // 4. Load buildings -> resolve references, build processors, register
+    // ------------------------------------------------------------------
+    let buildings_data: Vec<BuildingData> = deserialize_list(&buildings_path, "buildings")?;
+    let mut building_names: HashMap<String, BuildingTypeId> = HashMap::new();
+    let mut building_footprints: BTreeMap<BuildingTypeId, BuildingFootprint> = BTreeMap::new();
+    let mut building_processors: BTreeMap<BuildingTypeId, Processor> = BTreeMap::new();
+    let mut building_inventories: BTreeMap<BuildingTypeId, (u32, u32)> = BTreeMap::new();
+
+    for bld in &buildings_data {
+        check_duplicate(&building_names, &bld.name, &buildings_path)?;
+
+        // Determine the recipe reference for the registry (Some only for Recipe processors).
+        let recipe_ref = match &bld.processor {
+            ProcessorData::Recipe { recipe } => {
+                let rid = resolve_name(&recipe_names, recipe, &buildings_path, "recipe")?;
+                Some(*rid)
+            }
+            _ => None,
+        };
+
+        let building_id = builder.register_building(&bld.name, recipe_ref);
+        building_names.insert(bld.name.clone(), building_id);
+
+        // Build processor from ProcessorData.
+        let processor = resolve_processor(&bld.processor, &item_names, &recipe_names, &builder, &buildings_path)?;
+        building_processors.insert(building_id, processor);
+
+        // Footprint.
+        building_footprints.insert(
+            building_id,
+            BuildingFootprint {
+                width: bld.footprint.width,
+                height: bld.footprint.height,
+            },
+        );
+
+        // Inventory capacities.
+        building_inventories.insert(
+            building_id,
+            (bld.inventories.input_capacity, bld.inventories.output_capacity),
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // 5. Build the registry
+    // ------------------------------------------------------------------
+    let registry = builder.build().map_err(|e| DataLoadError::Parse {
+        file: buildings_path.clone(),
+        detail: e.to_string(),
+    })?;
+
+    // ------------------------------------------------------------------
+    // 6. Module configs (stubs for now, replaced in Task 7)
+    // ------------------------------------------------------------------
+    let _ = (power_path, fluids_path, tech_tree_path, logic_path);
+
+    Ok(GameData {
+        registry,
+        building_footprints,
+        building_processors,
+        building_inventories,
+        power_config: None,
+        fluid_config: None,
+        tech_tree_config: None,
+        logic_config: None,
+    })
+}
+
+/// Resolve a `ProcessorData` (from schema) into a `Processor` (engine type).
+fn resolve_processor(
+    data: &ProcessorData,
+    item_names: &HashMap<String, ItemTypeId>,
+    recipe_names: &HashMap<String, RecipeId>,
+    builder: &RegistryBuilder,
+    file: &Path,
+) -> Result<Processor, DataLoadError> {
+    match data {
+        ProcessorData::Source { item, rate } => {
+            let item_id = resolve_name(item_names, item, file, "item")?;
+            Ok(Processor::Source(SourceProcessor {
+                output_type: *item_id,
+                base_rate: Fixed64::from_num(*rate),
+                depletion: Depletion::Infinite,
+                accumulated: Fixed64::from_num(0),
+                initial_properties: None,
+            }))
+        }
+        ProcessorData::Recipe { recipe } => {
+            let recipe_id = resolve_name(recipe_names, recipe, file, "recipe")?;
+            let recipe_def = builder
+                .get_recipe(*recipe_id)
+                .ok_or_else(|| DataLoadError::UnresolvedRef {
+                    file: file.to_path_buf(),
+                    name: recipe.clone(),
+                    expected_kind: "recipe",
+                })?;
+            Ok(Processor::Fixed(FixedRecipe {
+                inputs: recipe_def
+                    .inputs
+                    .iter()
+                    .map(|e| RecipeInput {
+                        item_type: e.item,
+                        quantity: e.quantity,
+                    })
+                    .collect(),
+                outputs: recipe_def
+                    .outputs
+                    .iter()
+                    .map(|e| RecipeOutput {
+                        item_type: e.item,
+                        quantity: e.quantity,
+                    })
+                    .collect(),
+                duration: recipe_def.duration as u32,
+            }))
+        }
+        ProcessorData::Demand { items } => {
+            let resolved: Vec<ItemTypeId> = items
+                .iter()
+                .map(|name| {
+                    let id = resolve_name(item_names, name, file, "item")?;
+                    Ok(*id)
+                })
+                .collect::<Result<Vec<_>, DataLoadError>>()?;
+
+            let first = resolved.first().ok_or_else(|| DataLoadError::Parse {
+                file: file.to_path_buf(),
+                detail: "Demand processor must have at least one item".to_string(),
+            })?;
+
+            Ok(Processor::Demand(DemandProcessor {
+                input_type: *first,
+                base_rate: Fixed64::from_num(1),
+                accumulated: Fixed64::from_num(0),
+                consumed_total: 0,
+                accepted_types: if resolved.len() > 1 {
+                    Some(resolved)
+                } else {
+                    None
+                },
+            }))
+        }
+        ProcessorData::Passthrough => Ok(Processor::Passthrough),
     }
 }
 
@@ -610,5 +856,26 @@ name = "copper_ore"
         let data_err: DataLoadError = io_err.into();
         assert!(matches!(data_err, DataLoadError::Io(_)));
         assert!(format!("{data_err}").contains("file not found"));
+    }
+
+    // -----------------------------------------------------------------------
+    // load_game_data integration
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn load_minimal_ron() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/minimal_ron");
+        let data = load_game_data(&dir).unwrap();
+        assert_eq!(data.registry.item_count(), 3);
+        assert_eq!(data.registry.recipe_count(), 1);
+        assert_eq!(data.registry.building_count(), 3);
+        assert!(data.registry.item_id("iron_ore").is_some());
+        assert!(data.registry.building_id("iron_mine").is_some());
+        let mine_id = data.registry.building_id("iron_mine").unwrap();
+        let fp = data.building_footprints.get(&mine_id).unwrap();
+        assert_eq!(fp.width, 2);
+        assert_eq!(fp.height, 2);
+        assert_eq!(data.building_processors.len(), 3);
+        assert!(data.power_config.is_none());
     }
 }
