@@ -335,7 +335,13 @@ pub fn load_game_data(dir: &Path) -> Result<GameData, DataLoadError> {
         building_names.insert(bld.name.clone(), building_id);
 
         // Build processor from ProcessorData.
-        let processor = resolve_processor(&bld.processor, &item_names, &recipe_names, &builder, &buildings_path)?;
+        let processor = resolve_processor(
+            &bld.processor,
+            &item_names,
+            &recipe_names,
+            &builder,
+            &buildings_path,
+        )?;
         building_processors.insert(building_id, processor);
 
         // Footprint.
@@ -350,7 +356,10 @@ pub fn load_game_data(dir: &Path) -> Result<GameData, DataLoadError> {
         // Inventory capacities.
         building_inventories.insert(
             building_id,
-            (bld.inventories.input_capacity, bld.inventories.output_capacity),
+            (
+                bld.inventories.input_capacity,
+                bld.inventories.output_capacity,
+            ),
         );
     }
 
@@ -366,22 +375,38 @@ pub fn load_game_data(dir: &Path) -> Result<GameData, DataLoadError> {
     // 6. Optional module configs
     // ------------------------------------------------------------------
     let power_config = match power_path {
-        Some(path) => Some(crate::module_config::load_power_config(&path, &building_names)?),
+        Some(path) => Some(crate::module_config::load_power_config(
+            &path,
+            &building_names,
+        )?),
         None => None,
     };
 
     let fluid_config = match fluids_path {
-        Some(path) => Some(crate::module_config::load_fluid_config(&path, &item_names, &building_names)?),
+        Some(path) => Some(crate::module_config::load_fluid_config(
+            &path,
+            &item_names,
+            &building_names,
+        )?),
         None => None,
     };
 
     let tech_tree_config = match tech_tree_path {
-        Some(path) => Some(crate::module_config::load_tech_tree_config(&path, &item_names, &recipe_names, &building_names)?),
+        Some(path) => Some(crate::module_config::load_tech_tree_config(
+            &path,
+            &item_names,
+            &recipe_names,
+            &building_names,
+        )?),
         None => None,
     };
 
     let logic_config = match logic_path {
-        Some(path) => Some(crate::module_config::load_logic_config(&path, &item_names, &building_names)?),
+        Some(path) => Some(crate::module_config::load_logic_config(
+            &path,
+            &item_names,
+            &building_names,
+        )?),
         None => None,
     };
 
@@ -418,13 +443,14 @@ fn resolve_processor(
         }
         ProcessorData::Recipe { recipe } => {
             let recipe_id = resolve_name(recipe_names, recipe, file, "recipe")?;
-            let recipe_def = builder
-                .get_recipe(*recipe_id)
-                .ok_or_else(|| DataLoadError::UnresolvedRef {
-                    file: file.to_path_buf(),
-                    name: recipe.clone(),
-                    expected_kind: "recipe",
-                })?;
+            let recipe_def =
+                builder
+                    .get_recipe(*recipe_id)
+                    .ok_or_else(|| DataLoadError::UnresolvedRef {
+                        file: file.to_path_buf(),
+                        name: recipe.clone(),
+                        expected_kind: "recipe",
+                    })?;
             Ok(Processor::Fixed(FixedRecipe {
                 inputs: recipe_def
                     .inputs
@@ -945,11 +971,26 @@ name = "copper_ore"
         let json_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/minimal_json");
         let ron_data = load_game_data(&ron_dir).unwrap();
         let json_data = load_game_data(&json_dir).unwrap();
-        assert_eq!(ron_data.registry.item_count(), json_data.registry.item_count());
-        assert_eq!(ron_data.registry.recipe_count(), json_data.registry.recipe_count());
-        assert_eq!(ron_data.registry.building_count(), json_data.registry.building_count());
-        assert_eq!(ron_data.registry.item_id("iron_ore"), json_data.registry.item_id("iron_ore"));
-        assert_eq!(ron_data.building_footprints.len(), json_data.building_footprints.len());
+        assert_eq!(
+            ron_data.registry.item_count(),
+            json_data.registry.item_count()
+        );
+        assert_eq!(
+            ron_data.registry.recipe_count(),
+            json_data.registry.recipe_count()
+        );
+        assert_eq!(
+            ron_data.registry.building_count(),
+            json_data.registry.building_count()
+        );
+        assert_eq!(
+            ron_data.registry.item_id("iron_ore"),
+            json_data.registry.item_id("iron_ore")
+        );
+        assert_eq!(
+            ron_data.building_footprints.len(),
+            json_data.building_footprints.len()
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -987,7 +1028,10 @@ name = "copper_ore"
         // Mine should have produced items
         let snaps = engine.snapshot_all_nodes();
         assert_eq!(snaps.len(), 1);
-        assert!(!snaps[0].output_contents.is_empty(), "mine should have produced output");
+        assert!(
+            !snaps[0].output_contents.is_empty(),
+            "mine should have produced output"
+        );
     }
 
     #[test]

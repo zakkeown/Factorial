@@ -6,14 +6,14 @@
 
 use factorial_core::fixed::Fixed64;
 use factorial_core::id::*;
-use factorial_logic::condition::ComparisonOp;
 use factorial_logic::WireColor;
+use factorial_logic::condition::ComparisonOp;
 use factorial_power::PowerPriority;
 use factorial_tech_tree::{CostScaling, ResearchCost, Unlock};
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::loader::{deserialize_file, deserialize_list, resolve_name, DataLoadError};
+use crate::loader::{DataLoadError, deserialize_file, deserialize_list, resolve_name};
 use crate::schema::*;
 
 // ===========================================================================
@@ -185,10 +185,7 @@ pub(crate) fn load_tech_tree_config(
                 .iter()
                 .map(|u| resolve_unlock(u, recipe_names, building_names, path))
                 .collect::<Result<Vec<_>, DataLoadError>>()?;
-            let cost_scaling = tech
-                .cost_scaling
-                .as_ref()
-                .map(resolve_cost_scaling);
+            let cost_scaling = tech.cost_scaling.as_ref().map(resolve_cost_scaling);
 
             Ok(ResolvedTech {
                 name: tech.name,
