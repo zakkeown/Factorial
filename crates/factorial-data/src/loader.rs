@@ -3,7 +3,7 @@
 //! Provides format detection (RON/JSON/TOML), file discovery, and deserialization
 //! helpers used by the higher-level loading pipeline.
 
-use factorial_core::fixed::Fixed64;
+use factorial_core::fixed::{Fixed32, Fixed64};
 use factorial_core::id::*;
 use factorial_core::processor::*;
 use factorial_core::registry::*;
@@ -68,7 +68,7 @@ pub enum Format {
 }
 
 /// Detect the format of a file based on its extension.
-pub fn detect_format(path: &Path) -> Result<Format, DataLoadError> {
+pub(crate) fn detect_format(path: &Path) -> Result<Format, DataLoadError> {
     match path.extension().and_then(|e| e.to_str()) {
         Some("ron") => Ok(Format::Ron),
         Some("toml") => Ok(Format::Toml),
@@ -88,7 +88,10 @@ pub fn detect_format(path: &Path) -> Result<Format, DataLoadError> {
 /// Looks for `{base_name}.ron`, `{base_name}.toml`, and `{base_name}.json`.
 /// Returns `Ok(None)` if no file is found, or `Err(ConflictingFormats)` if
 /// multiple formats exist for the same base name.
-pub fn find_data_file(dir: &Path, base_name: &str) -> Result<Option<PathBuf>, DataLoadError> {
+pub(crate) fn find_data_file(
+    dir: &Path,
+    base_name: &str,
+) -> Result<Option<PathBuf>, DataLoadError> {
     let extensions = ["ron", "toml", "json"];
     let mut found: Option<PathBuf> = None;
 
@@ -109,9 +112,12 @@ pub fn find_data_file(dir: &Path, base_name: &str) -> Result<Option<PathBuf>, Da
 }
 
 /// Like [`find_data_file`], but returns an error if no file is found.
-pub fn require_data_file(dir: &Path, base_name: &str) -> Result<PathBuf, DataLoadError> {
+pub(crate) fn require_data_file(
+    dir: &Path,
+    base_name: &'static str,
+) -> Result<PathBuf, DataLoadError> {
     find_data_file(dir, base_name)?.ok_or_else(|| DataLoadError::MissingRequired {
-        file: Box::leak(base_name.to_string().into_boxed_str()),
+        file: base_name,
         dir: dir.to_path_buf(),
     })
 }
@@ -121,7 +127,7 @@ pub fn require_data_file(dir: &Path, base_name: &str) -> Result<PathBuf, DataLoa
 // ===========================================================================
 
 /// Read a file and deserialize it according to its format (detected from extension).
-pub fn deserialize_file<T: DeserializeOwned>(path: &Path) -> Result<T, DataLoadError> {
+pub(crate) fn deserialize_file<T: DeserializeOwned>(path: &Path) -> Result<T, DataLoadError> {
     let format = detect_format(path)?;
     let content = std::fs::read_to_string(path)?;
 
@@ -144,7 +150,7 @@ pub fn deserialize_file<T: DeserializeOwned>(path: &Path) -> Result<T, DataLoadE
 /// Deserialize a list from a file. For TOML files, extracts the array at the
 /// given `toml_key` from a top-level table. For RON and JSON, deserializes
 /// directly as `Vec<T>`.
-pub fn deserialize_list<T: DeserializeOwned>(
+pub(crate) fn deserialize_list<T: DeserializeOwned>(
     path: &Path,
     toml_key: &str,
 ) -> Result<Vec<T>, DataLoadError> {
@@ -189,7 +195,7 @@ pub fn deserialize_list<T: DeserializeOwned>(
 // ===========================================================================
 
 /// Look up a name in a map, returning an `UnresolvedRef` error if not found.
-pub fn resolve_name<'a, V>(
+pub(crate) fn resolve_name<'a, V>(
     map: &'a HashMap<String, V>,
     name: &str,
     file: &Path,
@@ -204,7 +210,7 @@ pub fn resolve_name<'a, V>(
 
 /// Check whether a name already exists in a map, returning a `DuplicateName`
 /// error if so.
-pub fn check_duplicate<V>(
+pub(crate) fn check_duplicate<V>(
     map: &HashMap<String, V>,
     name: &str,
     file: &Path,
@@ -269,7 +275,8 @@ pub fn load_game_data(dir: &Path) -> Result<GameData, DataLoadError> {
 
     for item in &items_data {
         check_duplicate(&item_names, &item.name, &items_path)?;
-        let id = builder.register_item(&item.name, vec![]);
+        let properties = item.properties.iter().map(resolve_property).collect();
+        let id = builder.register_item(&item.name, properties);
         item_names.insert(item.name.clone(), id);
     }
 
@@ -420,6 +427,27 @@ pub fn load_game_data(dir: &Path) -> Result<GameData, DataLoadError> {
         tech_tree_config,
         logic_config,
     })
+}
+
+/// Resolve a `PropertyData` (from schema) into a `PropertyDef` (engine type).
+fn resolve_property(data: &PropertyData) -> PropertyDef {
+    let (size, default) = match data.prop_type {
+        PropertyType::Fixed64 => (
+            PropertySize::Fixed64,
+            PropertyDefault::Fixed64(Fixed64::from_num(data.default)),
+        ),
+        PropertyType::Fixed32 => (
+            PropertySize::Fixed32,
+            PropertyDefault::Fixed32(Fixed32::from_num(data.default)),
+        ),
+        PropertyType::U32 => (PropertySize::U32, PropertyDefault::U32(data.default as u32)),
+        PropertyType::U8 => (PropertySize::U8, PropertyDefault::U8(data.default as u8)),
+    };
+    PropertyDef {
+        name: data.name.clone(),
+        size,
+        default,
+    }
 }
 
 /// Resolve a `ProcessorData` (from schema) into a `Processor` (engine type).
@@ -1032,6 +1060,41 @@ name = "copper_ore"
             !snaps[0].output_contents.is_empty(),
             "mine should have produced output"
         );
+    }
+
+    #[test]
+    fn item_properties_are_loaded() {
+        let dir = make_test_dir("props");
+        fs::write(
+            dir.join("items.ron"),
+            r#"[
+                (name: "water", properties: [
+                    (name: "temperature", type: fixed32, default: 20.0),
+                    (name: "pressure", type: u32, default: 100.0),
+                ]),
+                (name: "steam"),
+            ]"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("recipes.ron"),
+            r#"[(name: "boil", inputs: [("water", 1)], outputs: [("steam", 1)], duration: 30)]"#,
+        )
+        .unwrap();
+        fs::write(
+            dir.join("buildings.ron"),
+            r#"[(name: "boiler", footprint: (width: 2, height: 2), inventories: (input_capacity: 10, output_capacity: 10), processor: Recipe(recipe: "boil"))]"#,
+        )
+        .unwrap();
+
+        let data = load_game_data(&dir).unwrap();
+        let water_id = data.registry.item_id("water").unwrap();
+        assert!(data.registry.item_has_properties(water_id));
+
+        let steam_id = data.registry.item_id("steam").unwrap();
+        assert!(!data.registry.item_has_properties(steam_id));
+
+        cleanup(&dir);
     }
 
     #[test]
