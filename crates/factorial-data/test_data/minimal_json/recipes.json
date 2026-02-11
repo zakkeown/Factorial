@@ -1,0 +1,3 @@
+[
+    {"name": "smelt_iron", "inputs": [["iron_ore", 1]], "outputs": [["iron_plate", 1]], "duration": 60}
+]

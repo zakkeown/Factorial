@@ -935,6 +935,23 @@ name = "copper_ore"
         assert!(matches!(result, Err(DataLoadError::Parse { .. })));
     }
 
+    // -----------------------------------------------------------------------
+    // Format equivalence
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn format_equivalence_ron_json() {
+        let ron_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/minimal_ron");
+        let json_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/minimal_json");
+        let ron_data = load_game_data(&ron_dir).unwrap();
+        let json_data = load_game_data(&json_dir).unwrap();
+        assert_eq!(ron_data.registry.item_count(), json_data.registry.item_count());
+        assert_eq!(ron_data.registry.recipe_count(), json_data.registry.recipe_count());
+        assert_eq!(ron_data.registry.building_count(), json_data.registry.building_count());
+        assert_eq!(ron_data.registry.item_id("iron_ore"), json_data.registry.item_id("iron_ore"));
+        assert_eq!(ron_data.building_footprints.len(), json_data.building_footprints.len());
+    }
+
     #[test]
     fn load_full_game() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/full_game");
