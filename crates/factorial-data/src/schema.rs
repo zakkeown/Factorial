@@ -833,10 +833,7 @@ mod tests {
             ("u32", "U32"),
             ("u8", "U8"),
         ] {
-            let ron = format!(
-                r#"(name: "test", type: {}, default: 0.0)"#,
-                ron_val
-            );
+            let ron = format!(r#"(name: "test", type: {}, default: 0.0)"#, ron_val);
             let prop: PropertyData = ron::from_str(&ron).unwrap();
             assert_eq!(prop.name, "test");
         }
