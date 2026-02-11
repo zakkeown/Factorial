@@ -243,15 +243,9 @@ fn test_basic_shape_extraction() {
 // ===========================================================================
 
 /// The Shapez cutter takes one whole shape and produces two halves (left + right).
-/// This is modeled as a 1-input, 2-output FixedRecipe.
-///
-/// ENGINE GAP: The FixedRecipe supports multi-output (produces both half_circle_left
-/// and half_circle_right), but both outputs go into the SAME output inventory.
-/// There is no way to route the left half to one belt and the right half to
-/// another belt. The engine needs per-output-type edge routing (e.g., a filter
-/// on edges or a splitter junction that filters by item type on outgoing edges).
-/// Without this, both halves end up on whichever single outbound belt exists,
-/// and there is no way to separate them downstream.
+/// This is modeled as a 1-input, 2-output FixedRecipe. Each output type is
+/// routed to a dedicated sink via `connect_filtered()`, proving per-output-type
+/// edge filtering works for belt-based shape routing.
 #[test]
 fn test_cutter_splits_shape() {
     let mut engine = Engine::new(SimulationStrategy::Tick);
@@ -293,37 +287,45 @@ fn test_cutter_splits_shape() {
     // Connect source -> cutter.
     connect(&mut engine, circle_src, cutter, belt());
 
-    // ENGINE GAP: Both outputs go to cutter's single output inventory.
-    // Ideally we would have two outbound edges with item-type filters:
-    //   connect_filtered(&mut engine, cutter, left_sink, belt(), half_circle_left());
-    //   connect_filtered(&mut engine, cutter, right_sink, belt(), half_circle_right());
-    // For now, connect cutter to both sinks via unfiltered belts.
-    // The first belt gets all items (first-edge-wins), the second gets none.
-    connect(&mut engine, cutter, left_sink, belt());
-    connect(&mut engine, cutter, right_sink, belt());
+    // Connect cutter to each sink with a per-output-type filter.
+    connect_filtered(
+        &mut engine,
+        cutter,
+        left_sink,
+        belt(),
+        Some(half_circle_left()),
+    );
+    connect_filtered(
+        &mut engine,
+        cutter,
+        right_sink,
+        belt(),
+        Some(half_circle_right()),
+    );
 
     run_ticks(&mut engine, 60);
 
-    // Verify cutter has produced both halves into its output inventory.
-    let left_in_cutter = output_quantity(&engine, cutter, half_circle_left());
-    let right_in_cutter = output_quantity(&engine, cutter, half_circle_right());
-
     // After 60 ticks with 2-tick duration and 1 circle/tick input,
     // the cutter should have completed many cycles.
-    // At minimum, some halves should exist somewhere in the system.
-    let left_at_sink = input_quantity(&engine, left_sink, half_circle_left());
-    let right_at_sink = input_quantity(&engine, right_sink, half_circle_right());
+    // Demand processors consume items immediately, so check consumed_total.
+    let left_consumed = match engine.get_processor(left_sink) {
+        Some(Processor::Demand(d)) => d.consumed_total,
+        _ => 0,
+    };
+    let right_consumed = match engine.get_processor(right_sink) {
+        Some(Processor::Demand(d)) => d.consumed_total,
+        _ => 0,
+    };
 
-    let total_halves = left_in_cutter + right_in_cutter + left_at_sink + right_at_sink;
+    // With filtered edges, each sink should receive only its intended half.
     assert!(
-        total_halves > 0,
-        "cutter should have produced at least some halves across the system"
+        left_consumed > 0,
+        "left sink should have consumed left halves, got {left_consumed}"
     );
-
-    // ENGINE GAP: With proper per-output-type routing, we would assert:
-    //   assert!(left_at_sink > 0, "left sink should receive left halves");
-    //   assert!(right_at_sink > 0, "right sink should receive right halves");
-    // Currently, one sink likely receives both types and the other receives none.
+    assert!(
+        right_consumed > 0,
+        "right sink should have consumed right halves, got {right_consumed}"
+    );
 }
 
 // ===========================================================================

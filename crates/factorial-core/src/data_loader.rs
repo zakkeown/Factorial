@@ -74,6 +74,9 @@ pub struct RecipeData {
 pub struct RecipeEntryData {
     pub item: String, // references item by name
     pub quantity: u32,
+    /// When `false`, this input is a catalyst (required but not consumed).
+    /// Defaults to `true` for backwards compatibility.
+    pub consumed: Option<bool>,
 }
 
 /// JSON representation of a building template.
@@ -156,6 +159,7 @@ fn build_registry(data: RegistryData) -> Result<RegistryBuilder, DataLoadError> 
             inputs.push(RecipeEntry {
                 item: item_id,
                 quantity: entry.quantity,
+                consumed: entry.consumed.unwrap_or(true),
             });
         }
 
@@ -167,6 +171,7 @@ fn build_registry(data: RegistryData) -> Result<RegistryBuilder, DataLoadError> 
             outputs.push(RecipeEntry {
                 item: item_id,
                 quantity: entry.quantity,
+                consumed: true,
             });
         }
 

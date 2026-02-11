@@ -5,8 +5,10 @@
 //! automatically ticked in the engine's phase-4 component pass.
 
 use factorial_core::module::{Module, ModuleContext, ModuleError};
+use factorial_core::processor::Processor;
 
 use crate::LogicModule;
+use crate::condition::CircuitAction;
 
 /// A [`Module`] adapter that owns a [`LogicModule`] and ticks it
 /// during the engine's component phase.
@@ -59,6 +61,18 @@ impl Module for LogicModuleBridge {
 
     fn on_tick(&mut self, ctx: &mut ModuleContext<'_>) {
         self.last_events = self.logic.tick(ctx.inputs, ctx.outputs, ctx.tick);
+
+        // Apply signal-driven recipe switches for MultiRecipe processors.
+        for (&node, control) in &self.logic.circuit_controls {
+            if control.active
+                && !control.was_active
+                && let CircuitAction::SwitchRecipe { recipe_index } = &control.action
+                && let Some(Processor::MultiRecipe(multi)) = ctx.processors.get_mut(node)
+                && *recipe_index < multi.recipes.len()
+            {
+                multi.pending_switch = Some(*recipe_index);
+            }
+        }
     }
 
     fn serialize_state(&self) -> Vec<u8> {

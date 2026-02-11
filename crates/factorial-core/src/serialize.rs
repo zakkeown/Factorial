@@ -29,7 +29,7 @@ use slotmap::SecondaryMap;
 pub const SNAPSHOT_MAGIC: u32 = 0xFAC7_0001;
 
 /// Current format version. Increment when breaking the wire format.
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 3;
 
 /// Magic number for partitioned snapshots.
 pub const PARTITIONED_SNAPSHOT_MAGIC: u32 = 0xFAC7_0002;
@@ -145,6 +145,10 @@ struct EngineSnapshot {
     junctions: SecondaryMap<NodeId, crate::junction::Junction>,
     #[serde(default)]
     junction_states: SecondaryMap<NodeId, crate::junction::JunctionState>,
+    #[serde(default)]
+    rng_seed: u64,
+    #[serde(default)]
+    node_rngs: SecondaryMap<NodeId, crate::rng::SimRng>,
 }
 
 // ---------------------------------------------------------------------------
@@ -295,6 +299,8 @@ impl Engine {
             paused: self.paused,
             junctions: self.junctions.clone(),
             junction_states: self.junction_states.clone(),
+            rng_seed: self.rng_seed,
+            node_rngs: self.node_rngs.clone(),
         };
 
         bitcode::serialize(&snapshot).map_err(|e| SerializeError::Encode(e.to_string()))
@@ -345,6 +351,8 @@ impl Engine {
             combined_node_hash: 0,
             hash_dirty_nodes: Vec::new(),
             hash_cache_cold: true,
+            rng_seed: snapshot.rng_seed,
+            node_rngs: snapshot.node_rngs,
             #[cfg(feature = "profiling")]
             last_profile: None,
         };
@@ -444,7 +452,27 @@ impl Engine {
                         h.write_u32(1);
                         h.write_u32(recipe.duration);
                         h.write_u32(recipe.inputs.len() as u32);
+                        for input in &recipe.inputs {
+                            h.write_u32(input.item_type.0);
+                            h.write_u32(input.quantity);
+                            h.write_u32(u32::from(input.consumed));
+                        }
                         h.write_u32(recipe.outputs.len() as u32);
+                        for output in &recipe.outputs {
+                            h.write_u32(output.item_type.0);
+                            h.write_u32(output.quantity);
+                            match &output.bonus {
+                                Some(bonus) => {
+                                    h.write_u32(1);
+                                    h.write_fixed64(bonus.chance);
+                                    h.write_u32(bonus.quantity);
+                                    h.write_u32(
+                                        bonus.bonus_item_type.map(|t| t.0).unwrap_or(u32::MAX),
+                                    );
+                                }
+                                None => h.write_u32(0),
+                            }
+                        }
                     }
                     Processor::Property(prop) => {
                         h.write_u32(2);
@@ -468,6 +496,18 @@ impl Engine {
                     }
                     Processor::Passthrough => {
                         h.write_u32(4);
+                    }
+                    Processor::MultiRecipe(multi) => {
+                        h.write_u32(5);
+                        h.write_u32(multi.active_recipe as u32);
+                        h.write_u32(multi.recipes.len() as u32);
+                        h.write_u32(multi.switch_policy as u32);
+                        if let Some(pending) = multi.pending_switch {
+                            h.write_u32(1);
+                            h.write_u32(pending as u32);
+                        } else {
+                            h.write_u32(0);
+                        }
                     }
                 }
             }
@@ -566,6 +606,12 @@ impl Engine {
         let mut h = StateHash::new();
         h.write_u64(self.sim_state.tick);
         h.write_u64(self.sim_state.accumulator);
+        // Include RNG state for desync detection.
+        h.write_u64(self.rng_seed);
+        for (node_id, rng) in &self.node_rngs {
+            h.write(&serde_json_key_bytes(node_id));
+            h.write_u64(rng.state());
+        }
         h.finish()
     }
 }
@@ -899,6 +945,8 @@ impl Engine {
             combined_node_hash: 0,
             hash_dirty_nodes: Vec::new(),
             hash_cache_cold: true,
+            rng_seed: 0,
+            node_rngs: SecondaryMap::new(),
             #[cfg(feature = "profiling")]
             last_profile: None,
         };
@@ -961,6 +1009,7 @@ mod tests {
                 .map(|(item_type, quantity)| RecipeInput {
                     item_type,
                     quantity,
+                    consumed: true,
                 })
                 .collect(),
             outputs: outputs
@@ -968,6 +1017,7 @@ mod tests {
                 .map(|(item_type, quantity)| RecipeOutput {
                     item_type,
                     quantity,
+                    bonus: None,
                 })
                 .collect(),
             duration,

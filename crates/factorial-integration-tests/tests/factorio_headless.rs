@@ -352,18 +352,9 @@ fn test_green_circuit_production() {
 // ============================================================================
 
 /// Test an oil refinery that takes crude oil and produces three fluid outputs:
-/// petroleum gas, light oil, and heavy oil.
-///
-/// This exposes a fundamental ENGINE GAP: the engine's output routing currently
-/// sends all output types to all connected edges equally. In Factorio, each
-/// output type needs to route to a specific pipe network.
-///
-/// ENGINE GAP: The engine needs a way to route specific output item types to
-/// specific edges (output-type filtering on edges). Currently FixedRecipe
-/// supports multi-output, but all outputs go to all edges indiscriminately.
-/// A possible API would be:
-///   engine.set_edge_filter(edge_id, Some(item_type_id))
-/// or an EdgeConfig struct with a filter field.
+/// petroleum gas, light oil, and heavy oil. Each output type is routed to a
+/// dedicated sink via `connect_filtered()`, proving per-output-type edge
+/// filtering works end-to-end.
 #[test]
 fn test_oil_refinery_multi_output() {
     let mut engine = Engine::new(SimulationStrategy::Tick);
@@ -390,15 +381,6 @@ fn test_oil_refinery_multi_output() {
     );
     connect(&mut engine, oil_source, refinery, flow_pipe());
 
-    // ENGINE GAP: We want separate pipe connections for each output type.
-    // Currently all three outputs go to all edges. We create three sinks,
-    // one for each fluid, but without edge filtering they will receive a
-    // mixed bag of all three fluids.
-    //
-    // Desired API:
-    //   let petro_edge = connect(&mut engine, refinery, petro_sink, flow_pipe());
-    //   engine.set_edge_filter(petro_edge, Some(f_petroleum()));
-
     let petro_sink = add_node(
         &mut engine,
         make_recipe(vec![(f_petroleum(), 9999)], vec![(f_iron_ore(), 1)], 99999),
@@ -418,10 +400,28 @@ fn test_oil_refinery_multi_output() {
         STD_OUTPUT_CAP,
     );
 
-    // Connect refinery to all three sinks (without type filtering).
-    connect(&mut engine, refinery, petro_sink, flow_pipe());
-    connect(&mut engine, refinery, light_oil_sink, flow_pipe());
-    connect(&mut engine, refinery, heavy_oil_sink, flow_pipe());
+    // Connect refinery to each sink with a per-output-type filter.
+    connect_filtered(
+        &mut engine,
+        refinery,
+        petro_sink,
+        flow_pipe(),
+        Some(f_petroleum()),
+    );
+    connect_filtered(
+        &mut engine,
+        refinery,
+        light_oil_sink,
+        flow_pipe(),
+        Some(f_light_oil()),
+    );
+    connect_filtered(
+        &mut engine,
+        refinery,
+        heavy_oil_sink,
+        flow_pipe(),
+        Some(f_heavy_oil()),
+    );
 
     // Run for 500 ticks.
     for _ in 0..500 {
@@ -435,16 +435,55 @@ fn test_oil_refinery_multi_output() {
         "refinery should have received or processed crude oil"
     );
 
-    // ENGINE GAP: Without edge-level output filtering, we cannot verify that
-    // petroleum only went to petro_sink, light oil only to light_oil_sink, etc.
-    // For now, verify that *some* output was produced and distributed across
-    // the three sinks.
-    let total_sink_input = input_total(&engine, petro_sink)
-        + input_total(&engine, light_oil_sink)
-        + input_total(&engine, heavy_oil_sink);
+    // With edge-level output filtering, verify each sink received only its
+    // intended fluid type with no cross-contamination.
+    let petro_received = input_quantity(&engine, petro_sink, f_petroleum());
+    let light_received = input_quantity(&engine, light_oil_sink, f_light_oil());
+    let heavy_received = input_quantity(&engine, heavy_oil_sink, f_heavy_oil());
+
     assert!(
-        total_sink_input > 0,
-        "refinery outputs should have reached at least one sink, got {total_sink_input}"
+        petro_received > 0,
+        "petroleum sink should have received petroleum, got {petro_received}"
+    );
+    assert!(
+        light_received > 0,
+        "light oil sink should have received light oil, got {light_received}"
+    );
+    assert!(
+        heavy_received > 0,
+        "heavy oil sink should have received heavy oil, got {heavy_received}"
+    );
+
+    // Verify no cross-contamination: each sink should only have its target fluid.
+    assert_eq!(
+        input_quantity(&engine, petro_sink, f_light_oil()),
+        0,
+        "petroleum sink should not receive light oil"
+    );
+    assert_eq!(
+        input_quantity(&engine, petro_sink, f_heavy_oil()),
+        0,
+        "petroleum sink should not receive heavy oil"
+    );
+    assert_eq!(
+        input_quantity(&engine, light_oil_sink, f_petroleum()),
+        0,
+        "light oil sink should not receive petroleum"
+    );
+    assert_eq!(
+        input_quantity(&engine, light_oil_sink, f_heavy_oil()),
+        0,
+        "light oil sink should not receive heavy oil"
+    );
+    assert_eq!(
+        input_quantity(&engine, heavy_oil_sink, f_petroleum()),
+        0,
+        "heavy oil sink should not receive petroleum"
+    );
+    assert_eq!(
+        input_quantity(&engine, heavy_oil_sink, f_light_oil()),
+        0,
+        "heavy oil sink should not receive light oil"
     );
 }
 

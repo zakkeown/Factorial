@@ -51,6 +51,16 @@ pub fn evaluate_condition(condition: &Condition, signals: &SignalSet) -> bool {
 // Circuit control
 // ---------------------------------------------------------------------------
 
+/// What action to take when a circuit control's condition evaluates to true.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CircuitAction {
+    /// Enable/disable the building (default behavior).
+    #[default]
+    EnableDisable,
+    /// Switch the building's active recipe (for `MultiRecipe` processors).
+    SwitchRecipe { recipe_index: usize },
+}
+
 /// Per-node circuit control: evaluates a condition and stores the result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CircuitControl {
@@ -60,6 +70,9 @@ pub struct CircuitControl {
     pub active: bool,
     /// Whether the control was active last tick (for transition detection).
     pub was_active: bool,
+    /// What to do when the condition becomes active.
+    #[serde(default)]
+    pub action: CircuitAction,
 }
 
 /// Update a circuit control's active state from the given signals.
@@ -218,6 +231,7 @@ mod tests {
             wire_color: WireColor::Red,
             active: false,
             was_active: false,
+            action: CircuitAction::default(),
         };
 
         update_circuit_control(&mut control, &signals);

@@ -89,6 +89,14 @@ pub enum Event {
         edge: EdgeId,
         tick: Ticks,
     },
+
+    // -- Recipe switching --
+    RecipeSwitched {
+        node: NodeId,
+        old_recipe_index: usize,
+        new_recipe_index: usize,
+        tick: Ticks,
+    },
 }
 
 /// Discriminant tag for event types, used for suppression and filtering.
@@ -106,10 +114,11 @@ pub enum EventKind {
     NodeRemoved,
     EdgeAdded,
     EdgeRemoved,
+    RecipeSwitched,
 }
 
 /// Total number of event kinds.
-const EVENT_KIND_COUNT: usize = 12;
+const EVENT_KIND_COUNT: usize = 13;
 
 impl Event {
     /// Get the discriminant kind for this event.
@@ -127,6 +136,7 @@ impl Event {
             Event::NodeRemoved { .. } => EventKind::NodeRemoved,
             Event::EdgeAdded { .. } => EventKind::EdgeAdded,
             Event::EdgeRemoved { .. } => EventKind::EdgeRemoved,
+            Event::RecipeSwitched { .. } => EventKind::RecipeSwitched,
         }
     }
 }
@@ -382,6 +392,7 @@ impl std::fmt::Debug for EventBus {
 const fn empty_subscriber_array() -> [Vec<SubscriberEntry>; EVENT_KIND_COUNT] {
     // Cannot use Default in const context, so we build it manually.
     [
+        Vec::new(),
         Vec::new(),
         Vec::new(),
         Vec::new(),

@@ -211,12 +211,7 @@ fn make_source_with_depletion(item: ItemTypeId, rate: f64, depletion: Depletion)
 /// The ONI Electrolyzer takes 1 kg/s of Water and outputs 888 g/s of Oxygen
 /// and 112 g/s of Hydrogen. This is a single-input, dual-output recipe where
 /// the two outputs are different fluid types going to separate pipe networks.
-///
-/// ENGINE GAP: A FixedRecipe can produce multiple output types, but all outputs
-/// go to the same output inventory. ONI needs outputs routed to different
-/// fluid networks (oxygen to one pipe network, hydrogen to another). The engine
-/// needs per-output-type routing or a way to connect specific output types to
-/// specific edges.
+/// Each output type is routed via `connect_filtered()` to its dedicated sink.
 #[test]
 fn test_electrolyzer_splits_water() {
     let mut engine = Engine::new(SimulationStrategy::Tick);
@@ -246,15 +241,6 @@ fn test_electrolyzer_splits_water() {
 
     connect(&mut engine, water_src, electrolyzer, liquid_pipe());
 
-    // ENGINE GAP: We need two separate downstream connections, one filtering
-    // for oxygen and one filtering for hydrogen. Currently the engine has no
-    // concept of per-item-type edge filtering. Both consumers below will
-    // compete for whatever is in the electrolyzer's single output inventory.
-    //
-    // Desired API (does not exist):
-    //   connect_filtered(&mut engine, electrolyzer, o2_sink, gas_pipe(), oni_oxygen());
-    //   connect_filtered(&mut engine, electrolyzer, h2_sink, gas_pipe(), oni_hydrogen());
-
     let o2_sink = add_node(
         &mut engine,
         make_demand(oni_oxygen(), 1.0),
@@ -268,37 +254,46 @@ fn test_electrolyzer_splits_water() {
         ONI_OUTPUT_CAP,
     );
 
-    // Without filtered edges, we connect both sinks to the electrolyzer.
-    // The first-edge-wins behavior means only one sink will receive items.
-    connect(&mut engine, electrolyzer, o2_sink, gas_pipe());
-    connect(&mut engine, electrolyzer, h2_sink, gas_pipe());
+    // Connect with per-output-type filtering so each sink gets its gas.
+    connect_filtered(
+        &mut engine,
+        electrolyzer,
+        o2_sink,
+        gas_pipe(),
+        Some(oni_oxygen()),
+    );
+    connect_filtered(
+        &mut engine,
+        electrolyzer,
+        h2_sink,
+        gas_pipe(),
+        Some(oni_hydrogen()),
+    );
 
     // Run for enough ticks to see multiple production cycles.
     for _ in 0..200 {
         engine.step();
     }
 
-    // Verify the electrolyzer produced both output types.
-    let o2_at_electrolyzer = output_quantity(&engine, electrolyzer, oni_oxygen());
-    let h2_at_electrolyzer = output_quantity(&engine, electrolyzer, oni_hydrogen());
+    // Demand processors consume items immediately, so input_quantity may be 0.
+    // Check consumed_total on each demand processor to verify delivery.
+    let o2_consumed = match engine.get_processor(o2_sink) {
+        Some(Processor::Demand(d)) => d.consumed_total,
+        _ => 0,
+    };
+    let h2_consumed = match engine.get_processor(h2_sink) {
+        Some(Processor::Demand(d)) => d.consumed_total,
+        _ => 0,
+    };
 
-    // At least some oxygen and hydrogen should have been produced over 200 ticks.
-    // Note: with first-edge-wins, not all of it may have been delivered downstream.
-    let o2_received = input_quantity(&engine, o2_sink, oni_oxygen());
-    let h2_received = input_quantity(&engine, h2_sink, oni_hydrogen());
-
-    // Basic sanity: the electrolyzer's recipe DID produce both types into its
-    // output inventory at some point. With current engine limitations, downstream
-    // delivery is unreliable because edges are not type-filtered.
     assert!(
-        o2_at_electrolyzer > 0 || o2_received > 0,
-        "electrolyzer should have produced oxygen (output: {o2_at_electrolyzer}, delivered: {o2_received})"
+        o2_consumed > 0,
+        "oxygen sink should have consumed oxygen, got {o2_consumed}"
     );
-    // ENGINE GAP: hydrogen may not have been delivered to h2_sink because the
-    // first edge (to o2_sink) monopolizes the output. This test documents the
-    // limitation.
-    let _ = h2_at_electrolyzer;
-    let _ = h2_received;
+    assert!(
+        h2_consumed > 0,
+        "hydrogen sink should have consumed hydrogen, got {h2_consumed}"
+    );
 }
 
 // ===========================================================================
@@ -899,12 +894,8 @@ fn test_food_chain_mealwood_to_liceloaf() {
 /// Crude Oil -> Oil Refinery -> Petroleum + Natural Gas (byproduct)
 /// Petroleum -> Polymer Press -> Plastic
 ///
-/// This tests fluid-to-solid conversion in a multi-step chain.
-///
-/// ENGINE GAP: Mixed-phase outputs (fluid petroleum + gas natural gas from the
-/// same recipe). The Oil Refinery needs to route petroleum to a liquid pipe
-/// network and natural gas to a gas pipe network. Same per-output-type routing
-/// gap as the Electrolyzer test.
+/// This tests fluid-to-solid conversion in a multi-step chain with filtered
+/// edges routing each output type to the correct downstream consumer.
 #[test]
 fn test_oil_refinery_chain() {
     let mut engine = Engine::new(SimulationStrategy::Tick);
@@ -918,8 +909,6 @@ fn test_oil_refinery_chain() {
     );
 
     // Oil Refinery: 10 crude oil -> 5 petroleum + 1 natural gas over 5 ticks.
-    // ENGINE GAP: Petroleum should go to a liquid pipe network, natural gas to
-    // a gas pipe network. Currently both go to the same output inventory.
     let oil_refinery = add_node(
         &mut engine,
         make_recipe(

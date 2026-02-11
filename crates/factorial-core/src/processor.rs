@@ -1,5 +1,10 @@
 use crate::fixed::Fixed64;
 use crate::id::{ItemTypeId, ModifierId, PropertyId};
+use crate::rng::SimRng;
+
+fn default_true() -> bool {
+    true
+}
 
 // ---------------------------------------------------------------------------
 // Recipe types
@@ -10,6 +15,23 @@ use crate::id::{ItemTypeId, ModifierId, PropertyId};
 pub struct RecipeInput {
     pub item_type: ItemTypeId,
     pub quantity: u32,
+    /// When `true` (default), the input is consumed normally.
+    /// When `false`, the input acts as a catalyst: it must be present to start
+    /// the recipe but is not consumed during crafting.
+    #[serde(default = "default_true")]
+    pub consumed: bool,
+}
+
+/// A chance-based extra output applied after base production.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct BonusOutput {
+    /// Probability in [0, 1] that the bonus triggers each cycle.
+    pub chance: Fixed64,
+    /// Extra quantity produced when the bonus triggers.
+    pub quantity: u32,
+    /// Item type for the bonus. `None` means same type as the parent output.
+    #[serde(default)]
+    pub bonus_item_type: Option<ItemTypeId>,
 }
 
 /// An output product of a fixed recipe.
@@ -17,6 +39,9 @@ pub struct RecipeInput {
 pub struct RecipeOutput {
     pub item_type: ItemTypeId,
     pub quantity: u32,
+    /// Optional bonus output triggered probabilistically each cycle.
+    #[serde(default)]
+    pub bonus: Option<BonusOutput>,
 }
 
 // ---------------------------------------------------------------------------
@@ -106,6 +131,38 @@ pub struct DemandProcessor {
     pub accepted_types: Option<Vec<ItemTypeId>>,
 }
 
+// ---------------------------------------------------------------------------
+// Multi-recipe (runtime recipe switching)
+// ---------------------------------------------------------------------------
+
+/// Policy for how to handle an in-progress craft when switching recipes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum RecipeSwitchPolicy {
+    /// Finish the current craft, then switch (default).
+    #[default]
+    CompleteFirst,
+    /// Cancel immediately — in-progress inputs are lost.
+    CancelImmediate,
+    /// Cancel immediately — return consumed inputs to the input inventory.
+    RefundInputs,
+}
+
+/// A processor that holds multiple recipes and can switch between them.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MultiRecipeProcessor {
+    pub recipes: Vec<FixedRecipe>,
+    pub active_recipe: usize,
+    #[serde(default)]
+    pub switch_policy: RecipeSwitchPolicy,
+    /// When `Some`, a recipe switch is pending (will be applied on cycle completion).
+    #[serde(default)]
+    pub pending_switch: Option<usize>,
+    /// Inputs consumed at the start of the current in-progress craft.
+    /// Used for the `RefundInputs` policy.
+    #[serde(default)]
+    pub in_progress_inputs: Vec<(ItemTypeId, u32)>,
+}
+
 /// Top-level processor enum. Dispatches via enum match (no trait objects).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Processor {
@@ -116,6 +173,8 @@ pub enum Processor {
     /// Passes all items from input to output unchanged.
     /// Used for junction nodes (splitters, mergers, balancers).
     Passthrough,
+    /// Holds multiple recipes with runtime switching support.
+    MultiRecipe(MultiRecipeProcessor),
 }
 
 // ---------------------------------------------------------------------------
@@ -287,14 +346,35 @@ impl Processor {
         available_inputs: &[(ItemTypeId, u32)],
         output_space: u32,
     ) -> ProcessorResult {
+        self.tick_with_rng(state, modifiers, available_inputs, output_space, None)
+    }
+
+    /// Like [`tick`](Self::tick) but with an optional per-node PRNG for
+    /// bonus output rolls.
+    pub fn tick_with_rng(
+        &mut self,
+        state: &mut ProcessorState,
+        modifiers: &[Modifier],
+        available_inputs: &[(ItemTypeId, u32)],
+        output_space: u32,
+        rng: Option<&mut SimRng>,
+    ) -> ProcessorResult {
         match self {
             Processor::Source(src) => tick_source(src, state, modifiers, output_space),
-            Processor::Fixed(recipe) => {
-                tick_fixed(recipe, state, modifiers, available_inputs, output_space)
-            }
+            Processor::Fixed(recipe) => tick_fixed(
+                recipe,
+                state,
+                modifiers,
+                available_inputs,
+                output_space,
+                rng,
+            ),
             Processor::Property(prop) => tick_property(prop, state, available_inputs, output_space),
             Processor::Demand(demand) => tick_demand(demand, state, modifiers, available_inputs),
             Processor::Passthrough => tick_passthrough(state, available_inputs, output_space),
+            Processor::MultiRecipe(multi) => {
+                tick_multi_recipe(multi, state, modifiers, available_inputs, output_space, rng)
+            }
         }
     }
 }
@@ -394,6 +474,7 @@ fn tick_fixed(
     modifiers: &[Modifier],
     available_inputs: &[(ItemTypeId, u32)],
     output_space: u32,
+    rng: Option<&mut SimRng>,
 ) -> ProcessorResult {
     let mut result = ProcessorResult::default();
     let mods = ResolvedModifiers::resolve(modifiers);
@@ -435,8 +516,9 @@ fn tick_fixed(
             let mut to_consume: Vec<(ItemTypeId, u32)> = Vec::new();
             for input in &recipe.inputs {
                 // Effective quantity = ceil(base_quantity * efficiency).
-                let eff_qty_fixed = Fixed64::from_num(input.quantity) * mods.efficiency;
-                let eff_qty = {
+                // Catalysts (consumed == false) are not affected by efficiency.
+                let eff_qty = if input.consumed {
+                    let eff_qty_fixed = Fixed64::from_num(input.quantity) * mods.efficiency;
                     let raw: i64 = eff_qty_fixed.to_num();
                     let frac = eff_qty_fixed.frac();
                     if frac > Fixed64::from_num(0) {
@@ -444,6 +526,8 @@ fn tick_fixed(
                     } else {
                         raw.max(1) as u32
                     }
+                } else {
+                    input.quantity
                 };
 
                 let available = available_inputs
@@ -456,7 +540,10 @@ fn tick_fixed(
                     can_start = false;
                     break;
                 }
-                to_consume.push((input.item_type, eff_qty));
+                // Only consume inputs that are not catalysts.
+                if input.consumed {
+                    to_consume.push((input.item_type, eff_qty));
+                }
             }
 
             if !can_start {
@@ -475,7 +562,7 @@ fn tick_fixed(
 
             // If effective_dur is 1 tick, produce immediately.
             if effective_dur <= 1 {
-                let produced = apply_productivity(&recipe.outputs, &mods);
+                let produced = apply_productivity(&recipe.outputs, &mods, rng);
                 result.produced = produced;
                 *state = ProcessorState::Idle;
                 result.state_changed = true;
@@ -489,7 +576,7 @@ fn tick_fixed(
             *progress += 1;
             if *progress >= effective_dur {
                 // Crafting complete -- emit outputs.
-                let produced = apply_productivity(&recipe.outputs, &mods);
+                let produced = apply_productivity(&recipe.outputs, &mods, rng);
                 result.produced = produced;
                 *state = ProcessorState::Idle;
                 result.state_changed = true;
@@ -500,21 +587,32 @@ fn tick_fixed(
     result
 }
 
-/// Apply productivity modifier to outputs. Productivity > 1.0 means extra
-/// items. We round down fractional bonus items for simplicity.
+/// Apply productivity modifier to outputs and roll bonus outputs.
+///
+/// Productivity > 1.0 means extra base items. Bonus outputs are separate:
+/// they trigger probabilistically via `rng` and are NOT multiplied by
+/// the productivity modifier (prevents double-dipping).
 fn apply_productivity(
     outputs: &[RecipeOutput],
     mods: &ResolvedModifiers,
+    mut rng: Option<&mut SimRng>,
 ) -> Vec<(ItemTypeId, u32)> {
-    outputs
-        .iter()
-        .map(|o| {
-            let base = Fixed64::from_num(o.quantity);
-            let boosted = base * mods.productivity;
-            let qty = boosted.to_num::<i64>().max(1) as u32;
-            (o.item_type, qty)
-        })
-        .collect()
+    let mut produced = Vec::with_capacity(outputs.len() * 2);
+    for o in outputs {
+        let base = Fixed64::from_num(o.quantity);
+        let boosted = base * mods.productivity;
+        let qty = boosted.to_num::<i64>().max(1) as u32;
+        produced.push((o.item_type, qty));
+
+        // Roll bonus output if present and RNG available.
+        if let (Some(bonus), Some(rng)) = (&o.bonus, rng.as_deref_mut())
+            && rng.chance(bonus.chance)
+        {
+            let bonus_type = bonus.bonus_item_type.unwrap_or(o.item_type);
+            produced.push((bonus_type, bonus.quantity));
+        }
+    }
+    produced
 }
 
 // ---------------------------------------------------------------------------
@@ -721,6 +819,65 @@ fn tick_passthrough(
     result
 }
 
+// ---------------------------------------------------------------------------
+// Multi-recipe processor tick
+// ---------------------------------------------------------------------------
+
+fn tick_multi_recipe(
+    multi: &mut MultiRecipeProcessor,
+    state: &mut ProcessorState,
+    modifiers: &[Modifier],
+    available_inputs: &[(ItemTypeId, u32)],
+    output_space: u32,
+    rng: Option<&mut SimRng>,
+) -> ProcessorResult {
+    // Apply pending switch when idle (before starting a new cycle).
+    if matches!(state, ProcessorState::Idle | ProcessorState::Stalled { .. })
+        && multi.pending_switch.is_some()
+    {
+        let new_idx = multi.pending_switch.take().unwrap();
+        multi.active_recipe = new_idx;
+    }
+
+    let recipe = match multi.recipes.get(multi.active_recipe) {
+        Some(r) => r,
+        None => return ProcessorResult::default(),
+    };
+
+    // Delegate to tick_fixed for the active recipe.
+    let mut result = tick_fixed(
+        recipe,
+        state,
+        modifiers,
+        available_inputs,
+        output_space,
+        rng,
+    );
+
+    // Track consumed inputs for RefundInputs policy.
+    if !result.consumed.is_empty() && matches!(state, ProcessorState::Working { .. }) {
+        multi.in_progress_inputs = result.consumed.clone();
+    }
+
+    // On cycle completion (state returned to Idle), apply pending switch.
+    if matches!(state, ProcessorState::Idle) && multi.pending_switch.is_some() {
+        let new_idx = multi.pending_switch.take().unwrap();
+        multi.active_recipe = new_idx;
+        result.state_changed = true;
+    }
+
+    result
+}
+
+/// Error type for recipe switch operations.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RecipeSwitchError {
+    #[error("node has no MultiRecipe processor")]
+    NotMultiRecipe,
+    #[error("recipe index {0} out of bounds (max {1})")]
+    IndexOutOfBounds(usize, usize),
+}
+
 // ===========================================================================
 // Tests
 // ===========================================================================
@@ -759,6 +916,7 @@ mod tests {
                 .map(|(item_type, quantity)| RecipeInput {
                     item_type,
                     quantity,
+                    consumed: true,
                 })
                 .collect(),
             outputs: outputs
@@ -766,6 +924,7 @@ mod tests {
                 .map(|(item_type, quantity)| RecipeOutput {
                     item_type,
                     quantity,
+                    bonus: None,
                 })
                 .collect(),
             duration,
@@ -1673,5 +1832,455 @@ mod tests {
         let r = proc.tick(&mut state, &[], &[(iron(), 10)], 3);
         assert_eq!(r.consumed, vec![(iron(), 3)]);
         assert_eq!(r.produced, vec![(gear(), 3)]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Catalyst tests
+    // -----------------------------------------------------------------------
+
+    /// Helper to build a recipe with catalyst (consumed = false) inputs.
+    fn make_recipe_with_catalyst(
+        consumed_inputs: Vec<(ItemTypeId, u32)>,
+        catalyst_inputs: Vec<(ItemTypeId, u32)>,
+        outputs: Vec<(ItemTypeId, u32)>,
+        duration: u32,
+    ) -> Processor {
+        let mut inputs: Vec<RecipeInput> = consumed_inputs
+            .into_iter()
+            .map(|(item_type, quantity)| RecipeInput {
+                item_type,
+                quantity,
+                consumed: true,
+            })
+            .collect();
+        inputs.extend(
+            catalyst_inputs
+                .into_iter()
+                .map(|(item_type, quantity)| RecipeInput {
+                    item_type,
+                    quantity,
+                    consumed: false,
+                }),
+        );
+        Processor::Fixed(FixedRecipe {
+            inputs,
+            outputs: outputs
+                .into_iter()
+                .map(|(item_type, quantity)| RecipeOutput {
+                    item_type,
+                    quantity,
+                    bonus: None,
+                })
+                .collect(),
+            duration,
+        })
+    }
+
+    #[test]
+    fn catalyst_present_cycle_starts() {
+        // 2 iron (consumed) + 1 wire (catalyst) -> 1 gear, 3 ticks.
+        let mut proc =
+            make_recipe_with_catalyst(vec![(iron(), 2)], vec![(wire(), 1)], vec![(gear(), 1)], 3);
+        let mut state = ProcessorState::Idle;
+        let no_mods: Vec<Modifier> = vec![];
+
+        // Provide both iron and wire.
+        let r = proc.tick(&mut state, &no_mods, &[(iron(), 10), (wire(), 5)], 100);
+
+        // Iron should be consumed, wire should NOT.
+        assert_eq!(r.consumed, vec![(iron(), 2)]);
+        assert!(matches!(state, ProcessorState::Working { .. }));
+    }
+
+    #[test]
+    fn catalyst_missing_stalls() {
+        // 2 iron (consumed) + 1 wire (catalyst) -> 1 gear.
+        let mut proc =
+            make_recipe_with_catalyst(vec![(iron(), 2)], vec![(wire(), 1)], vec![(gear(), 1)], 3);
+        let mut state = ProcessorState::Idle;
+        let no_mods: Vec<Modifier> = vec![];
+
+        // Provide iron but no wire catalyst.
+        let r = proc.tick(&mut state, &no_mods, &[(iron(), 10)], 100);
+
+        assert!(r.consumed.is_empty());
+        assert!(matches!(
+            state,
+            ProcessorState::Stalled {
+                reason: StallReason::MissingInputs
+            }
+        ));
+    }
+
+    #[test]
+    fn catalyst_not_consumed_after_cycle() {
+        // 2 iron (consumed) + 1 wire (catalyst) -> 1 gear, 1 tick (immediate).
+        let mut proc =
+            make_recipe_with_catalyst(vec![(iron(), 2)], vec![(wire(), 1)], vec![(gear(), 1)], 1);
+        let mut state = ProcessorState::Idle;
+        let no_mods: Vec<Modifier> = vec![];
+
+        let r = proc.tick(&mut state, &no_mods, &[(iron(), 10), (wire(), 5)], 100);
+
+        // Only iron consumed, wire stays.
+        assert_eq!(r.consumed, vec![(iron(), 2)]);
+        assert_eq!(r.produced, vec![(gear(), 1)]);
+    }
+
+    #[test]
+    fn catalyst_with_efficiency_modifier() {
+        // Efficiency modifier should affect consumed inputs but not catalysts.
+        // 2 iron (consumed) + 1 wire (catalyst) -> 1 gear, 1 tick.
+        let mut proc =
+            make_recipe_with_catalyst(vec![(iron(), 2)], vec![(wire(), 1)], vec![(gear(), 1)], 1);
+        let mut state = ProcessorState::Idle;
+
+        // Efficiency 0.5 means consumed inputs need ceil(2 * 0.5) = 1 iron.
+        let mods = vec![Modifier {
+            id: ModifierId(0),
+            kind: ModifierKind::Efficiency(fixed(0.5)),
+            stacking: StackingRule::Multiplicative,
+        }];
+
+        let r = proc.tick(&mut state, &mods, &[(iron(), 10), (wire(), 5)], 100);
+
+        // Iron quantity affected by efficiency: ceil(2 * 0.5) = 1.
+        assert_eq!(r.consumed, vec![(iron(), 1)]);
+        // Wire catalyst not consumed at all.
+        assert_eq!(r.produced, vec![(gear(), 1)]);
+    }
+
+    #[test]
+    fn backwards_compat_no_consumed_field() {
+        // Verify that deserializing old RecipeInput without `consumed` defaults to true.
+        let json = r#"{"item_type":0,"quantity":5}"#;
+        let input: RecipeInput = serde_json::from_str(json).unwrap();
+        assert!(input.consumed);
+        assert_eq!(input.quantity, 5);
+    }
+
+    // -----------------------------------------------------------------------
+    // Bonus output tests
+    // -----------------------------------------------------------------------
+
+    /// Helper to build a recipe with a bonus output on the first output.
+    fn make_recipe_with_bonus(
+        inputs: Vec<(ItemTypeId, u32)>,
+        base_output: (ItemTypeId, u32),
+        bonus_chance: f64,
+        bonus_qty: u32,
+        bonus_item: Option<ItemTypeId>,
+        duration: u32,
+    ) -> FixedRecipe {
+        FixedRecipe {
+            inputs: inputs
+                .into_iter()
+                .map(|(item_type, quantity)| RecipeInput {
+                    item_type,
+                    quantity,
+                    consumed: true,
+                })
+                .collect(),
+            outputs: vec![RecipeOutput {
+                item_type: base_output.0,
+                quantity: base_output.1,
+                bonus: Some(BonusOutput {
+                    chance: fixed(bonus_chance),
+                    quantity: bonus_qty,
+                    bonus_item_type: bonus_item,
+                }),
+            }],
+            duration,
+        }
+    }
+
+    #[test]
+    fn bonus_output_deterministic() {
+        // Two identical recipes with the same RNG seed produce the same results.
+        let recipe = make_recipe_with_bonus(vec![(iron(), 1)], (gear(), 1), 0.5, 1, None, 1);
+        let mods = ResolvedModifiers::resolve(&[]);
+
+        let mut rng_a = crate::rng::SimRng::new(42);
+        let mut rng_b = crate::rng::SimRng::new(42);
+
+        for _ in 0..100 {
+            let a = apply_productivity(&recipe.outputs, &mods, Some(&mut rng_a));
+            let b = apply_productivity(&recipe.outputs, &mods, Some(&mut rng_b));
+            assert_eq!(a, b);
+        }
+    }
+
+    #[test]
+    fn bonus_output_probability() {
+        // Over many cycles, bonus should trigger at roughly the expected rate.
+        let recipe = make_recipe_with_bonus(vec![(iron(), 1)], (gear(), 1), 0.25, 1, None, 1);
+        let mods = ResolvedModifiers::resolve(&[]);
+        let mut rng = crate::rng::SimRng::new(12345);
+
+        let trials = 10_000;
+        let mut bonus_count = 0u32;
+        for _ in 0..trials {
+            let produced = apply_productivity(&recipe.outputs, &mods, Some(&mut rng));
+            // Base output is always produced. Bonus adds a second entry.
+            if produced.len() > 1 {
+                bonus_count += 1;
+            }
+        }
+
+        // Expect ~2500 +/- 500 (generous tolerance).
+        assert!(
+            (1500..=3500).contains(&bonus_count),
+            "expected ~2500, got {bonus_count}"
+        );
+    }
+
+    #[test]
+    fn bonus_output_different_item_type() {
+        // Bonus produces a different item type than the base output.
+        let recipe = make_recipe_with_bonus(
+            vec![(iron(), 1)],
+            (gear(), 1),
+            1.0, // always triggers
+            2,
+            Some(wire()),
+            1,
+        );
+        let mods = ResolvedModifiers::resolve(&[]);
+        let mut rng = crate::rng::SimRng::new(42);
+
+        let produced = apply_productivity(&recipe.outputs, &mods, Some(&mut rng));
+        assert_eq!(produced.len(), 2);
+        assert_eq!(produced[0], (gear(), 1));
+        assert_eq!(produced[1], (wire(), 2));
+    }
+
+    #[test]
+    fn bonus_not_multiplied_by_productivity() {
+        // Productivity modifier affects base output but not bonus.
+        let recipe = make_recipe_with_bonus(
+            vec![(iron(), 1)],
+            (gear(), 1),
+            1.0, // always triggers
+            3,
+            None,
+            1,
+        );
+        let mods = ResolvedModifiers::resolve(&[Modifier {
+            id: ModifierId(0),
+            kind: ModifierKind::Productivity(fixed(2.0)),
+            stacking: StackingRule::Multiplicative,
+        }]);
+        let mut rng = crate::rng::SimRng::new(42);
+
+        let produced = apply_productivity(&recipe.outputs, &mods, Some(&mut rng));
+        // Base: 1 * 2.0 productivity = 2 gears.
+        assert_eq!(produced[0], (gear(), 2));
+        // Bonus: 3 gears (NOT multiplied by productivity).
+        assert_eq!(produced[1], (gear(), 3));
+    }
+
+    #[test]
+    fn bonus_output_no_rng_skips_bonus() {
+        // Without an RNG, bonus outputs are never triggered.
+        let recipe = make_recipe_with_bonus(
+            vec![(iron(), 1)],
+            (gear(), 1),
+            1.0, // would always trigger with an RNG
+            5,
+            None,
+            1,
+        );
+        let mods = ResolvedModifiers::resolve(&[]);
+
+        let produced = apply_productivity(&recipe.outputs, &mods, None);
+        // Only base output, no bonus.
+        assert_eq!(produced.len(), 1);
+        assert_eq!(produced[0], (gear(), 1));
+    }
+
+    // -----------------------------------------------------------------------
+    // MultiRecipe processor tests
+    // -----------------------------------------------------------------------
+
+    fn make_multi_recipe(
+        recipes: Vec<FixedRecipe>,
+        switch_policy: RecipeSwitchPolicy,
+    ) -> Processor {
+        Processor::MultiRecipe(MultiRecipeProcessor {
+            active_recipe: 0,
+            recipes,
+            switch_policy,
+            pending_switch: None,
+            in_progress_inputs: Vec::new(),
+        })
+    }
+
+    fn make_simple_fixed(
+        inputs: Vec<(ItemTypeId, u32)>,
+        outputs: Vec<(ItemTypeId, u32)>,
+        duration: u32,
+    ) -> FixedRecipe {
+        FixedRecipe {
+            inputs: inputs
+                .into_iter()
+                .map(|(item_type, quantity)| RecipeInput {
+                    item_type,
+                    quantity,
+                    consumed: true,
+                })
+                .collect(),
+            outputs: outputs
+                .into_iter()
+                .map(|(item_type, quantity)| RecipeOutput {
+                    item_type,
+                    quantity,
+                    bonus: None,
+                })
+                .collect(),
+            duration,
+        }
+    }
+
+    #[test]
+    fn multi_recipe_idle_switch() {
+        // When idle, switching recipes happens immediately.
+        let r0 = make_simple_fixed(vec![(iron(), 1)], vec![(gear(), 1)], 3);
+        let r1 = make_simple_fixed(vec![(copper(), 1)], vec![(wire(), 1)], 3);
+        let mut proc = make_multi_recipe(vec![r0, r1], RecipeSwitchPolicy::CompleteFirst);
+        let mut state = ProcessorState::Idle;
+
+        // Confirm active recipe is 0.
+        if let Processor::MultiRecipe(ref m) = proc {
+            assert_eq!(m.active_recipe, 0);
+        }
+
+        // Switch to recipe 1 while idle — should happen via pending_switch + tick.
+        if let Processor::MultiRecipe(ref mut m) = proc {
+            m.pending_switch = Some(1);
+        }
+
+        // Tick: idle + pending_switch => switch happens.
+        let _ = proc.tick(&mut state, &[], &[(copper(), 10)], 100);
+
+        if let Processor::MultiRecipe(ref m) = proc {
+            assert_eq!(m.active_recipe, 1);
+            assert!(m.pending_switch.is_none());
+        }
+    }
+
+    #[test]
+    fn multi_recipe_working_complete_first() {
+        // With CompleteFirst policy, recipe switch is deferred until cycle completes.
+        let r0 = make_simple_fixed(vec![(iron(), 1)], vec![(gear(), 1)], 3);
+        let r1 = make_simple_fixed(vec![(copper(), 1)], vec![(wire(), 1)], 3);
+        let mut proc = make_multi_recipe(vec![r0, r1], RecipeSwitchPolicy::CompleteFirst);
+        let mut state = ProcessorState::Idle;
+
+        // Tick 1: start recipe 0.
+        let r = proc.tick(&mut state, &[], &[(iron(), 10)], 100);
+        assert_eq!(r.consumed, vec![(iron(), 1)]);
+        assert!(matches!(state, ProcessorState::Working { .. }));
+
+        // Set pending switch mid-craft.
+        if let Processor::MultiRecipe(ref mut m) = proc {
+            m.pending_switch = Some(1);
+        }
+
+        // Tick 2: still working on recipe 0.
+        let r = proc.tick(&mut state, &[], &[(iron(), 10)], 100);
+        assert!(r.produced.is_empty());
+        if let Processor::MultiRecipe(ref m) = proc {
+            assert_eq!(m.active_recipe, 0); // Not switched yet.
+            assert_eq!(m.pending_switch, Some(1));
+        }
+
+        // Tick 3: recipe 0 completes, then switch to recipe 1.
+        let r = proc.tick(&mut state, &[], &[(iron(), 10)], 100);
+        assert_eq!(r.produced, vec![(gear(), 1)]);
+        if let Processor::MultiRecipe(ref m) = proc {
+            assert_eq!(m.active_recipe, 1); // Switched!
+            assert!(m.pending_switch.is_none());
+        }
+    }
+
+    #[test]
+    fn multi_recipe_crafts_active_recipe() {
+        // Verify MultiRecipe crafts the active recipe correctly.
+        let r0 = make_simple_fixed(vec![(iron(), 2)], vec![(gear(), 1)], 2);
+        let r1 = make_simple_fixed(vec![(copper(), 1)], vec![(wire(), 3)], 2);
+        let mut proc = make_multi_recipe(vec![r0, r1], RecipeSwitchPolicy::CompleteFirst);
+        let mut state = ProcessorState::Idle;
+
+        // Recipe 0: 2 iron -> 1 gear in 2 ticks.
+        let r = proc.tick(&mut state, &[], &[(iron(), 10)], 100);
+        assert_eq!(r.consumed, vec![(iron(), 2)]);
+
+        let r = proc.tick(&mut state, &[], &[(iron(), 8)], 100);
+        assert_eq!(r.produced, vec![(gear(), 1)]);
+    }
+
+    #[test]
+    fn multi_recipe_modifiers_apply() {
+        // Speed modifier should affect the active recipe in a MultiRecipe processor.
+        let r0 = make_simple_fixed(vec![(iron(), 1)], vec![(gear(), 1)], 10);
+        let mut proc = make_multi_recipe(vec![r0], RecipeSwitchPolicy::CompleteFirst);
+        let mut state = ProcessorState::Idle;
+        let mods = vec![Modifier {
+            id: ModifierId(0),
+            kind: ModifierKind::Speed(fixed(2.0)),
+            stacking: StackingRule::default(),
+        }];
+
+        // Tick 1: consume.
+        let r = proc.tick(&mut state, &mods, &[(iron(), 10)], 100);
+        assert_eq!(r.consumed, vec![(iron(), 1)]);
+
+        // With 2x speed, 10-tick recipe takes 5 ticks.
+        for _ in 2..5 {
+            proc.tick(&mut state, &mods, &[(iron(), 9)], 100);
+        }
+
+        // Tick 5: produce.
+        let r = proc.tick(&mut state, &mods, &[(iron(), 9)], 100);
+        assert_eq!(r.produced, vec![(gear(), 1)]);
+    }
+
+    #[test]
+    fn multi_recipe_out_of_bounds_recipe() {
+        // If active_recipe is out of bounds, tick should return default (no-op).
+        let r0 = make_simple_fixed(vec![(iron(), 1)], vec![(gear(), 1)], 2);
+        let mut proc = make_multi_recipe(vec![r0], RecipeSwitchPolicy::CompleteFirst);
+        let mut state = ProcessorState::Idle;
+
+        // Force active_recipe out of bounds.
+        if let Processor::MultiRecipe(ref mut m) = proc {
+            m.active_recipe = 99;
+        }
+
+        let r = proc.tick(&mut state, &[], &[(iron(), 10)], 100);
+        assert!(r.consumed.is_empty());
+        assert!(r.produced.is_empty());
+    }
+
+    #[test]
+    fn multi_recipe_serialization_round_trip() {
+        let r0 = make_simple_fixed(vec![(iron(), 1)], vec![(gear(), 1)], 5);
+        let r1 = make_simple_fixed(vec![(copper(), 2)], vec![(wire(), 1)], 3);
+        let multi = MultiRecipeProcessor {
+            recipes: vec![r0, r1],
+            active_recipe: 1,
+            switch_policy: RecipeSwitchPolicy::RefundInputs,
+            pending_switch: Some(0),
+            in_progress_inputs: vec![(copper(), 2)],
+        };
+
+        let bytes = bitcode::serialize(&multi).expect("serialize");
+        let restored: MultiRecipeProcessor = bitcode::deserialize(&bytes).expect("deserialize");
+
+        assert_eq!(restored.active_recipe, 1);
+        assert_eq!(restored.recipes.len(), 2);
+        assert_eq!(restored.switch_policy, RecipeSwitchPolicy::RefundInputs);
+        assert_eq!(restored.pending_switch, Some(0));
+        assert_eq!(restored.in_progress_inputs, vec![(copper(), 2)]);
     }
 }

@@ -292,11 +292,20 @@ pub fn load_game_data(dir: &Path) -> Result<GameData, DataLoadError> {
         let inputs: Vec<RecipeEntry> = recipe
             .inputs
             .iter()
-            .map(|(name, qty)| {
+            .map(|input_data| {
+                let (name, qty, consumed) = match input_data {
+                    RecipeInputData::Short(name, qty) => (name.as_str(), *qty, true),
+                    RecipeInputData::Full {
+                        item,
+                        quantity,
+                        consumed,
+                    } => (item.as_str(), *quantity, *consumed),
+                };
                 let id = resolve_name(&item_names, name, &recipes_path, "item")?;
                 Ok(RecipeEntry {
                     item: *id,
-                    quantity: *qty,
+                    quantity: qty,
+                    consumed,
                 })
             })
             .collect::<Result<Vec<_>, DataLoadError>>()?;
@@ -309,6 +318,7 @@ pub fn load_game_data(dir: &Path) -> Result<GameData, DataLoadError> {
                 Ok(RecipeEntry {
                     item: *id,
                     quantity: *qty,
+                    consumed: true,
                 })
             })
             .collect::<Result<Vec<_>, DataLoadError>>()?;
@@ -486,6 +496,7 @@ fn resolve_processor(
                     .map(|e| RecipeInput {
                         item_type: e.item,
                         quantity: e.quantity,
+                        consumed: e.consumed,
                     })
                     .collect(),
                 outputs: recipe_def
@@ -494,6 +505,7 @@ fn resolve_processor(
                     .map(|e| RecipeOutput {
                         item_type: e.item,
                         quantity: e.quantity,
+                        bonus: None,
                     })
                     .collect(),
                 duration: recipe_def.duration as u32,
@@ -526,6 +538,64 @@ fn resolve_processor(
             }))
         }
         ProcessorData::Passthrough => Ok(Processor::Passthrough),
+        ProcessorData::MultiRecipe {
+            recipes: recipe_list,
+            default_recipe,
+            switch_policy,
+        } => {
+            let mut fixed_recipes = Vec::with_capacity(recipe_list.len());
+            let mut default_index = 0usize;
+
+            for (i, recipe_name) in recipe_list.iter().enumerate() {
+                let recipe_id = resolve_name(recipe_names, recipe_name, file, "recipe")?;
+                let recipe_def =
+                    builder
+                        .get_recipe(*recipe_id)
+                        .ok_or_else(|| DataLoadError::UnresolvedRef {
+                            file: file.to_path_buf(),
+                            name: recipe_name.clone(),
+                            expected_kind: "recipe",
+                        })?;
+                if default_recipe.as_deref() == Some(recipe_name.as_str()) {
+                    default_index = i;
+                }
+                fixed_recipes.push(FixedRecipe {
+                    inputs: recipe_def
+                        .inputs
+                        .iter()
+                        .map(|e| RecipeInput {
+                            item_type: e.item,
+                            quantity: e.quantity,
+                            consumed: e.consumed,
+                        })
+                        .collect(),
+                    outputs: recipe_def
+                        .outputs
+                        .iter()
+                        .map(|e| RecipeOutput {
+                            item_type: e.item,
+                            quantity: e.quantity,
+                            bonus: None,
+                        })
+                        .collect(),
+                    duration: recipe_def.duration as u32,
+                });
+            }
+
+            let policy = match switch_policy.as_deref() {
+                Some("cancel_immediate") => RecipeSwitchPolicy::CancelImmediate,
+                Some("refund_inputs") => RecipeSwitchPolicy::RefundInputs,
+                _ => RecipeSwitchPolicy::CompleteFirst,
+            };
+
+            Ok(Processor::MultiRecipe(MultiRecipeProcessor {
+                recipes: fixed_recipes,
+                active_recipe: default_index,
+                switch_policy: policy,
+                pending_switch: None,
+                in_progress_inputs: Vec::new(),
+            }))
+        }
     }
 }
 

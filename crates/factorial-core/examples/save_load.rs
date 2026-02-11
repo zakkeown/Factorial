@@ -44,10 +44,12 @@ fn build_factory() -> Engine {
             inputs: vec![RecipeInput {
                 item_type: ItemTypeId(0),
                 quantity: 1,
+                consumed: true,
             }],
             outputs: vec![RecipeOutput {
                 item_type: ItemTypeId(1),
                 quantity: 1,
+                bonus: None,
             }],
             duration: 3,
         }),

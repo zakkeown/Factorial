@@ -57,6 +57,7 @@
 - [Place Buildings on a Grid](cookbook/spatial.md)
 - [Save, Load, and Migrate State](cookbook/serialization.md)
 - [Detect Multiplayer Desync](cookbook/multiplayer.md)
+- [Wire Up Logic Networks](cookbook/logic-networks.md)
 
 # Architecture Deep Dive
 

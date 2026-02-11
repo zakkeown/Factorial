@@ -27,10 +27,11 @@ use crate::graph::ProductionGraph;
 use crate::id::{EdgeId, ItemTypeId, NodeId, PropertyId};
 use crate::item::{Inventory, ItemStack};
 use crate::junction::{Junction, JunctionState};
-use crate::processor::{Modifier, Processor, ProcessorResult, ProcessorState};
+use crate::processor::{FixedRecipe, Modifier, Processor, ProcessorResult, ProcessorState};
 use crate::query::{NodeSnapshot, TransportSnapshot};
 use crate::sim::{AdvanceResult, SimState, SimulationStrategy, StateHash};
 use crate::transport::{Transport, TransportResult, TransportState};
+use slotmap::Key;
 use slotmap::SecondaryMap;
 
 // ---------------------------------------------------------------------------
@@ -174,6 +175,13 @@ pub struct Engine {
     /// Whether the entire hash cache needs rebuilding (after deserialization or first tick).
     pub(crate) hash_cache_cold: bool,
 
+    /// Global RNG seed for the simulation. Per-node RNGs are derived from
+    /// `rng_seed ^ node_id` when a processor is set.
+    pub(crate) rng_seed: u64,
+
+    /// Per-node PRNG for bonus output rolls (derived from `rng_seed`).
+    pub(crate) node_rngs: SecondaryMap<NodeId, crate::rng::SimRng>,
+
     /// Timing profile for the most recent tick (profiling feature only).
     #[cfg(feature = "profiling")]
     pub(crate) last_profile: Option<crate::profiling::TickProfile>,
@@ -219,9 +227,36 @@ impl Engine {
             combined_node_hash: 0,
             hash_dirty_nodes: Vec::new(),
             hash_cache_cold: true,
+            rng_seed: 0,
+            node_rngs: SecondaryMap::new(),
             #[cfg(feature = "profiling")]
             last_profile: None,
         }
+    }
+
+    /// Create a new engine with the given simulation strategy and RNG seed.
+    pub fn new_with_seed(strategy: SimulationStrategy, seed: u64) -> Self {
+        let mut engine = Self::new(strategy);
+        engine.rng_seed = seed;
+        engine
+    }
+
+    /// Set the engine's global RNG seed. Per-node RNGs for any already-set
+    /// processors will be re-derived.
+    pub fn set_rng_seed(&mut self, seed: u64) {
+        self.rng_seed = seed;
+        // Re-derive per-node RNGs for existing processors.
+        let node_ids: Vec<NodeId> = self.processors.keys().collect();
+        for node_id in node_ids {
+            let raw = node_id.data().as_ffi();
+            self.node_rngs
+                .insert(node_id, crate::rng::SimRng::new(seed ^ raw));
+        }
+    }
+
+    /// Get the engine's global RNG seed.
+    pub fn rng_seed(&self) -> u64 {
+        self.rng_seed
     }
 
     /// Create a new engine with the given simulation strategy and a pre-built registry.
@@ -254,6 +289,10 @@ impl Engine {
         self.processors.insert(node, processor);
         self.processor_states
             .insert(node, ProcessorState::default());
+        // Derive per-node RNG from global seed ^ node raw key.
+        let raw = node.data().as_ffi();
+        self.node_rngs
+            .insert(node, crate::rng::SimRng::new(self.rng_seed ^ raw));
         self.dirty.mark_node(node);
         self.dirty
             .mark_partition(crate::dirty::DirtyTracker::PARTITION_PROCESSORS);
@@ -267,6 +306,112 @@ impl Engine {
         self.processor_states.insert(node, ProcessorState::Idle);
     }
 
+    /// Switch the active recipe on a `MultiRecipe` processor.
+    ///
+    /// Behaviour depends on the current processor state and switch policy:
+    /// - **Idle/Stalled**: switch immediately.
+    /// - **Working + CompleteFirst**: sets `pending_switch` (applied on cycle completion).
+    /// - **Working + CancelImmediate**: switches immediately, resets to Idle (inputs lost).
+    /// - **Working + RefundInputs**: switches immediately, refunds consumed inputs.
+    pub fn set_active_recipe(
+        &mut self,
+        node: NodeId,
+        recipe_index: usize,
+    ) -> Result<(), crate::processor::RecipeSwitchError> {
+        use crate::processor::{RecipeSwitchError, RecipeSwitchPolicy};
+
+        let Some(Processor::MultiRecipe(multi)) = self.processors.get_mut(node) else {
+            return Err(RecipeSwitchError::NotMultiRecipe);
+        };
+        if recipe_index >= multi.recipes.len() {
+            return Err(RecipeSwitchError::IndexOutOfBounds(
+                recipe_index,
+                multi.recipes.len(),
+            ));
+        }
+        if multi.active_recipe == recipe_index {
+            multi.pending_switch = None;
+            return Ok(());
+        }
+
+        let state = self.processor_states.get(node).cloned();
+        let old_idx = multi.active_recipe;
+
+        match state.as_ref() {
+            Some(ProcessorState::Working { .. }) => match multi.switch_policy {
+                RecipeSwitchPolicy::CompleteFirst => {
+                    multi.pending_switch = Some(recipe_index);
+                }
+                RecipeSwitchPolicy::CancelImmediate => {
+                    multi.active_recipe = recipe_index;
+                    multi.pending_switch = None;
+                    multi.in_progress_inputs.clear();
+                    self.processor_states.insert(node, ProcessorState::Idle);
+                }
+                RecipeSwitchPolicy::RefundInputs => {
+                    let refund = std::mem::take(&mut multi.in_progress_inputs);
+                    multi.active_recipe = recipe_index;
+                    multi.pending_switch = None;
+                    self.processor_states.insert(node, ProcessorState::Idle);
+                    // Add refunded inputs back to the node's input inventory.
+                    if let Some(inv) = self.inputs.get_mut(node) {
+                        for (item_type, qty) in &refund {
+                            if let Some(slot) = inv.input_slots.first_mut() {
+                                let _ = slot.add(*item_type, *qty);
+                            }
+                        }
+                    }
+                }
+            },
+            _ => {
+                // Idle or Stalled: switch immediately.
+                multi.active_recipe = recipe_index;
+                multi.pending_switch = None;
+            }
+        }
+
+        // Emit recipe switch event.
+        self.event_bus.emit(Event::RecipeSwitched {
+            node,
+            old_recipe_index: old_idx,
+            new_recipe_index: recipe_index,
+            tick: self.sim_state.tick,
+        });
+
+        Ok(())
+    }
+
+    /// Get the active recipe index for a `MultiRecipe` processor, or `None`.
+    pub fn get_active_recipe(&self, node: NodeId) -> Option<usize> {
+        match self.processors.get(node) {
+            Some(Processor::MultiRecipe(multi)) => Some(multi.active_recipe),
+            _ => None,
+        }
+    }
+
+    /// Get the list of available recipes for a `MultiRecipe` processor.
+    pub fn get_available_recipes(&self, node: NodeId) -> Option<&[FixedRecipe]> {
+        match self.processors.get(node) {
+            Some(Processor::MultiRecipe(multi)) => Some(&multi.recipes),
+            _ => None,
+        }
+    }
+
+    /// Set the recipe switch policy for a `MultiRecipe` processor.
+    pub fn set_recipe_switch_policy(
+        &mut self,
+        node: NodeId,
+        policy: crate::processor::RecipeSwitchPolicy,
+    ) -> Result<(), crate::processor::RecipeSwitchError> {
+        match self.processors.get_mut(node) {
+            Some(Processor::MultiRecipe(multi)) => {
+                multi.switch_policy = policy;
+                Ok(())
+            }
+            _ => Err(crate::processor::RecipeSwitchError::NotMultiRecipe),
+        }
+    }
+
     /// Extract and cache the output item type from a processor.
     fn cache_item_type(&mut self, node: NodeId, processor: &Processor) {
         let item_type = match processor {
@@ -275,6 +420,10 @@ impl Engine {
             Processor::Property(prop) => Some(prop.output_type),
             Processor::Demand(demand) => Some(demand.input_type),
             Processor::Passthrough => None,
+            Processor::MultiRecipe(multi) => multi
+                .recipes
+                .get(multi.active_recipe)
+                .and_then(|r| r.outputs.first().map(|o| o.item_type)),
         };
         if let Some(it) = item_type {
             self.node_item_type_cache.insert(node, it);
@@ -293,6 +442,10 @@ impl Engine {
                     Processor::Property(prop) => Some(prop.output_type),
                     Processor::Demand(demand) => Some(demand.input_type),
                     Processor::Passthrough => None,
+                    Processor::MultiRecipe(multi) => multi
+                        .recipes
+                        .get(multi.active_recipe)
+                        .and_then(|r| r.outputs.first().map(|o| o.item_type)),
                 };
                 if let Some(it) = item_type {
                     self.node_item_type_cache.insert(nid, it);
@@ -1058,6 +1211,13 @@ impl Engine {
                 Processor::Property(prop) => return prop.output_type,
                 Processor::Demand(demand) => return demand.input_type,
                 Processor::Passthrough => {}
+                Processor::MultiRecipe(multi) => {
+                    if let Some(recipe) = multi.recipes.get(multi.active_recipe)
+                        && let Some(output) = recipe.outputs.first()
+                    {
+                        return output.item_type;
+                    }
+                }
             }
         }
 
@@ -1287,7 +1447,8 @@ impl Engine {
             let mods = self.modifiers.get(node_id);
             let empty_mods = [];
             let mods_slice = mods.map(|m| m.as_slice()).unwrap_or(&empty_mods);
-            processor.tick(state, mods_slice, &self.input_buf, output_space)
+            let rng = self.node_rngs.get_mut(node_id);
+            processor.tick_with_rng(state, mods_slice, &self.input_buf, output_space, rng)
         };
 
         // Emit production events.
@@ -2050,6 +2211,7 @@ mod tests {
                 .map(|(item_type, quantity)| RecipeInput {
                     item_type,
                     quantity,
+                    consumed: true,
                 })
                 .collect(),
             outputs: outputs
@@ -2057,6 +2219,7 @@ mod tests {
                 .map(|(item_type, quantity)| RecipeOutput {
                     item_type,
                     quantity,
+                    bonus: None,
                 })
                 .collect(),
             duration,
@@ -4653,6 +4816,7 @@ mod tests {
             vec![RecipeEntry {
                 item: iron,
                 quantity: 1,
+                consumed: true,
             }],
             vec![],
             60,

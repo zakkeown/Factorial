@@ -228,6 +228,27 @@ impl LogicModule {
                 wire_color,
                 active: false,
                 was_active: false,
+                action: condition::CircuitAction::default(),
+            },
+        );
+    }
+
+    /// Set a circuit control with a specific action for a node.
+    pub fn set_circuit_control_with_action(
+        &mut self,
+        node: NodeId,
+        condition: Condition,
+        wire_color: WireColor,
+        action: condition::CircuitAction,
+    ) {
+        self.circuit_controls.insert(
+            node,
+            CircuitControl {
+                condition,
+                wire_color,
+                active: false,
+                was_active: false,
+                action,
             },
         );
     }

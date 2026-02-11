@@ -41,11 +41,31 @@ pub enum PropertyType {
 // Core: Recipes
 // ===========================================================================
 
+/// A recipe input entry, supporting both short tuple form and full form with
+/// optional `consumed` flag for catalysts.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum RecipeInputData {
+    /// Short form: `("item_name", quantity)` — consumed by default.
+    Short(String, u32),
+    /// Full form with explicit fields, including catalyst support.
+    Full {
+        item: String,
+        quantity: u32,
+        #[serde(default = "default_true")]
+        consumed: bool,
+    },
+}
+
+fn default_true() -> bool {
+    true
+}
+
 /// A recipe definition in a data file.
 #[derive(Debug, Clone, Deserialize)]
 pub struct RecipeData {
     pub name: String,
-    pub inputs: Vec<(String, u32)>,
+    pub inputs: Vec<RecipeInputData>,
     pub outputs: Vec<(String, u32)>,
     pub duration: u64,
 }
@@ -104,10 +124,24 @@ impl Default for InventoryData {
 /// The processor type for a building.
 #[derive(Debug, Clone, Deserialize)]
 pub enum ProcessorData {
-    Source { item: String, rate: f64 },
-    Recipe { recipe: String },
-    Demand { items: Vec<String> },
+    Source {
+        item: String,
+        rate: f64,
+    },
+    Recipe {
+        recipe: String,
+    },
+    Demand {
+        items: Vec<String>,
+    },
     Passthrough,
+    MultiRecipe {
+        recipes: Vec<String>,
+        #[serde(default)]
+        default_recipe: Option<String>,
+        #[serde(default)]
+        switch_policy: Option<String>,
+    },
 }
 
 // ===========================================================================
@@ -369,8 +403,13 @@ mod tests {
         let recipe: RecipeData = ron::from_str(ron).unwrap();
         assert_eq!(recipe.name, "smelt_iron");
         assert_eq!(recipe.inputs.len(), 1);
-        assert_eq!(recipe.inputs[0].0, "iron_ore");
-        assert_eq!(recipe.inputs[0].1, 1);
+        match &recipe.inputs[0] {
+            RecipeInputData::Short(name, qty) => {
+                assert_eq!(name, "iron_ore");
+                assert_eq!(*qty, 1);
+            }
+            other => panic!("expected Short variant, got {other:?}"),
+        }
         assert_eq!(recipe.outputs[0].0, "iron_plate");
         assert_eq!(recipe.duration, 60);
     }
@@ -471,7 +510,13 @@ mod tests {
         }"#;
         let recipe: RecipeData = serde_json::from_str(json).unwrap();
         assert_eq!(recipe.name, "smelt_iron");
-        assert_eq!(recipe.inputs[0], ("iron_ore".to_string(), 1));
+        match &recipe.inputs[0] {
+            RecipeInputData::Short(name, qty) => {
+                assert_eq!(name, "iron_ore");
+                assert_eq!(*qty, 1);
+            }
+            other => panic!("expected Short variant, got {other:?}"),
+        }
     }
 
     #[test]

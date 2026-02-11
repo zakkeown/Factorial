@@ -80,6 +80,7 @@ typedef enum FfiEventKind {
   NODE_REMOVED = 9,
   EDGE_ADDED = 10,
   EDGE_REMOVED = 11,
+  RECIPE_SWITCHED = 12,
 } FfiEventKind;
 
 /**

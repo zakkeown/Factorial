@@ -140,6 +140,7 @@ pub enum FfiEventKind {
     NodeRemoved = 9,
     EdgeAdded = 10,
     EdgeRemoved = 11,
+    RecipeSwitched = 12,
 }
 
 /// C-compatible event data. Union fields are determined by `kind`.
@@ -421,6 +422,22 @@ fn convert_event(event: &Event) -> FfiEvent {
             from_node: 0,
             to_node: 0,
         },
+        Event::RecipeSwitched {
+            node,
+            old_recipe_index,
+            new_recipe_index,
+            tick,
+        } => FfiEvent {
+            kind: FfiEventKind::RecipeSwitched,
+            tick: *tick,
+            node: node_id_to_ffi(*node),
+            edge: 0,
+            item_type: *old_recipe_index as u32,
+            quantity: *new_recipe_index as u32,
+            building_type: 0,
+            from_node: 0,
+            to_node: 0,
+        },
     }
 }
 
@@ -458,6 +475,7 @@ fn register_ffi_event_listeners(engine: &mut Engine) {
         EventKind::NodeRemoved,
         EventKind::EdgeAdded,
         EventKind::EdgeRemoved,
+        EventKind::RecipeSwitched,
     ];
 
     for kind in all_kinds {
@@ -1294,6 +1312,7 @@ pub unsafe extern "C" fn factorial_set_fixed_processor(
                 .map(|fi| RecipeInput {
                     item_type: ItemTypeId(fi.item_type),
                     quantity: fi.quantity,
+                    consumed: true,
                 })
                 .collect()
         } else {
@@ -1307,6 +1326,7 @@ pub unsafe extern "C" fn factorial_set_fixed_processor(
                 .map(|fo| RecipeOutput {
                     item_type: ItemTypeId(fo.item_type),
                     quantity: fo.quantity,
+                    bonus: None,
                 })
                 .collect()
         } else {

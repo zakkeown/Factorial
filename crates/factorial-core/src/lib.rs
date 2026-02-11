@@ -59,6 +59,7 @@ pub mod profiling;
 pub mod query;
 pub mod registry;
 pub mod replay;
+pub mod rng;
 pub mod serialize;
 pub mod sim;
 pub mod transport;

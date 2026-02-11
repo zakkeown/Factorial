@@ -40,6 +40,9 @@ pub struct ItemTypeDef {
 pub struct RecipeEntry {
     pub item: ItemTypeId,
     pub quantity: u32,
+    /// When `false`, this input is a catalyst (required but not consumed).
+    /// Only meaningful for recipe inputs; ignored for outputs.
+    pub consumed: bool,
 }
 
 /// A recipe definition.
@@ -269,10 +272,12 @@ mod tests {
             vec![RecipeEntry {
                 item: iron_ore,
                 quantity: 1,
+                consumed: true,
             }],
             vec![RecipeEntry {
                 item: iron_plate,
                 quantity: 1,
+                consumed: true,
             }],
             60,
         );
@@ -306,6 +311,7 @@ mod tests {
                 recipe.inputs.push(RecipeEntry {
                     item: chromium,
                     quantity: 1,
+                    consumed: true,
                 });
             })
             .unwrap();
@@ -331,6 +337,7 @@ mod tests {
             vec![RecipeEntry {
                 item: ItemTypeId(999),
                 quantity: 1,
+                consumed: true,
             }],
             vec![],
             60,
@@ -386,6 +393,7 @@ mod tests {
             vec![RecipeEntry {
                 item: ItemTypeId(999),
                 quantity: 1,
+                consumed: true,
             }],
             60,
         );

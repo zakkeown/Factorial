@@ -170,6 +170,7 @@ pub fn make_recipe(
             .map(|(item_type, quantity)| RecipeInput {
                 item_type,
                 quantity,
+                consumed: true,
             })
             .collect(),
         outputs: outputs
@@ -177,6 +178,7 @@ pub fn make_recipe(
             .map(|(item_type, quantity)| RecipeOutput {
                 item_type,
                 quantity,
+                bonus: None,
             })
             .collect(),
         duration,

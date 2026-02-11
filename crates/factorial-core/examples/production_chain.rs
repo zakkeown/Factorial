@@ -55,10 +55,12 @@ fn main() {
             inputs: vec![RecipeInput {
                 item_type: ItemTypeId(0), // iron ore
                 quantity: 1,
+                consumed: true,
             }],
             outputs: vec![RecipeOutput {
                 item_type: ItemTypeId(1), // iron plate
                 quantity: 1,
+                bonus: None,
             }],
             duration: 3,
         }),
@@ -71,10 +73,12 @@ fn main() {
             inputs: vec![RecipeInput {
                 item_type: ItemTypeId(1), // iron plate
                 quantity: 2,
+                consumed: true,
             }],
             outputs: vec![RecipeOutput {
                 item_type: ItemTypeId(2), // iron gear
                 quantity: 1,
+                bonus: None,
             }],
             duration: 5,
         }),

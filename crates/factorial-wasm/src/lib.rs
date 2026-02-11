@@ -256,6 +256,19 @@ fn convert_event(event: &Event) -> FlatEvent {
             edge: edge_id_to_ffi(*edge),
             ..Default::default()
         },
+        Event::RecipeSwitched {
+            node,
+            old_recipe_index,
+            new_recipe_index,
+            tick,
+        } => FlatEvent {
+            kind: 12,
+            tick: *tick,
+            node: node_id_to_ffi(*node),
+            item_type: *old_recipe_index as u32,
+            quantity: *new_recipe_index as u32,
+            ..Default::default()
+        },
     }
 }
 
@@ -323,6 +336,7 @@ fn register_event_listeners(engine: &mut Engine) {
         EventKind::NodeRemoved,
         EventKind::EdgeAdded,
         EventKind::EdgeRemoved,
+        EventKind::RecipeSwitched,
     ];
 
     for kind in all_kinds {

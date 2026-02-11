@@ -43,10 +43,12 @@ fn setup_factory(engine: &mut Engine) -> (NodeId, NodeId) {
             inputs: vec![RecipeInput {
                 item_type: ItemTypeId(0),
                 quantity: 2,
+                consumed: true,
             }],
             outputs: vec![RecipeOutput {
                 item_type: ItemTypeId(1),
                 quantity: 1,
+                bonus: None,
             }],
             duration: 4,
         }),

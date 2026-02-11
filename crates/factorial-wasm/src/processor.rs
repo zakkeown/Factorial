@@ -81,6 +81,7 @@ pub unsafe extern "C" fn factorial_set_fixed_processor(
         inputs.push(RecipeInput {
             item_type: ItemTypeId(item_type),
             quantity,
+            consumed: true,
         });
         offset += 8;
     }
@@ -92,6 +93,7 @@ pub unsafe extern "C" fn factorial_set_fixed_processor(
         outputs.push(RecipeOutput {
             item_type: ItemTypeId(item_type),
             quantity,
+            bonus: None,
         });
         offset += 8;
     }
