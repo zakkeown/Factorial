@@ -165,6 +165,11 @@ impl RegistryBuilder {
         self.recipe_name_to_id.get(name).copied()
     }
 
+    /// Returns a reference to a recipe definition by its ID.
+    pub fn get_recipe(&self, id: RecipeId) -> Option<&RecipeDef> {
+        self.recipes.get(id.0 as usize)
+    }
+
     /// Phase 3: Finalize and build the immutable registry.
     pub fn build(self) -> Result<Registry, RegistryError> {
         // Validate: all recipe item references must exist

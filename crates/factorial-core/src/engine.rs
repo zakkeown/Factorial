@@ -159,6 +159,9 @@ pub struct Engine {
     /// Cached output item type per node (avoids per-edge processor lookup).
     pub(crate) node_item_type_cache: SecondaryMap<NodeId, ItemTypeId>,
 
+    /// Optional immutable registry (rebuilt from data files on load, not serialized).
+    pub(crate) registry: Option<crate::registry::Registry>,
+
     /// Per-node hash cache for incremental state hashing.
     pub(crate) node_hash_cache: SecondaryMap<NodeId, u64>,
 
@@ -211,6 +214,7 @@ impl Engine {
             transport_edge_buf: Vec::new(),
             input_buf: Vec::new(),
             node_item_type_cache: SecondaryMap::new(),
+            registry: None,
             node_hash_cache: SecondaryMap::new(),
             combined_node_hash: 0,
             hash_dirty_nodes: Vec::new(),
@@ -218,6 +222,25 @@ impl Engine {
             #[cfg(feature = "profiling")]
             last_profile: None,
         }
+    }
+
+    /// Create a new engine with the given simulation strategy and a pre-built registry.
+    ///
+    /// The registry is stored alongside the engine and can be queried via
+    /// [`Engine::registry()`]. It is not serialized — it should be rebuilt
+    /// from data files on load.
+    pub fn new_with_registry(
+        strategy: SimulationStrategy,
+        registry: crate::registry::Registry,
+    ) -> Self {
+        let mut engine = Self::new(strategy);
+        engine.registry = Some(registry);
+        engine
+    }
+
+    /// Returns a reference to the attached registry, if any.
+    pub fn registry(&self) -> Option<&crate::registry::Registry> {
+        self.registry.as_ref()
     }
 
     // -----------------------------------------------------------------------
@@ -4618,5 +4641,27 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn new_with_registry() {
+        use crate::registry::*;
+        let mut builder = RegistryBuilder::new();
+        let iron = builder.register_item("iron", vec![]);
+        builder.register_recipe(
+            "smelt",
+            vec![RecipeEntry {
+                item: iron,
+                quantity: 1,
+            }],
+            vec![],
+            60,
+        );
+        builder.register_building("smelter", builder.recipe_id("smelt"));
+        let registry = builder.build().unwrap();
+        let engine = Engine::new_with_registry(SimulationStrategy::Tick, registry);
+        assert_eq!(engine.node_count(), 0);
+        assert!(engine.registry().is_some());
+        assert_eq!(engine.registry().unwrap().item_count(), 1);
     }
 }
