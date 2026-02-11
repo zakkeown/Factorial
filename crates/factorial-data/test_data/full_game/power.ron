@@ -1,0 +1,1 @@
+(generators: [(building: "iron_mine", output: 50.0, priority: high)], consumers: [(building: "smelter", draw: 30.0)], storage: [])

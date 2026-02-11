@@ -1,0 +1,1 @@
+(circuit_controlled: [(building: "smelter", wire: Red, condition: (signal: "iron_ore", op: "gte", value: 10))], constant_combinators: [(building: "constant_1", signals: [("iron_ore", 42)])])

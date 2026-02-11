@@ -1,0 +1,7 @@
+[
+    (name: "iron_mine", processor: Source(item: "iron_ore", rate: 2.0)),
+    (name: "smelter", processor: Recipe(recipe: "smelt_iron")),
+    (name: "water_pump", processor: Source(item: "water", rate: 5.0)),
+    (name: "tank", processor: Passthrough),
+    (name: "constant_1", processor: Passthrough),
+]

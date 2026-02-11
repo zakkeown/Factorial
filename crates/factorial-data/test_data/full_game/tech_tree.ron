@@ -1,0 +1,1 @@
+[(name: "basic_smelting", cost: Points(amount: 100), unlocks: [Building("smelter"), Recipe("smelt_iron")])]

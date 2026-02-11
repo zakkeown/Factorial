@@ -363,19 +363,37 @@ pub fn load_game_data(dir: &Path) -> Result<GameData, DataLoadError> {
     })?;
 
     // ------------------------------------------------------------------
-    // 6. Module configs (stubs for now, replaced in Task 7)
+    // 6. Optional module configs
     // ------------------------------------------------------------------
-    let _ = (power_path, fluids_path, tech_tree_path, logic_path);
+    let power_config = match power_path {
+        Some(path) => Some(crate::module_config::load_power_config(&path, &building_names)?),
+        None => None,
+    };
+
+    let fluid_config = match fluids_path {
+        Some(path) => Some(crate::module_config::load_fluid_config(&path, &item_names, &building_names)?),
+        None => None,
+    };
+
+    let tech_tree_config = match tech_tree_path {
+        Some(path) => Some(crate::module_config::load_tech_tree_config(&path, &item_names, &recipe_names, &building_names)?),
+        None => None,
+    };
+
+    let logic_config = match logic_path {
+        Some(path) => Some(crate::module_config::load_logic_config(&path, &item_names, &building_names)?),
+        None => None,
+    };
 
     Ok(GameData {
         registry,
         building_footprints,
         building_processors,
         building_inventories,
-        power_config: None,
-        fluid_config: None,
-        tech_tree_config: None,
-        logic_config: None,
+        power_config,
+        fluid_config,
+        tech_tree_config,
+        logic_config,
     })
 }
 
@@ -877,5 +895,25 @@ name = "copper_ore"
         assert_eq!(fp.height, 2);
         assert_eq!(data.building_processors.len(), 3);
         assert!(data.power_config.is_none());
+    }
+
+    #[test]
+    fn load_full_game() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/full_game");
+        let data = load_game_data(&dir).unwrap();
+        assert_eq!(data.registry.item_count(), 3);
+        assert_eq!(data.registry.building_count(), 5);
+        assert!(data.power_config.is_some());
+        assert!(data.fluid_config.is_some());
+        assert!(data.tech_tree_config.is_some());
+        assert!(data.logic_config.is_some());
+        let power = data.power_config.unwrap();
+        assert_eq!(power.generators.len(), 1);
+        let tech = data.tech_tree_config.unwrap();
+        assert_eq!(tech.technologies.len(), 1);
+        assert_eq!(tech.technologies[0].unlocks.len(), 2);
+        let logic = data.logic_config.unwrap();
+        assert_eq!(logic.circuit_controlled.len(), 1);
+        assert_eq!(logic.constant_combinators.len(), 1);
     }
 }

@@ -1,0 +1,1 @@
+(types: ["water"], producers: [(building: "water_pump", fluid: "water", rate: 5.0)], consumers: [], storage: [(building: "tank", fluid: "water", capacity: 1000.0, fill_rate: 10.0, drain_rate: 10.0)])
