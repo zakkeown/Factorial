@@ -952,6 +952,44 @@ name = "copper_ore"
         assert_eq!(ron_data.building_footprints.len(), json_data.building_footprints.len());
     }
 
+    // -----------------------------------------------------------------------
+    // Full integration test
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn integration_load_build_run() {
+        use factorial_core::engine::Engine;
+        use factorial_core::sim::SimulationStrategy;
+
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/minimal_ron");
+        let data = load_game_data(&dir).unwrap();
+
+        let mut engine = Engine::new_with_registry(SimulationStrategy::Tick, data.registry);
+
+        // Add a mine node using the loaded building type
+        let mine_type = engine.registry().unwrap().building_id("iron_mine").unwrap();
+        let pending = engine.graph.queue_add_node(mine_type);
+        let result = engine.graph.apply_mutations();
+        let mine = result.resolve_node(pending).unwrap();
+
+        // Apply loaded processor and inventory config
+        let processor = data.building_processors[&mine_type].clone();
+        engine.set_processor(mine, processor);
+        let (in_cap, out_cap) = data.building_inventories[&mine_type];
+        engine.set_input_inventory(mine, factorial_core::item::Inventory::new(1, 1, in_cap));
+        engine.set_output_inventory(mine, factorial_core::item::Inventory::new(1, 1, out_cap));
+
+        // Run 10 ticks
+        for _ in 0..10 {
+            engine.step();
+        }
+
+        // Mine should have produced items
+        let snaps = engine.snapshot_all_nodes();
+        assert_eq!(snaps.len(), 1);
+        assert!(!snaps[0].output_contents.is_empty(), "mine should have produced output");
+    }
+
     #[test]
     fn load_full_game() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/full_game");
