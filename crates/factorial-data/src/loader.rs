@@ -897,6 +897,44 @@ name = "copper_ore"
         assert!(data.power_config.is_none());
     }
 
+    // -----------------------------------------------------------------------
+    // Error path tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn error_unresolved_item_in_recipe() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/errors/unresolved_item");
+        let result = load_game_data(&dir);
+        assert!(matches!(result, Err(DataLoadError::UnresolvedRef { .. })));
+        if let Err(DataLoadError::UnresolvedRef { name, .. }) = result {
+            assert_eq!(name, "nonexistent");
+        }
+    }
+
+    #[test]
+    fn error_duplicate_item_name() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/errors/duplicate_name");
+        let result = load_game_data(&dir);
+        assert!(matches!(result, Err(DataLoadError::DuplicateName { .. })));
+        if let Err(DataLoadError::DuplicateName { name, .. }) = result {
+            assert_eq!(name, "iron_ore");
+        }
+    }
+
+    #[test]
+    fn error_missing_required_file() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/errors/missing_items");
+        let result = load_game_data(&dir);
+        assert!(matches!(result, Err(DataLoadError::MissingRequired { .. })));
+    }
+
+    #[test]
+    fn error_parse_error() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/errors/parse_error");
+        let result = load_game_data(&dir);
+        assert!(matches!(result, Err(DataLoadError::Parse { .. })));
+    }
+
     #[test]
     fn load_full_game() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("test_data/full_game");

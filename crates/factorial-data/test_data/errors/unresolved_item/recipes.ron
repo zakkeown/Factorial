@@ -1,0 +1,1 @@
+[(name: "bad", inputs: [("nonexistent", 1)], outputs: [], duration: 60)]
