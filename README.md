@@ -58,32 +58,36 @@ See `crates/factorial-core/examples/minimal_factory.rs` for the full version.
 
 ## Documentation
 
-Full documentation is available at [Factorial Documentation](https://user.github.io/factorial/).
+Full documentation is available in the [docs/book/src/](docs/book/src/) directory.
 
 Key sections:
 
-- [What is Factorial?](https://user.github.io/factorial/introduction/what-is-factorial.html)
-- [Core Concepts](https://user.github.io/factorial/core-concepts/production-graph.html) -- production graph, processors, transport, events, queries, determinism, serialization
-- [Framework Modules](https://user.github.io/factorial/modules/power.html) -- power, fluid, tech tree, spatial, statistics
-- [FFI Reference](https://user.github.io/factorial/ffi/conventions.html) -- API conventions, function reference, language bindings
-- [Cookbook](https://user.github.io/factorial/cookbook/smelting-chain.html) -- step-by-step recipes for common tasks
-- [Architecture Deep Dive](https://user.github.io/factorial/architecture/performance.html) -- performance model, memory layout, design decisions
+- [What is Factorial?](docs/book/src/introduction/what-is-factorial.md)
+- [Core Concepts](docs/book/src/core-concepts/production-graph.md) -- production graph, processors, transport, events, queries, determinism, serialization
+- [Framework Modules](docs/book/src/modules/power.md) -- power, fluid, tech tree, spatial, statistics, logic networks
+- [Data Loading](docs/book/src/data/data-driven.md) -- data-driven configuration via RON/JSON/TOML
+- [FFI Reference](docs/book/src/ffi/conventions.md) -- API conventions, function reference, language bindings
+- [WASM Bindings](docs/book/src/wasm/bindings.md) -- WebAssembly API for browser and sandboxed environments
+- [Cookbook](docs/book/src/cookbook/smelting-chain.md) -- step-by-step recipes for common tasks
+- [Architecture Deep Dive](docs/book/src/architecture/performance.md) -- performance model, memory layout, design decisions
 
 ## Features
 
 - **Production graph with topological evaluation** -- directed graph of nodes (buildings) and edges (transport links), evaluated in dependency order each tick.
 - **4 transport strategies** -- Flow, Item, Batch, and Vehicle, each with distinct throughput and latency characteristics.
-- **5 framework modules (opt-in)** -- Power networks, fluid simulation, tech trees, spatial grid with blueprints, and statistics tracking.
+- **6 framework modules (opt-in)** -- Power networks, fluid simulation, tech trees, spatial grid with blueprints, statistics tracking, and logic/circuit networks.
+- **Data-driven configuration** -- define items, recipes, buildings, and module configs in RON, JSON, or TOML files.
 - **C FFI for embedding in any language** -- stable C API with opaque handles, suitable for Unity, Godot, or any engine with C interop.
+- **WASM bindings** -- integer-handle-based API for browser games and sandboxed plugin environments.
 - **Cross-platform determinism via fixed-point arithmetic** -- identical simulation results on every platform, every run.
 - **Serialization with versioning and migration** -- save/load game state with forward-compatible schema evolution.
 - **Multiplayer-ready via state hashing** -- detect desync between clients by comparing per-tick hashes.
 
 ## Getting Started
 
-- [Rust Quick Start](https://user.github.io/factorial/getting-started/rust.html) -- add the crate, build a graph, run your first tick.
-- [C/FFI Quick Start](https://user.github.io/factorial/getting-started/ffi.html) -- link the shared library, call from C, C++, C#, or Swift.
-- [WASM Quick Start](https://user.github.io/factorial/getting-started/wasm.html) -- compile to WebAssembly, run in the browser.
+- [Rust Quick Start](docs/book/src/getting-started/rust.md) -- add the crate, build a graph, run your first tick.
+- [C/FFI Quick Start](docs/book/src/getting-started/ffi.md) -- link the shared library, call from C, C++, C#, or Swift.
+- [WASM Quick Start](docs/book/src/getting-started/wasm.md) -- compile to WebAssembly, run in the browser.
 
 ## Architecture
 
@@ -94,7 +98,7 @@ Key sections:
 ├─────────────────────────────────────────┤
 │      Framework Modules (opt-in)         │
 │  Power · Fluid · Tech Tree · Spatial ·  │
-│  Statistics                             │
+│  Statistics · Logic                     │
 ├─────────────────────────────────────────┤
 │           Factorial Core                │
 │  Production Graph · Processors ·        │

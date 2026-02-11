@@ -29,12 +29,21 @@
 - [Tech Trees](modules/tech-tree.md)
 - [Spatial Grid & Blueprints](modules/spatial.md)
 - [Statistics](modules/stats.md)
+- [Logic Networks](modules/logic.md)
+
+# Data Loading
+
+- [Data-Driven Configuration](data/data-driven.md)
 
 # FFI Reference
 
 - [API Conventions & Safety](ffi/conventions.md)
 - [Function Reference](ffi/reference.md)
 - [Language-Specific Bindings](ffi/bindings.md)
+
+# WASM Bindings
+
+- [WASM API](wasm/bindings.md)
 
 # Cookbook
 

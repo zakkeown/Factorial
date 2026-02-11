@@ -41,8 +41,9 @@ CI enforces: all tests pass, clippy with `-D warnings` (plus `RUSTFLAGS=-Dwarnin
 
 **Three-layer design:**
 - **Factorial Core** (`factorial-core`) — Production graph, processors, transport, events, queries, serialization, determinism
-- **Framework Modules** (opt-in, independent of each other) — `factorial-power`, `factorial-fluid`, `factorial-tech-tree`, `factorial-spatial`, `factorial-stats`
-- **Integration** — `factorial-ffi` (C FFI via cbindgen), `factorial-examples`, `factorial-integration-tests`
+- **Framework Modules** (opt-in, independent of each other) — `factorial-power`, `factorial-fluid`, `factorial-tech-tree`, `factorial-spatial`, `factorial-stats`, `factorial-logic`
+- **Data Loading** — `factorial-data` (data-driven configuration via RON/JSON/TOML files)
+- **Integration** — `factorial-ffi` (C FFI via cbindgen), `factorial-wasm` (WebAssembly bindings), `factorial-examples`, `factorial-integration-tests`
 
 ### Workspace Layout
 
@@ -69,6 +70,32 @@ Key source files in `factorial-core/src/`:
 - `id.rs` — Type-safe IDs via slotmap `newtype!` macro (`NodeId`, `EdgeId`, `ItemTypeId`, etc.)
 - `registry.rs` — Immutable registry of building types, recipes, item types (frozen at startup)
 - `test_utils.rs` — Test helpers (behind `#[cfg(any(test, feature = "test-utils"))]`)
+
+### Logic Networks (`factorial-logic`)
+
+Wire-based signal networks enabling Factorio-style combinators and circuit control. Key source files in `factorial-logic/src/`:
+- `lib.rs` — `LogicModule` (main API), `WireNetwork`, `SignalSet`, tick pipeline, signal merge
+- `combinator.rs` — `ArithmeticCombinator`, `DeciderCombinator`, signal selectors
+- `condition.rs` — `Condition`, `ComparisonOp`, `CircuitControl`, `InventoryReader`
+- `bridge.rs` — Engine module integration bridge
+
+### Data Loading (`factorial-data`)
+
+Data-driven game configuration via external files (RON, JSON, or TOML). Key source files in `factorial-data/src/`:
+- `schema.rs` — Data structs: `ItemData`, `RecipeData`, `BuildingData`, plus module-specific schemas (power, fluid, tech tree, logic)
+- `loader.rs` — `load_game_data(dir)` resolution pipeline: file discovery, format detection, name-to-ID resolution
+- `module_config.rs` — Resolved config types: `PowerConfig`, `FluidConfig`, `TechTreeConfig`, `LogicConfig`
+
+### WASM Bindings (`factorial-wasm`)
+
+Integer-handle-based API for embedding Factorial in WebAssembly or any C-compatible host. Key source files in `factorial-wasm/src/`:
+- `lib.rs` — Handle table (max 16 engines), result codes, `FlatEvent` repr(C), memory allocator
+- `engine.rs` — create, destroy, step, advance exports
+- `graph.rs` — add_node, connect, remove node/edge exports
+- `processor.rs` / `transport.rs` — Configuration exports
+- `query.rs` — State inspection exports
+- `serialize.rs` — Bitcode serialize/deserialize exports
+- `logic.rs` — Logic network exports for WASM consumers
 
 ### Graph Mutation Pattern
 

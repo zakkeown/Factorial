@@ -31,7 +31,7 @@ framework modules. Your game code sits on top.
 ├─────────────────────────────────────────┤
 │      Framework Modules (opt-in)         │
 │  Power · Fluid · Tech Tree · Spatial ·  │
-│  Statistics                             │
+│  Statistics · Logic                     │
 ├─────────────────────────────────────────┤
 │           Factorial Core                │
 │  Production Graph · Processors ·        │
@@ -58,6 +58,7 @@ common factory-game subsystems:
 | `factorial-tech-tree`  | Research prerequisites and unlocks          |
 | `factorial-spatial`    | Grid placement, collision, blueprints       |
 | `factorial-stats`      | Production/consumption rate tracking        |
+| `factorial-logic`      | Wire-based signal networks and combinators  |
 
 You enable only the modules your game needs.
 
