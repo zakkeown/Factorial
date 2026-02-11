@@ -6,7 +6,9 @@ use factorial_core::engine::Engine;
 use factorial_core::id::{BuildingTypeId, EdgeId, ItemTypeId, NodeId};
 use factorial_core::item::Inventory;
 use factorial_core::processor::Processor;
-use factorial_core::serialize::{SerializeError, SnapshotEntry, SnapshotRingBuffer};
+use factorial_core::serialize::{
+    PartitionedSnapshot, SerializeError, SnapshotEntry, SnapshotRingBuffer,
+};
 use factorial_core::transport::Transport;
 use serde::{Deserialize, Serialize};
 use slotmap::Key;
@@ -511,15 +513,18 @@ impl Blueprint {
         engine: &mut Engine,
         spatial: &mut SpatialIndex,
         ring_buffer: &mut SnapshotRingBuffer,
-        baseline: Option<&[u8]>,
-    ) -> Result<(BlueprintCommitResult, Vec<u8>), BlueprintCommitError> {
+        baseline: Option<&PartitionedSnapshot>,
+    ) -> Result<(BlueprintCommitResult, PartitionedSnapshot), BlueprintCommitError> {
         let commit_result = self.commit(engine, spatial)?;
-        let snapshot_data = engine.serialize_incremental(baseline)?;
+        let snapshot = engine.serialize_incremental(baseline)?;
+        let data = snapshot
+            .to_bytes()
+            .map_err(BlueprintCommitError::Snapshot)?;
         ring_buffer.push(SnapshotEntry {
             tick: engine.sim_state.tick,
-            data: snapshot_data.clone(),
+            data,
         });
-        Ok((commit_result, snapshot_data))
+        Ok((commit_result, snapshot))
     }
 
     /// Undo a previously committed blueprint, removing its nodes and edges.
@@ -1217,10 +1222,10 @@ mod tests {
         bp.add(make_entry(GridPosition::new(0, 0)), &spatial)
             .unwrap();
 
-        let (_result, data) = bp
+        let (_result, snap) = bp
             .commit_with_snapshot(&mut engine, &mut spatial, &mut ring, None)
             .unwrap();
-        let restored = Engine::deserialize_partitioned(&data);
+        let restored = Engine::deserialize_partitioned(&snap);
         assert!(restored.is_ok());
     }
 
@@ -1232,10 +1237,10 @@ mod tests {
         bp.add(make_entry(GridPosition::new(0, 0)), &spatial)
             .unwrap();
 
-        let (_result, data) = bp
+        let (_result, snap) = bp
             .commit_with_snapshot(&mut engine, &mut spatial, &mut ring, None)
             .unwrap();
-        let restored = Engine::deserialize_partitioned(&data).unwrap();
+        let restored = Engine::deserialize_partitioned(&snap).unwrap();
         assert_eq!(restored.node_count(), engine.node_count());
     }
 

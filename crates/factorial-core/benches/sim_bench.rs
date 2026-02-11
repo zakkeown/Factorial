@@ -305,11 +305,69 @@ fn bench_serialization(c: &mut Criterion) {
     });
 
     // Partitioned deserialize.
-    let partitioned_data = engine.serialize_partitioned().unwrap();
+    let partitioned_snap = engine.serialize_partitioned().unwrap();
     group.bench_function("deserialize_partitioned_5000_nodes", |b| {
         b.iter(|| {
-            Engine::deserialize_partitioned(&partitioned_data).unwrap();
+            Engine::deserialize_partitioned(&partitioned_snap).unwrap();
         });
+    });
+
+    // Incremental: steady-state (all partitions dirty after step).
+    // Should be comparable to full serialization -- validates no overhead.
+    group.bench_function("incremental_steady_state", |b| {
+        b.iter_batched(
+            || {
+                let mut e = build_medium_factory();
+                e.dirty_tracker_mut().mark_all_partitions();
+                let baseline = e.serialize_incremental(None).unwrap();
+                e.step(); // dirties all partitions
+                (e, baseline)
+            },
+            |(mut e, baseline)| {
+                e.serialize_incremental(Some(&baseline)).unwrap();
+            },
+            criterion::BatchSize::LargeInput,
+        );
+    });
+
+    // Incremental: paused factory (only Graph partition dirty).
+    // Should be ~5x faster than full since only 1/5 partitions encoded.
+    group.bench_function("incremental_paused", |b| {
+        b.iter_batched(
+            || {
+                let mut e = build_medium_factory();
+                e.dirty_tracker_mut().mark_all_partitions();
+                let baseline = e.serialize_incremental(None).unwrap();
+                // Only Graph is dirty (simulating a paused-game autosave).
+                e.dirty_tracker_mut()
+                    .mark_partition(factorial_core::dirty::DirtyTracker::PARTITION_GRAPH);
+                (e, baseline)
+            },
+            |(mut e, baseline)| {
+                e.serialize_incremental(Some(&baseline)).unwrap();
+            },
+            criterion::BatchSize::LargeInput,
+        );
+    });
+
+    // Incremental: config change (Processors partition dirty only).
+    // Should be faster than full since only 1-2/5 partitions encoded.
+    group.bench_function("incremental_config_change", |b| {
+        b.iter_batched(
+            || {
+                let mut e = build_medium_factory();
+                e.dirty_tracker_mut().mark_all_partitions();
+                let baseline = e.serialize_incremental(None).unwrap();
+                // Simulate a recipe swap: only Processors dirty.
+                e.dirty_tracker_mut()
+                    .mark_partition(factorial_core::dirty::DirtyTracker::PARTITION_PROCESSORS);
+                (e, baseline)
+            },
+            |(mut e, baseline)| {
+                e.serialize_incremental(Some(&baseline)).unwrap();
+            },
+            criterion::BatchSize::LargeInput,
+        );
     });
 
     group.finish();

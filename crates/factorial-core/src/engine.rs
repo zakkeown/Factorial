@@ -485,6 +485,12 @@ impl Engine {
         &self.dirty
     }
 
+    /// Get a mutable reference to the dirty tracker (for tests/benchmarks).
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn dirty_tracker_mut(&mut self) -> &mut crate::dirty::DirtyTracker {
+        &mut self.dirty
+    }
+
     /// Reset all dirty flags.
     pub fn mark_clean(&mut self) {
         self.dirty.mark_clean();
@@ -915,6 +921,14 @@ impl Engine {
             // Apply transport results to inventories.
             self.apply_transport_result(source_node, dest_node, edge_id, &transport_result);
         }
+
+        // Mark partitions dirty if any transports were advanced.
+        if !self.transport_edge_buf.is_empty() {
+            self.dirty
+                .mark_partition(crate::dirty::DirtyTracker::PARTITION_TRANSPORTS);
+            self.dirty
+                .mark_partition(crate::dirty::DirtyTracker::PARTITION_INVENTORIES);
+        }
     }
 
     /// Get total items in a node's output inventory (across all slots and types).
@@ -1053,11 +1067,21 @@ impl Engine {
         let _ = self.graph.topological_order_with_feedback();
         let order = self.graph.take_feedback_cache();
 
+        let has_processors = !order.is_empty() && !self.processors.is_empty();
+
         for &node_id in &order {
             self.process_node(node_id);
         }
 
         self.graph.restore_feedback_cache(order);
+
+        // Mark partitions dirty if any nodes were processed.
+        if has_processors {
+            self.dirty
+                .mark_partition(crate::dirty::DirtyTracker::PARTITION_PROCESSORS);
+            self.dirty
+                .mark_partition(crate::dirty::DirtyTracker::PARTITION_INVENTORIES);
+        }
     }
 
     #[cfg(feature = "parallel")]
@@ -1205,6 +1229,14 @@ impl Engine {
                 // Mark node hash dirty (progress increments every tick for Working nodes).
                 self.hash_dirty_nodes.push(nr.node_id);
             }
+        }
+
+        // Mark partitions dirty if any nodes were processed.
+        if !self.processors.is_empty() {
+            self.dirty
+                .mark_partition(crate::dirty::DirtyTracker::PARTITION_PROCESSORS);
+            self.dirty
+                .mark_partition(crate::dirty::DirtyTracker::PARTITION_INVENTORIES);
         }
     }
 
@@ -1533,6 +1565,12 @@ impl Engine {
             self.graph.restore_topo_cache(order_vec);
         }
 
+        // Mark junctions partition dirty if any junctions were processed.
+        if !self.junctions.is_empty() {
+            self.dirty
+                .mark_partition(crate::dirty::DirtyTracker::PARTITION_JUNCTIONS);
+        }
+
         // 2. Run module on_tick() (std::mem::take pattern for borrow safety).
         let mut modules = std::mem::take(&mut self.modules);
         for module in &mut modules {
@@ -1569,14 +1607,10 @@ impl Engine {
     // -----------------------------------------------------------------------
 
     fn phase_bookkeeping(&mut self) {
+        // Only mark Graph partition: sim_state.tick and last_state_hash live there.
+        // Other partitions are marked by the phases that actually mutate them.
         self.dirty
             .mark_partition(crate::dirty::DirtyTracker::PARTITION_GRAPH);
-        self.dirty
-            .mark_partition(crate::dirty::DirtyTracker::PARTITION_PROCESSORS);
-        self.dirty
-            .mark_partition(crate::dirty::DirtyTracker::PARTITION_INVENTORIES);
-        self.dirty
-            .mark_partition(crate::dirty::DirtyTracker::PARTITION_TRANSPORTS);
         self.sim_state.tick += 1;
         self.last_state_hash = self.compute_state_hash();
     }

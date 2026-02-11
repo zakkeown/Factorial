@@ -260,18 +260,20 @@ fn remove_node_with_active_edges() {
 /// Verify Err, not panic.
 #[test]
 fn deserialize_corrupted_bytes() {
+    use factorial_core::serialize::PartitionedSnapshot;
+
     // Empty bytes.
     assert!(Engine::deserialize(&[]).is_err());
-    assert!(Engine::deserialize_partitioned(&[]).is_err());
+    assert!(PartitionedSnapshot::from_bytes(&[]).is_err());
 
     // Too short for header.
     assert!(Engine::deserialize(&[0x01, 0x02, 0x03]).is_err());
-    assert!(Engine::deserialize_partitioned(&[0x01, 0x02, 0x03]).is_err());
+    assert!(PartitionedSnapshot::from_bytes(&[0x01, 0x02, 0x03]).is_err());
 
     // Random garbage.
     let garbage: Vec<u8> = (0..1024).map(|i| (i * 37 + 13) as u8).collect();
     assert!(Engine::deserialize(&garbage).is_err());
-    assert!(Engine::deserialize_partitioned(&garbage).is_err());
+    assert!(PartitionedSnapshot::from_bytes(&garbage).is_err());
 
     // Valid header but truncated body: serialize a real engine, then truncate.
     let mut engine = Engine::new(SimulationStrategy::Tick);
@@ -284,9 +286,10 @@ fn deserialize_corrupted_bytes() {
         assert!(Engine::deserialize(truncated).is_err());
     }
 
-    let pdata = engine.serialize_partitioned().unwrap();
+    let psnap = engine.serialize_partitioned().unwrap();
+    let pdata = psnap.to_bytes().unwrap();
     if pdata.len() > 10 {
         let truncated = &pdata[..pdata.len() / 2];
-        assert!(Engine::deserialize_partitioned(truncated).is_err());
+        assert!(PartitionedSnapshot::from_bytes(truncated).is_err());
     }
 }

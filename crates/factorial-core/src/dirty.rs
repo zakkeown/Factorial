@@ -49,21 +49,32 @@ impl DirtyTracker {
     }
 
     /// Mark a single node as dirty (e.g. processor or inventory changed).
+    ///
+    /// Automatically marks the Processors and Inventories partitions dirty
+    /// (conservative: we don't know which field changed).
     pub fn mark_node(&mut self, node: NodeId) {
         self.dirty_nodes.insert(node);
         self.any_dirty = true;
+        self.dirty_partitions[Self::PARTITION_PROCESSORS] = true;
+        self.dirty_partitions[Self::PARTITION_INVENTORIES] = true;
     }
 
     /// Mark a single edge as dirty (e.g. transport state changed).
+    ///
+    /// Automatically marks the Transports partition dirty.
     pub fn mark_edge(&mut self, edge: EdgeId) {
         self.dirty_edges.insert(edge);
         self.any_dirty = true;
+        self.dirty_partitions[Self::PARTITION_TRANSPORTS] = true;
     }
 
     /// Mark the graph topology as dirty (node/edge added or removed).
+    ///
+    /// Automatically marks the Graph partition dirty.
     pub fn mark_graph(&mut self) {
         self.graph_dirty = true;
         self.any_dirty = true;
+        self.dirty_partitions[Self::PARTITION_GRAPH] = true;
     }
 
     /// Returns `true` if anything has been marked dirty since the last clean.
@@ -315,5 +326,49 @@ mod tests {
         // Both partitions should still be dirty.
         assert!(tracker.dirty_partitions()[DirtyTracker::PARTITION_GRAPH]);
         assert!(tracker.dirty_partitions()[DirtyTracker::PARTITION_TRANSPORTS]);
+    }
+
+    #[test]
+    fn auto_inference_mark_node_sets_processors_and_inventories() {
+        let (_sm, ids) = make_node_ids(1);
+        let mut tracker = DirtyTracker::new();
+
+        tracker.mark_node(ids[0]);
+
+        assert!(tracker.dirty_partitions()[DirtyTracker::PARTITION_PROCESSORS]);
+        assert!(tracker.dirty_partitions()[DirtyTracker::PARTITION_INVENTORIES]);
+        // Other partitions should remain clean.
+        assert!(!tracker.dirty_partitions()[DirtyTracker::PARTITION_GRAPH]);
+        assert!(!tracker.dirty_partitions()[DirtyTracker::PARTITION_TRANSPORTS]);
+        assert!(!tracker.dirty_partitions()[DirtyTracker::PARTITION_JUNCTIONS]);
+    }
+
+    #[test]
+    fn auto_inference_mark_edge_sets_transports() {
+        let (_sm, ids) = make_edge_ids(1);
+        let mut tracker = DirtyTracker::new();
+
+        tracker.mark_edge(ids[0]);
+
+        assert!(tracker.dirty_partitions()[DirtyTracker::PARTITION_TRANSPORTS]);
+        // Other partitions should remain clean.
+        assert!(!tracker.dirty_partitions()[DirtyTracker::PARTITION_GRAPH]);
+        assert!(!tracker.dirty_partitions()[DirtyTracker::PARTITION_PROCESSORS]);
+        assert!(!tracker.dirty_partitions()[DirtyTracker::PARTITION_INVENTORIES]);
+        assert!(!tracker.dirty_partitions()[DirtyTracker::PARTITION_JUNCTIONS]);
+    }
+
+    #[test]
+    fn auto_inference_mark_graph_sets_graph() {
+        let mut tracker = DirtyTracker::new();
+
+        tracker.mark_graph();
+
+        assert!(tracker.dirty_partitions()[DirtyTracker::PARTITION_GRAPH]);
+        // Other partitions should remain clean.
+        assert!(!tracker.dirty_partitions()[DirtyTracker::PARTITION_PROCESSORS]);
+        assert!(!tracker.dirty_partitions()[DirtyTracker::PARTITION_INVENTORIES]);
+        assert!(!tracker.dirty_partitions()[DirtyTracker::PARTITION_TRANSPORTS]);
+        assert!(!tracker.dirty_partitions()[DirtyTracker::PARTITION_JUNCTIONS]);
     }
 }
