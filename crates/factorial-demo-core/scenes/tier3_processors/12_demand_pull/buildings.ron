@@ -1,0 +1,20 @@
+[
+    (
+        name: "source",
+        processor: Source(item: "iron_plate", rate: 5.0),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 100, output_capacity: 200),
+    ),
+    (
+        name: "consumer_a",
+        processor: Demand(items: ["iron_plate"]),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 500, output_capacity: 500),
+    ),
+    (
+        name: "consumer_b",
+        processor: Demand(items: ["iron_plate"]),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 300, output_capacity: 300),
+    ),
+]

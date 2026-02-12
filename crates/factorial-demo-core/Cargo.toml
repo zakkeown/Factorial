@@ -1,0 +1,20 @@
+[package]
+name = "factorial-demo-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+factorial-core = { path = "../factorial-core" }
+factorial-data = { path = "../factorial-data" }
+factorial-power = { path = "../factorial-power" }
+factorial-fluid = { path = "../factorial-fluid" }
+factorial-tech-tree = { path = "../factorial-tech-tree" }
+factorial-logic = { path = "../factorial-logic" }
+factorial-spatial = { path = "../factorial-spatial" }
+serde = { workspace = true }
+ron = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+factorial-core = { path = "../factorial-core", features = ["test-utils"] }

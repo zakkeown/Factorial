@@ -1,0 +1,36 @@
+(
+    title: "Item Belts",
+    description: "Discrete item belt transport from a mine to a chest. Demonstrates individual item slots moving along a dual-lane belt with configurable speed.",
+    tier: 2,
+    order: 7,
+    tags: ["transport", "item-belt", "discrete", "lanes"],
+    nodes: [
+        (
+            id: "mine",
+            building: "mine",
+            position: (100.0, 200.0),
+            label: Some("Iron Mine"),
+            description: Some("Produces 3 iron ore per tick."),
+            visual_hint: Some("source"),
+        ),
+        (
+            id: "chest",
+            building: "chest",
+            position: (400.0, 200.0),
+            label: Some("Storage Chest"),
+            description: Some("Receives iron ore from the belt."),
+            visual_hint: Some("sink"),
+        ),
+    ],
+    edges: [
+        (
+            from: "mine",
+            to: "chest",
+            transport: Item(speed: 1.0, slot_count: 20, lanes: 2),
+            label: Some("dual-lane belt"),
+        ),
+    ],
+    simulation: (
+        ticks_per_second: 60,
+    ),
+)

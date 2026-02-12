@@ -1,0 +1,24 @@
+[
+    (
+        name: "mine",
+        processor: Source(item: "iron_ore", rate: 3.0),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 100, output_capacity: 100),
+    ),
+    (
+        name: "furnace",
+        processor: MultiRecipe(
+            recipes: ["smelt_iron", "smelt_steel"],
+            default_recipe: Some("smelt_iron"),
+            switch_policy: Some("complete_first"),
+        ),
+        footprint: (width: 3, height: 3),
+        inventories: (input_capacity: 200, output_capacity: 200),
+    ),
+    (
+        name: "output",
+        processor: Demand(items: ["iron_plate", "steel_plate"]),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 300, output_capacity: 300),
+    ),
+]

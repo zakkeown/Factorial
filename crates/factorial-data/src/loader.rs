@@ -273,11 +273,18 @@ pub fn load_game_data(dir: &Path) -> Result<GameData, DataLoadError> {
     let mut builder = RegistryBuilder::new();
     let mut item_names: HashMap<String, ItemTypeId> = HashMap::new();
 
+    // Map (item_name, property_name) -> PropertyId for PropertyTransform resolution.
+    let mut item_property_ids: HashMap<(String, String), PropertyId> = HashMap::new();
+
     for item in &items_data {
         check_duplicate(&item_names, &item.name, &items_path)?;
         let properties = item.properties.iter().map(resolve_property).collect();
         let id = builder.register_item(&item.name, properties);
         item_names.insert(item.name.clone(), id);
+
+        for (i, prop) in item.properties.iter().enumerate() {
+            item_property_ids.insert((item.name.clone(), prop.name.clone()), PropertyId(i as u16));
+        }
     }
 
     // ------------------------------------------------------------------
@@ -356,6 +363,7 @@ pub fn load_game_data(dir: &Path) -> Result<GameData, DataLoadError> {
             &bld.processor,
             &item_names,
             &recipe_names,
+            &item_property_ids,
             &builder,
             &buildings_path,
         )?;
@@ -465,6 +473,7 @@ fn resolve_processor(
     data: &ProcessorData,
     item_names: &HashMap<String, ItemTypeId>,
     recipe_names: &HashMap<String, RecipeId>,
+    item_property_ids: &HashMap<(String, String), PropertyId>,
     builder: &RegistryBuilder,
     file: &Path,
 ) -> Result<Processor, DataLoadError> {
@@ -594,6 +603,48 @@ fn resolve_processor(
                 switch_policy: policy,
                 pending_switch: None,
                 in_progress_inputs: Vec::new(),
+            }))
+        }
+        ProcessorData::PropertyTransform {
+            input,
+            output,
+            property,
+            transform,
+        } => {
+            let input_id = resolve_name(item_names, input, file, "item")?;
+            let output_id = resolve_name(item_names, output, file, "item")?;
+            let prop_id = item_property_ids
+                .get(&(input.clone(), property.clone()))
+                .copied()
+                .ok_or_else(|| DataLoadError::UnresolvedRef {
+                    file: file.to_path_buf(),
+                    name: format!("{input}.{property}"),
+                    expected_kind: "property",
+                })?;
+            let transform = match transform {
+                crate::schema::PropertyTransformData::Set(v) => {
+                    factorial_core::processor::PropertyTransform::Set(
+                        prop_id,
+                        Fixed64::from_num(*v),
+                    )
+                }
+                crate::schema::PropertyTransformData::Add(v) => {
+                    factorial_core::processor::PropertyTransform::Add(
+                        prop_id,
+                        Fixed64::from_num(*v),
+                    )
+                }
+                crate::schema::PropertyTransformData::Multiply(v) => {
+                    factorial_core::processor::PropertyTransform::Multiply(
+                        prop_id,
+                        Fixed64::from_num(*v),
+                    )
+                }
+            };
+            Ok(Processor::Property(PropertyProcessor {
+                input_type: *input_id,
+                output_type: *output_id,
+                transform,
             }))
         }
     }

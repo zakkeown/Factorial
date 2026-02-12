@@ -1,0 +1,50 @@
+(
+    title: "Demand Pull",
+    description: "A single source produces iron plates distributed to two consumers. Consumer A has a high-rate connection while Consumer B has a lower-rate connection. Demonstrates consumer-driven flow with Demand processors.",
+    tier: 3,
+    order: 12,
+    tags: ["processors", "demand", "distribution"],
+    nodes: [
+        (
+            id: "source",
+            building: "source",
+            position: (100.0, 200.0),
+            label: Some("Plate Source"),
+            description: Some("Produces 5 iron plates per tick."),
+            visual_hint: Some("source"),
+        ),
+        (
+            id: "consumer_a",
+            building: "consumer_a",
+            position: (450.0, 100.0),
+            label: Some("Consumer A (high)"),
+            description: Some("High-rate demand sink consuming iron plates."),
+            visual_hint: Some("sink"),
+        ),
+        (
+            id: "consumer_b",
+            building: "consumer_b",
+            position: (450.0, 300.0),
+            label: Some("Consumer B (low)"),
+            description: Some("Lower-rate demand sink consuming iron plates."),
+            visual_hint: Some("sink"),
+        ),
+    ],
+    edges: [
+        (
+            from: "source",
+            to: "consumer_a",
+            transport: Flow(rate: 5.0, buffer_capacity: 100.0, latency: 0),
+            label: Some("high-rate belt"),
+        ),
+        (
+            from: "source",
+            to: "consumer_b",
+            transport: Flow(rate: 5.0, buffer_capacity: 100.0, latency: 0),
+            label: Some("low-rate belt"),
+        ),
+    ],
+    simulation: (
+        ticks_per_second: 60,
+    ),
+)

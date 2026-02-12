@@ -1,0 +1,8 @@
+[
+    (
+        name: "iron_mine",
+        processor: Source(item: "iron_ore", rate: 2.0),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 100, output_capacity: 100),
+    ),
+]

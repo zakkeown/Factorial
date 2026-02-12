@@ -1,0 +1,26 @@
+[
+    (
+        name: "coal_generator",
+        processor: Source(item: "coal", rate: 1.0),
+        footprint: (width: 3, height: 3),
+        inventories: (input_capacity: 100, output_capacity: 100),
+    ),
+    (
+        name: "smelter",
+        processor: Recipe(recipe: "smelt_iron"),
+        footprint: (width: 3, height: 3),
+        inventories: (input_capacity: 200, output_capacity: 200),
+    ),
+    (
+        name: "battery",
+        processor: Source(item: "coal", rate: 0.0),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 100, output_capacity: 100),
+    ),
+    (
+        name: "heavy_press",
+        processor: Recipe(recipe: "make_steel"),
+        footprint: (width: 4, height: 4),
+        inventories: (input_capacity: 200, output_capacity: 200),
+    ),
+]

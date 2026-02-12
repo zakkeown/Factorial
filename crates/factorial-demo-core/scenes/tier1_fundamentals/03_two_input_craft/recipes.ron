@@ -1,0 +1,3 @@
+[
+    (name: "make_circuit", inputs: [("iron_ore", 1), ("copper_ore", 1)], outputs: [("circuit", 1)], duration: 30),
+]

@@ -1,0 +1,36 @@
+(
+    title: "Flow Transport",
+    description: "Continuous flow transport between a pump and a tank. Demonstrates buffer filling, flow rate limiting, and transport latency in a fluid-like pipeline.",
+    tier: 2,
+    order: 6,
+    tags: ["transport", "flow", "buffer", "latency"],
+    nodes: [
+        (
+            id: "pump",
+            building: "pump",
+            position: (100.0, 200.0),
+            label: Some("Water Pump"),
+            description: Some("Produces 5 water per tick."),
+            visual_hint: Some("source"),
+        ),
+        (
+            id: "tank",
+            building: "tank",
+            position: (400.0, 200.0),
+            label: Some("Storage Tank"),
+            description: Some("Consumes water from the flow pipe."),
+            visual_hint: Some("sink"),
+        ),
+    ],
+    edges: [
+        (
+            from: "pump",
+            to: "tank",
+            transport: Flow(rate: 3.0, buffer_capacity: 100.0, latency: 5),
+            label: Some("flow pipe"),
+        ),
+    ],
+    simulation: (
+        ticks_per_second: 60,
+    ),
+)

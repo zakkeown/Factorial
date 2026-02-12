@@ -1,0 +1,3 @@
+[
+    (name: "boil_water", inputs: [("water", 1)], outputs: [("steam", 1)], duration: 30),
+]

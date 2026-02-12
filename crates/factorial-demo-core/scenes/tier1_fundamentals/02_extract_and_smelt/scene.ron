@@ -1,0 +1,34 @@
+(
+    title: "Extract & Smelt",
+    description: "An iron mine feeds ore to a smelter via flow transport. Demonstrates item flow between buildings and recipe processing.",
+    tier: 1,
+    order: 2,
+    tags: ["fundamentals", "flow", "recipe"],
+    nodes: [
+        (
+            id: "mine",
+            building: "iron_mine",
+            position: (100.0, 200.0),
+            label: Some("Iron Mine"),
+            visual_hint: Some("source"),
+        ),
+        (
+            id: "smelter",
+            building: "smelter",
+            position: (400.0, 200.0),
+            label: Some("Smelter"),
+            visual_hint: Some("processor"),
+        ),
+    ],
+    edges: [
+        (
+            from: "mine",
+            to: "smelter",
+            transport: Flow(rate: 2.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("ore belt"),
+        ),
+    ],
+    simulation: (
+        ticks_per_second: 60,
+    ),
+)

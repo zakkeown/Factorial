@@ -1,0 +1,36 @@
+(
+    title: "Vehicle Routes",
+    description: "Vehicle-based transport shuttling iron ore from a mine to a warehouse. Demonstrates cargo capacity, round-trip travel time, and loading/unloading cycles.",
+    tier: 2,
+    order: 9,
+    tags: ["transport", "vehicle", "travel-time", "cargo"],
+    nodes: [
+        (
+            id: "mine",
+            building: "mine",
+            position: (100.0, 200.0),
+            label: Some("Iron Mine"),
+            description: Some("Produces 3 iron ore per tick."),
+            visual_hint: Some("source"),
+        ),
+        (
+            id: "warehouse",
+            building: "warehouse",
+            position: (400.0, 200.0),
+            label: Some("Warehouse"),
+            description: Some("Receives iron ore via vehicle delivery."),
+            visual_hint: Some("sink"),
+        ),
+    ],
+    edges: [
+        (
+            from: "mine",
+            to: "warehouse",
+            transport: Vehicle(capacity: 20, travel_time: 15),
+            label: Some("truck route"),
+        ),
+    ],
+    simulation: (
+        ticks_per_second: 60,
+    ),
+)

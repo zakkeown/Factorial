@@ -1,0 +1,70 @@
+(
+    title: "Fluid Pipes",
+    description: "A fluid network with pump, pipe junction, storage tank, and boiler. Demonstrates pressure system and tank filling.",
+    tier: 4,
+    order: 16,
+    tags: ["modules", "fluid", "pressure", "storage"],
+    nodes: [
+        (
+            id: "pump",
+            building: "water_pump",
+            position: (100.0, 200.0),
+            label: Some("Water Pump"),
+            visual_hint: Some("source"),
+        ),
+        (
+            id: "junction",
+            building: "pipe_junction",
+            position: (250.0, 200.0),
+            label: Some("Pipe Junction"),
+        ),
+        (
+            id: "tank",
+            building: "water_tank",
+            position: (400.0, 100.0),
+            label: Some("Water Tank"),
+            visual_hint: Some("storage"),
+        ),
+        (
+            id: "boiler",
+            building: "boiler",
+            position: (400.0, 300.0),
+            label: Some("Boiler"),
+            visual_hint: Some("processor"),
+        ),
+    ],
+    edges: [
+        (
+            from: "pump",
+            to: "junction",
+            transport: Flow(rate: 5.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("main pipe"),
+        ),
+        (
+            from: "junction",
+            to: "tank",
+            transport: Flow(rate: 3.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("tank feed"),
+        ),
+        (
+            from: "junction",
+            to: "boiler",
+            transport: Flow(rate: 3.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("boiler feed"),
+        ),
+    ],
+    simulation: (
+        ticks_per_second: 60,
+        warmup_ticks: 10,
+    ),
+    modules: (
+        fluid_networks: [
+            (name: "water_system", fluid_type: "water", members: [
+                (node: "pump", role: Producer(rate: 10.0)),
+                (node: "junction", role: Pipe(capacity: 20.0)),
+                (node: "tank", role: Storage(capacity: 1000.0, fill_rate: 5.0, initial: 0.0)),
+                (node: "boiler", role: Consumer(rate: 8.0)),
+            ]),
+        ],
+    ),
+)

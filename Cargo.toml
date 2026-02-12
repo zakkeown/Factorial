@@ -13,6 +13,8 @@ members = [
     "crates/factorial-logic",
     "crates/factorial-wasm",
     "crates/factorial-examples",
+    "crates/factorial-demo-core",
+    "crates/factorial-demo-bevy",
 ]
 
 [workspace.dependencies]

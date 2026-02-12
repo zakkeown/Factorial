@@ -1,0 +1,50 @@
+(
+    title: "Property Transform",
+    description: "A mine produces raw ore which passes through a refinery that doubles the quality property via Multiply transform, then delivers to storage. Demonstrates PropertyTransform processor upgrading item properties.",
+    tier: 3,
+    order: 11,
+    tags: ["processors", "property-transform", "quality"],
+    nodes: [
+        (
+            id: "mine",
+            building: "mine",
+            position: (100.0, 200.0),
+            label: Some("Ore Mine"),
+            description: Some("Produces 2 raw ore per tick with base quality 1.0."),
+            visual_hint: Some("source"),
+        ),
+        (
+            id: "refinery",
+            building: "refinery",
+            position: (350.0, 200.0),
+            label: Some("Refinery"),
+            description: Some("Transforms raw ore into refined ore, doubling quality."),
+            visual_hint: Some("processor"),
+        ),
+        (
+            id: "storage",
+            building: "storage",
+            position: (600.0, 200.0),
+            label: Some("Storage"),
+            description: Some("Collects refined ore with quality 2.0."),
+            visual_hint: Some("sink"),
+        ),
+    ],
+    edges: [
+        (
+            from: "mine",
+            to: "refinery",
+            transport: Flow(rate: 2.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("raw ore"),
+        ),
+        (
+            from: "refinery",
+            to: "storage",
+            transport: Flow(rate: 2.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("refined ore"),
+        ),
+    ],
+    simulation: (
+        ticks_per_second: 60,
+    ),
+)

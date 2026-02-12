@@ -1,0 +1,20 @@
+[
+    (
+        name: "iron_mine",
+        processor: Source(item: "iron_ore", rate: 2.0),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 100, output_capacity: 100),
+    ),
+    (
+        name: "copper_mine",
+        processor: Source(item: "copper_ore", rate: 2.0),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 100, output_capacity: 100),
+    ),
+    (
+        name: "assembler",
+        processor: Recipe(recipe: "make_circuit"),
+        footprint: (width: 3, height: 3),
+        inventories: (input_capacity: 200, output_capacity: 200),
+    ),
+]

@@ -1,0 +1,20 @@
+[
+    (
+        name: "refiner",
+        processor: Recipe(recipe: "refine_ore"),
+        footprint: (width: 3, height: 3),
+        inventories: (input_capacity: 100, output_capacity: 100),
+    ),
+    (
+        name: "forge",
+        processor: Recipe(recipe: "forge_ingot"),
+        footprint: (width: 3, height: 3),
+        inventories: (input_capacity: 100, output_capacity: 100),
+    ),
+    (
+        name: "recycler",
+        processor: Recipe(recipe: "recycle_alloy"),
+        footprint: (width: 3, height: 3),
+        inventories: (input_capacity: 100, output_capacity: 100),
+    ),
+]

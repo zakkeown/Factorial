@@ -1,0 +1,7 @@
+[
+    (name: "raw_ore"),
+    (name: "refined_ore"),
+    (name: "ingot"),
+    (name: "component"),
+    (name: "product"),
+]

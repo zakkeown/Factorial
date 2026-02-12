@@ -1,0 +1,55 @@
+(
+    title: "Tech Unlock",
+    description: "A research lab with auto-research that unlocks a technology. Demonstrates the tech tree module with point-based research.",
+    tier: 4,
+    order: 17,
+    tags: ["modules", "tech_tree", "research"],
+    nodes: [
+        (
+            id: "mine",
+            building: "iron_mine",
+            position: (100.0, 200.0),
+            label: Some("Iron Mine"),
+            visual_hint: Some("source"),
+        ),
+        (
+            id: "smelter",
+            building: "smelter",
+            position: (300.0, 200.0),
+            label: Some("Smelter"),
+            visual_hint: Some("processor"),
+        ),
+        (
+            id: "lab",
+            building: "lab",
+            position: (500.0, 200.0),
+            label: Some("Research Lab"),
+            visual_hint: Some("processor"),
+        ),
+    ],
+    edges: [
+        (
+            from: "mine",
+            to: "smelter",
+            transport: Flow(rate: 2.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("ore belt"),
+        ),
+        (
+            from: "smelter",
+            to: "lab",
+            transport: Flow(rate: 1.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("plate feed"),
+        ),
+    ],
+    simulation: (
+        ticks_per_second: 60,
+    ),
+    modules: (
+        tech_tree: Some((
+            technologies: [
+                (name: "advanced_smelting", cost: Points(100), prerequisites: [], unlocks: ["steel_recipe"]),
+            ],
+            auto_research: ["advanced_smelting"],
+        )),
+    ),
+)

@@ -1,0 +1,70 @@
+(
+    title: "Logic + Power",
+    description: "Combined logic and power modules. A sensor monitors fuel signals and controls a backup generator via circuit condition, while a power network manages supply and demand.",
+    tier: 4,
+    order: 19,
+    tags: ["modules", "logic", "power", "combined"],
+    nodes: [
+        (
+            id: "generator",
+            building: "main_generator",
+            position: (100.0, 100.0),
+            label: Some("Main Generator"),
+            visual_hint: Some("source"),
+        ),
+        (
+            id: "backup_gen",
+            building: "backup_generator",
+            position: (100.0, 300.0),
+            label: Some("Backup Generator"),
+            description: Some("Activates when fuel signal is present"),
+            visual_hint: Some("source"),
+        ),
+        (
+            id: "sensor",
+            building: "power_sensor",
+            position: (300.0, 200.0),
+            label: Some("Power Sensor"),
+            description: Some("Emits constant fuel signal = 1"),
+        ),
+        (
+            id: "factory",
+            building: "factory",
+            position: (500.0, 200.0),
+            label: Some("Factory"),
+            visual_hint: Some("processor"),
+        ),
+    ],
+    edges: [
+        (
+            from: "generator",
+            to: "factory",
+            transport: Flow(rate: 2.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("main fuel line"),
+        ),
+        (
+            from: "backup_gen",
+            to: "factory",
+            transport: Flow(rate: 1.0, buffer_capacity: 30.0, latency: 0),
+            label: Some("backup fuel line"),
+        ),
+    ],
+    simulation: (
+        ticks_per_second: 60,
+    ),
+    modules: (
+        power_networks: [
+            (name: "factory_grid", members: [
+                (node: "generator", role: Producer(capacity: 50.0)),
+                (node: "backup_gen", role: Producer(capacity: 50.0)),
+                (node: "factory", role: Consumer(demand: 80.0)),
+            ]),
+        ],
+        logic_networks: [
+            (name: "power_control", wire_color: "green", members: [
+                (node: "sensor", constant_signals: [("fuel", 1)]),
+                (node: "backup_gen", circuit_condition: Some((signal: "fuel", op: "gt", value: 0))),
+            ]),
+        ],
+    ),
+)

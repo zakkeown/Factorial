@@ -1,0 +1,26 @@
+[
+    (
+        name: "water_pump",
+        processor: Source(item: "water", rate: 5.0),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 100, output_capacity: 200),
+    ),
+    (
+        name: "pipe_junction",
+        processor: Source(item: "water", rate: 0.0),
+        footprint: (width: 1, height: 1),
+        inventories: (input_capacity: 50, output_capacity: 50),
+    ),
+    (
+        name: "water_tank",
+        processor: Source(item: "water", rate: 0.0),
+        footprint: (width: 3, height: 3),
+        inventories: (input_capacity: 500, output_capacity: 500),
+    ),
+    (
+        name: "boiler",
+        processor: Recipe(recipe: "boil_water"),
+        footprint: (width: 3, height: 3),
+        inventories: (input_capacity: 200, output_capacity: 200),
+    ),
+]

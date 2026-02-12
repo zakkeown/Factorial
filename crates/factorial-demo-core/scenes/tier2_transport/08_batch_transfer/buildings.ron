@@ -1,0 +1,14 @@
+[
+    (
+        name: "coal_mine",
+        processor: Source(item: "coal", rate: 5.0),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 100, output_capacity: 100),
+    ),
+    (
+        name: "furnace",
+        processor: Demand(items: ["coal"]),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 200, output_capacity: 200),
+    ),
+]

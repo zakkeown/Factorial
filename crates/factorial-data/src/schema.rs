@@ -142,6 +142,20 @@ pub enum ProcessorData {
         #[serde(default)]
         switch_policy: Option<String>,
     },
+    PropertyTransform {
+        input: String,
+        output: String,
+        property: String,
+        transform: PropertyTransformData,
+    },
+}
+
+/// The kind of property transformation applied by a PropertyTransform processor.
+#[derive(Debug, Clone, Deserialize)]
+pub enum PropertyTransformData {
+    Set(f64),
+    Add(f64),
+    Multiply(f64),
 }
 
 // ===========================================================================

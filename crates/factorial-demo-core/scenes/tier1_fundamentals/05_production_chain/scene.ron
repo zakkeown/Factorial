@@ -1,0 +1,60 @@
+(
+    title: "Production Chain",
+    description: "A multi-stage pipeline: iron mine → smelter → assembler → warehouse. Demonstrates chained processing with intermediate products.",
+    tier: 1,
+    order: 5,
+    tags: ["fundamentals", "chain", "multi-stage"],
+    nodes: [
+        (
+            id: "mine",
+            building: "iron_mine",
+            position: (50.0, 200.0),
+            label: Some("Iron Mine"),
+            visual_hint: Some("source"),
+        ),
+        (
+            id: "smelter",
+            building: "smelter",
+            position: (200.0, 200.0),
+            label: Some("Smelter"),
+            visual_hint: Some("processor"),
+        ),
+        (
+            id: "assembler",
+            building: "assembler",
+            position: (350.0, 200.0),
+            label: Some("Assembler"),
+            visual_hint: Some("processor"),
+        ),
+        (
+            id: "warehouse",
+            building: "warehouse",
+            position: (500.0, 200.0),
+            label: Some("Warehouse"),
+            visual_hint: Some("sink"),
+        ),
+    ],
+    edges: [
+        (
+            from: "mine",
+            to: "smelter",
+            transport: Flow(rate: 2.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("ore"),
+        ),
+        (
+            from: "smelter",
+            to: "assembler",
+            transport: Flow(rate: 2.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("plates"),
+        ),
+        (
+            from: "assembler",
+            to: "warehouse",
+            transport: Flow(rate: 2.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("gears"),
+        ),
+    ],
+    simulation: (
+        ticks_per_second: 60,
+    ),
+)

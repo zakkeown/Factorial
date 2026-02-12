@@ -1,0 +1,50 @@
+(
+    title: "Multi-Recipe",
+    description: "A mine feeds iron ore to a furnace that can switch between smelting iron plates (fast, 1:1) and steel plates (slow, 2:1). The furnace defaults to iron smelting with a complete-first switch policy. Demonstrates MultiRecipe processor with runtime recipe switching.",
+    tier: 3,
+    order: 13,
+    tags: ["processors", "multi-recipe", "switching"],
+    nodes: [
+        (
+            id: "mine",
+            building: "mine",
+            position: (100.0, 200.0),
+            label: Some("Iron Mine"),
+            description: Some("Produces 3 iron ore per tick."),
+            visual_hint: Some("source"),
+        ),
+        (
+            id: "furnace",
+            building: "furnace",
+            position: (350.0, 200.0),
+            label: Some("Multi-Recipe Furnace"),
+            description: Some("Switches between iron smelting (30 ticks) and steel smelting (60 ticks)."),
+            visual_hint: Some("processor"),
+        ),
+        (
+            id: "output",
+            building: "output",
+            position: (600.0, 200.0),
+            label: Some("Output Bin"),
+            description: Some("Collects iron plates and steel plates."),
+            visual_hint: Some("sink"),
+        ),
+    ],
+    edges: [
+        (
+            from: "mine",
+            to: "furnace",
+            transport: Flow(rate: 3.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("ore feed"),
+        ),
+        (
+            from: "furnace",
+            to: "output",
+            transport: Flow(rate: 3.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("product output"),
+        ),
+    ],
+    simulation: (
+        ticks_per_second: 60,
+    ),
+)

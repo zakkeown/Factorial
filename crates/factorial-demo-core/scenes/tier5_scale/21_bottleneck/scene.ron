@@ -1,0 +1,34 @@
+(
+    title: "Bottleneck",
+    description: "A fast mine connected to a smelter via a slow belt. Demonstrates buffer buildup from under-capacity transport.",
+    tier: 5,
+    order: 21,
+    tags: ["scale", "bottleneck", "buffer", "throughput"],
+    nodes: [
+        (
+            id: "fast_mine",
+            building: "fast_mine",
+            position: (100.0, 200.0),
+            label: Some("Fast Mine (10/tick)"),
+            visual_hint: Some("source"),
+        ),
+        (
+            id: "smelter",
+            building: "smelter",
+            position: (400.0, 200.0),
+            label: Some("Smelter"),
+            visual_hint: Some("processor"),
+        ),
+    ],
+    edges: [
+        (
+            from: "fast_mine",
+            to: "smelter",
+            transport: Item(speed: 0.5, slot_count: 5),
+            label: Some("slow belt"),
+        ),
+    ],
+    simulation: (
+        ticks_per_second: 60,
+    ),
+)

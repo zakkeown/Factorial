@@ -1,0 +1,62 @@
+[
+    (
+        name: "mine",
+        processor: Source(item: "raw_ore", rate: 3.0),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 100, output_capacity: 100),
+    ),
+    (
+        name: "refinery",
+        processor: Recipe(recipe: "refine_ore"),
+        footprint: (width: 3, height: 3),
+        inventories: (input_capacity: 200, output_capacity: 200),
+    ),
+    (
+        name: "smelter",
+        processor: Recipe(recipe: "smelt_ore"),
+        footprint: (width: 3, height: 3),
+        inventories: (input_capacity: 200, output_capacity: 200),
+    ),
+    (
+        name: "assembler",
+        processor: Recipe(recipe: "make_component"),
+        footprint: (width: 3, height: 3),
+        inventories: (input_capacity: 200, output_capacity: 200),
+    ),
+    (
+        name: "final_assembler",
+        processor: Recipe(recipe: "assemble_product"),
+        footprint: (width: 4, height: 4),
+        inventories: (input_capacity: 200, output_capacity: 200),
+    ),
+    (
+        name: "buffer",
+        processor: Source(item: "raw_ore", rate: 0.0),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 500, output_capacity: 500),
+    ),
+    (
+        name: "splitter_hub",
+        processor: Source(item: "raw_ore", rate: 0.0),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 200, output_capacity: 200),
+    ),
+    (
+        name: "merger_hub",
+        processor: Demand(items: ["product"]),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 500, output_capacity: 500),
+    ),
+    (
+        name: "warehouse",
+        processor: Demand(items: ["product"]),
+        footprint: (width: 4, height: 4),
+        inventories: (input_capacity: 1000, output_capacity: 1000),
+    ),
+    (
+        name: "quality_check",
+        processor: Source(item: "raw_ore", rate: 0.0),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 100, output_capacity: 100),
+    ),
+]

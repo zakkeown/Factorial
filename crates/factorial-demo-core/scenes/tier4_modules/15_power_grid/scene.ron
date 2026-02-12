@@ -1,0 +1,65 @@
+(
+    title: "Power Grid",
+    description: "A power network with generator, smelter, battery, and heavy press. Demonstrates brownout when demand exceeds supply plus storage.",
+    tier: 4,
+    order: 15,
+    tags: ["modules", "power", "brownout"],
+    nodes: [
+        (
+            id: "generator",
+            building: "coal_generator",
+            position: (100.0, 200.0),
+            label: Some("Coal Generator"),
+            visual_hint: Some("source"),
+        ),
+        (
+            id: "smelter",
+            building: "smelter",
+            position: (300.0, 100.0),
+            label: Some("Smelter"),
+            visual_hint: Some("processor"),
+        ),
+        (
+            id: "battery",
+            building: "battery",
+            position: (300.0, 300.0),
+            label: Some("Battery Bank"),
+            visual_hint: Some("storage"),
+        ),
+        (
+            id: "heavy_press",
+            building: "heavy_press",
+            position: (500.0, 200.0),
+            label: Some("Heavy Press"),
+            visual_hint: Some("processor"),
+        ),
+    ],
+    edges: [
+        (
+            from: "generator",
+            to: "smelter",
+            transport: Flow(rate: 1.0, buffer_capacity: 20.0, latency: 0),
+            label: Some("coal feed"),
+        ),
+        (
+            from: "smelter",
+            to: "heavy_press",
+            transport: Flow(rate: 1.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("plate feed"),
+        ),
+    ],
+    simulation: (
+        ticks_per_second: 60,
+        warmup_ticks: 10,
+    ),
+    modules: (
+        power_networks: [
+            (name: "main_grid", members: [
+                (node: "generator", role: Producer(capacity: 100.0)),
+                (node: "smelter", role: Consumer(demand: 30.0)),
+                (node: "battery", role: Storage(capacity: 500.0, charge: 0.0, charge_rate: 20.0)),
+                (node: "heavy_press", role: Consumer(demand: 200.0)),
+            ]),
+        ],
+    ),
+)

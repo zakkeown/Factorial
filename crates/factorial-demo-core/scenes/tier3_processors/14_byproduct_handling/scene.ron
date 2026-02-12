@@ -1,0 +1,66 @@
+(
+    title: "Byproduct Handling",
+    description: "An oil well feeds crude oil to a refinery that produces both plastic and sulfur. Filtered edges route each output to its dedicated storage bin. Demonstrates multi-output recipes with item-filtered byproduct routing.",
+    tier: 3,
+    order: 14,
+    tags: ["processors", "byproduct", "multi-output", "filter"],
+    nodes: [
+        (
+            id: "oil_well",
+            building: "oil_well",
+            position: (100.0, 200.0),
+            label: Some("Oil Well"),
+            description: Some("Produces 3 crude oil per tick."),
+            visual_hint: Some("source"),
+        ),
+        (
+            id: "refinery",
+            building: "refinery",
+            position: (350.0, 200.0),
+            label: Some("Oil Refinery"),
+            description: Some("Processes 2 crude oil into 1 plastic + 1 sulfur every 45 ticks."),
+            visual_hint: Some("processor"),
+        ),
+        (
+            id: "plastic_bin",
+            building: "plastic_bin",
+            position: (600.0, 100.0),
+            label: Some("Plastic Storage"),
+            description: Some("Collects plastic output."),
+            visual_hint: Some("sink"),
+        ),
+        (
+            id: "sulfur_bin",
+            building: "sulfur_bin",
+            position: (600.0, 300.0),
+            label: Some("Sulfur Storage"),
+            description: Some("Collects sulfur byproduct."),
+            visual_hint: Some("sink"),
+        ),
+    ],
+    edges: [
+        (
+            from: "oil_well",
+            to: "refinery",
+            transport: Flow(rate: 3.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("crude oil pipe"),
+        ),
+        (
+            from: "refinery",
+            to: "plastic_bin",
+            transport: Flow(rate: 2.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("plastic output"),
+            item_filter: Some("plastic"),
+        ),
+        (
+            from: "refinery",
+            to: "sulfur_bin",
+            transport: Flow(rate: 2.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("sulfur output"),
+            item_filter: Some("sulfur"),
+        ),
+    ],
+    simulation: (
+        ticks_per_second: 60,
+    ),
+)

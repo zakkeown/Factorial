@@ -1,0 +1,25 @@
+[
+    (
+        name: "mine",
+        processor: Source(item: "raw_ore", rate: 2.0),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 100, output_capacity: 100),
+    ),
+    (
+        name: "refinery",
+        processor: PropertyTransform(
+            input: "raw_ore",
+            output: "refined_ore",
+            property: "quality",
+            transform: Multiply(2.0),
+        ),
+        footprint: (width: 3, height: 3),
+        inventories: (input_capacity: 200, output_capacity: 200),
+    ),
+    (
+        name: "storage",
+        processor: Demand(items: ["refined_ore"]),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 200, output_capacity: 200),
+    ),
+]

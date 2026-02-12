@@ -1,0 +1,26 @@
+[
+    (
+        name: "main_generator",
+        processor: Source(item: "fuel", rate: 2.0),
+        footprint: (width: 3, height: 3),
+        inventories: (input_capacity: 100, output_capacity: 100),
+    ),
+    (
+        name: "backup_generator",
+        processor: Source(item: "fuel", rate: 1.0),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 100, output_capacity: 100),
+    ),
+    (
+        name: "power_sensor",
+        processor: Source(item: "fuel", rate: 0.0),
+        footprint: (width: 1, height: 1),
+        inventories: (input_capacity: 50, output_capacity: 50),
+    ),
+    (
+        name: "factory",
+        processor: Recipe(recipe: "produce"),
+        footprint: (width: 4, height: 4),
+        inventories: (input_capacity: 200, output_capacity: 200),
+    ),
+]

@@ -1,0 +1,5 @@
+[
+    (name: "refine_ore", inputs: [("ore", 1)], outputs: [("ingot", 1)], duration: 30),
+    (name: "forge_ingot", inputs: [("ingot", 1)], outputs: [("alloy", 1)], duration: 30),
+    (name: "recycle_alloy", inputs: [("alloy", 1)], outputs: [("ore", 1)], duration: 30),
+]

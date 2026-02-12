@@ -1,0 +1,61 @@
+(
+    title: "Serialization",
+    description: "A production chain with warmup ticks for state serialization testing. Serialize, deserialize, run more ticks, and compare state hashes.",
+    tier: 5,
+    order: 23,
+    tags: ["scale", "serialization", "determinism", "save-load"],
+    nodes: [
+        (
+            id: "mine",
+            building: "iron_mine",
+            position: (100.0, 200.0),
+            label: Some("Iron Mine"),
+            visual_hint: Some("source"),
+        ),
+        (
+            id: "smelter",
+            building: "smelter",
+            position: (300.0, 200.0),
+            label: Some("Smelter"),
+            visual_hint: Some("processor"),
+        ),
+        (
+            id: "assembler",
+            building: "assembler",
+            position: (500.0, 200.0),
+            label: Some("Gear Assembler"),
+            visual_hint: Some("processor"),
+        ),
+        (
+            id: "warehouse",
+            building: "warehouse",
+            position: (700.0, 200.0),
+            label: Some("Warehouse"),
+            visual_hint: Some("sink"),
+        ),
+    ],
+    edges: [
+        (
+            from: "mine",
+            to: "smelter",
+            transport: Flow(rate: 4.0, buffer_capacity: 100.0, latency: 0),
+            label: Some("ore belt"),
+        ),
+        (
+            from: "smelter",
+            to: "assembler",
+            transport: Flow(rate: 2.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("plate feed"),
+        ),
+        (
+            from: "assembler",
+            to: "warehouse",
+            transport: Flow(rate: 1.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("gear output"),
+        ),
+    ],
+    simulation: (
+        ticks_per_second: 60,
+        warmup_ticks: 100,
+    ),
+)

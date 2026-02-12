@@ -1,0 +1,36 @@
+(
+    title: "Batch Transfer",
+    description: "Periodic bulk batch transfers from a coal mine to a furnace. Demonstrates accumulation between deliveries and burst delivery of items in fixed-size batches.",
+    tier: 2,
+    order: 8,
+    tags: ["transport", "batch", "periodic", "bulk"],
+    nodes: [
+        (
+            id: "coal_mine",
+            building: "coal_mine",
+            position: (100.0, 200.0),
+            label: Some("Coal Mine"),
+            description: Some("Produces 5 coal per tick."),
+            visual_hint: Some("source"),
+        ),
+        (
+            id: "furnace",
+            building: "furnace",
+            position: (400.0, 200.0),
+            label: Some("Furnace"),
+            description: Some("Receives coal in batches of 10."),
+            visual_hint: Some("sink"),
+        ),
+    ],
+    edges: [
+        (
+            from: "coal_mine",
+            to: "furnace",
+            transport: Batch(batch_size: 10, cycle_time: 20),
+            label: Some("batch loader"),
+        ),
+    ],
+    simulation: (
+        ticks_per_second: 60,
+    ),
+)

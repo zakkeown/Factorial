@@ -1,0 +1,49 @@
+(
+    title: "Two-Input Craft",
+    description: "Two mines (iron and copper) feed an assembler that requires both inputs. Demonstrates multi-input recipes.",
+    tier: 1,
+    order: 3,
+    tags: ["fundamentals", "multi-input", "recipe"],
+    nodes: [
+        (
+            id: "iron_mine",
+            building: "iron_mine",
+            position: (100.0, 100.0),
+            label: Some("Iron Mine"),
+            visual_hint: Some("source"),
+        ),
+        (
+            id: "copper_mine",
+            building: "copper_mine",
+            position: (100.0, 300.0),
+            label: Some("Copper Mine"),
+            visual_hint: Some("source"),
+        ),
+        (
+            id: "assembler",
+            building: "assembler",
+            position: (400.0, 200.0),
+            label: Some("Assembler"),
+            visual_hint: Some("processor"),
+        ),
+    ],
+    edges: [
+        (
+            from: "iron_mine",
+            to: "assembler",
+            transport: Flow(rate: 2.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("iron ore"),
+            item_filter: Some("iron_ore"),
+        ),
+        (
+            from: "copper_mine",
+            to: "assembler",
+            transport: Flow(rate: 2.0, buffer_capacity: 50.0, latency: 0),
+            label: Some("copper ore"),
+            item_filter: Some("copper_ore"),
+        ),
+    ],
+    simulation: (
+        ticks_per_second: 60,
+    ),
+)

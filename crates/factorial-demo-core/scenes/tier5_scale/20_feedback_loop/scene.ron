@@ -1,0 +1,53 @@
+(
+    title: "Feedback Loop",
+    description: "A cyclic production graph (A→B→C→A) demonstrating back-edge detection and one-tick delay in feedback loops.",
+    tier: 5,
+    order: 20,
+    tags: ["scale", "cycle", "feedback", "back-edge"],
+    nodes: [
+        (
+            id: "refiner",
+            building: "refiner",
+            position: (200.0, 100.0),
+            label: Some("Refiner (A)"),
+            visual_hint: Some("processor"),
+        ),
+        (
+            id: "forge",
+            building: "forge",
+            position: (400.0, 300.0),
+            label: Some("Forge (B)"),
+            visual_hint: Some("processor"),
+        ),
+        (
+            id: "recycler",
+            building: "recycler",
+            position: (100.0, 300.0),
+            label: Some("Recycler (C)"),
+            visual_hint: Some("processor"),
+        ),
+    ],
+    edges: [
+        (
+            from: "refiner",
+            to: "forge",
+            transport: Flow(rate: 1.0, buffer_capacity: 20.0, latency: 0),
+            label: Some("A → B"),
+        ),
+        (
+            from: "forge",
+            to: "recycler",
+            transport: Flow(rate: 1.0, buffer_capacity: 20.0, latency: 0),
+            label: Some("B → C"),
+        ),
+        (
+            from: "recycler",
+            to: "refiner",
+            transport: Flow(rate: 1.0, buffer_capacity: 20.0, latency: 0),
+            label: Some("C → A (back-edge)"),
+        ),
+    ],
+    simulation: (
+        ticks_per_second: 60,
+    ),
+)

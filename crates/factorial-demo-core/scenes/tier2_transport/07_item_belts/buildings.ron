@@ -1,0 +1,14 @@
+[
+    (
+        name: "mine",
+        processor: Source(item: "iron_ore", rate: 3.0),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 100, output_capacity: 100),
+    ),
+    (
+        name: "chest",
+        processor: Demand(items: ["iron_ore"]),
+        footprint: (width: 1, height: 1),
+        inventories: (input_capacity: 200, output_capacity: 200),
+    ),
+]

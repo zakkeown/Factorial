@@ -1,0 +1,4 @@
+[
+    (name: "smelt_iron", inputs: [("iron_ore", 1)], outputs: [("iron_plate", 1)], duration: 60),
+    (name: "craft_gear", inputs: [("iron_plate", 2)], outputs: [("iron_gear", 1)], duration: 30),
+]

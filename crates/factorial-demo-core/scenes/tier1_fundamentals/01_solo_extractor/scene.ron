@@ -1,0 +1,22 @@
+(
+    title: "Solo Extractor",
+    description: "The simplest possible factory: a single iron mine producing ore into its output buffer. Demonstrates source processors and output buffer filling.",
+    tier: 1,
+    order: 1,
+    tags: ["fundamentals", "source"],
+    nodes: [
+        (
+            id: "mine",
+            building: "iron_mine",
+            position: (200.0, 200.0),
+            label: Some("Iron Mine"),
+            description: Some("Produces 2 iron ore per tick."),
+            visual_hint: Some("source"),
+        ),
+    ],
+    edges: [],
+    simulation: (
+        ticks_per_second: 60,
+        warmup_ticks: 0,
+    ),
+)

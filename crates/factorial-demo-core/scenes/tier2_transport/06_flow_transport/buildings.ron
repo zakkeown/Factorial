@@ -1,0 +1,14 @@
+[
+    (
+        name: "pump",
+        processor: Source(item: "water", rate: 5.0),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 100, output_capacity: 100),
+    ),
+    (
+        name: "tank",
+        processor: Demand(items: ["water"]),
+        footprint: (width: 2, height: 2),
+        inventories: (input_capacity: 500, output_capacity: 500),
+    ),
+]

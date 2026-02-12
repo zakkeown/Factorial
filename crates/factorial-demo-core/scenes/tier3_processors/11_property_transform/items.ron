@@ -1,0 +1,4 @@
+[
+    (name: "raw_ore", properties: [(name: "quality", type: fixed64, default: 1.0)]),
+    (name: "refined_ore", properties: [(name: "quality", type: fixed64, default: 1.0)]),
+]

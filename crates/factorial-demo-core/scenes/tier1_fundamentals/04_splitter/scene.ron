@@ -1,0 +1,47 @@
+(
+    title: "Splitter",
+    description: "A high-rate mine splits output to two demand chests via item transport. Demonstrates throughput division across multiple outputs.",
+    tier: 1,
+    order: 4,
+    tags: ["fundamentals", "splitter", "item-transport"],
+    nodes: [
+        (
+            id: "mine",
+            building: "iron_mine",
+            position: (100.0, 200.0),
+            label: Some("Iron Mine (4/tick)"),
+            visual_hint: Some("source"),
+        ),
+        (
+            id: "chest_a",
+            building: "chest_a",
+            position: (400.0, 100.0),
+            label: Some("Chest A"),
+            visual_hint: Some("sink"),
+        ),
+        (
+            id: "chest_b",
+            building: "chest_b",
+            position: (400.0, 300.0),
+            label: Some("Chest B"),
+            visual_hint: Some("sink"),
+        ),
+    ],
+    edges: [
+        (
+            from: "mine",
+            to: "chest_a",
+            transport: Item(speed: 1.0, slot_count: 10, lanes: 1),
+            label: Some("belt A"),
+        ),
+        (
+            from: "mine",
+            to: "chest_b",
+            transport: Item(speed: 1.0, slot_count: 10, lanes: 1),
+            label: Some("belt B"),
+        ),
+    ],
+    simulation: (
+        ticks_per_second: 60,
+    ),
+)
